@@ -75,9 +75,18 @@ use Oeltima\SimpleQueue\QueueManager;
 use Oeltima\SimpleQueue\Storage\PdoJobStorage;
 use Predis\Client as RedisClient;
 
-// Create storage
-$pdo = new PDO('mysql:host=localhost;dbname=myapp', 'user', 'password');
-$storage = new PdoJobStorage($pdo);
+// Create storage with connection factory (recommended for long-running workers)
+$connectionFactory = fn() => new PDO(
+    'mysql:host=localhost;dbname=myapp',
+    'user',
+    'password',
+    [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
+);
+$storage = new PdoJobStorage($connectionFactory);
+
+// Or pass a PDO instance directly (for short-lived scripts)
+// $pdo = new PDO('mysql:host=localhost;dbname=myapp', 'user', 'password');
+// $storage = new PdoJobStorage($pdo);
 
 // Create queue manager with Redis (recommended)
 $redis = new RedisClient(['host' => '127.0.0.1']);
@@ -265,6 +274,38 @@ $registry->register('email.send', SendEmailJob::class);
 ```
 
 ## Advanced Usage
+
+### Connection Handling for Long-Running Workers
+
+When running workers for extended periods, database connections can time out (e.g., MySQL's `wait_timeout`). To handle this gracefully, pass a **connection factory** instead of a PDO instance:
+
+```php
+use Oeltima\SimpleQueue\Storage\PdoJobStorage;
+
+// Connection factory - creates fresh connections on demand
+$connectionFactory = function (): PDO {
+    $pdo = new PDO(
+        'mysql:host=localhost;dbname=myapp',
+        'user',
+        'password',
+        [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
+    );
+    return $pdo;
+};
+
+$storage = new PdoJobStorage($connectionFactory);
+```
+
+The storage will automatically:
+1. Detect stale connections using a health check (`SELECT 1`)
+2. Call the factory to create a fresh connection when needed
+3. Continue processing without crashing
+
+You can also force a reconnection manually:
+
+```php
+$storage->reconnect(); // Next operation will use a fresh connection
+```
 
 ### Custom Job Storage
 

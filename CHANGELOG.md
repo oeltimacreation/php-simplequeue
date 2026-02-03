@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.0.0] - 2025-01-08
+## [1.1.0] - 2026-02-03
+
+### Added
+
+- **Connection Factory Pattern** for `PdoJobStorage` - Constructor now accepts `PDO|callable`, allowing a factory function to be passed that creates fresh database connections on demand
+- **Auto-reconnect** for long-running workers - Automatically detects stale MySQL connections ("MySQL server has gone away") and reconnects transparently
+- `reconnect()` method on `PdoJobStorage` to force a new connection on the next database operation
+- Comprehensive unit tests for `PdoJobStorage` including reconnection scenarios
+
+### Fixed
+
+- **MySQL "server has gone away" crashes** in long-running workers when the database connection times out during idle periods
+
+## [1.0.0] - 2026-01-08
 
 ### Added
 
