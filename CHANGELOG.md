@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Delayed retry support for Redis** - `nack()` now accepts optional `$delaySeconds` parameter to schedule retries with proper exponential backoff
+- **Redis delayed queue** using ZSET (`:delayed`) to hold jobs until their retry time
+- **Redis processing timestamp tracking** using ZSET (`:processing_z`) to enable stale job recovery
+- `promoteDelayedJobs()` method on `RedisQueueDriver` to move due delayed jobs to pending queue
+- `recoverStaleProcessing()` method on `RedisQueueDriver` to recover jobs stuck in processing after worker crash
+- `getDelayedCount()` method on `RedisQueueDriver` to get count of delayed jobs
+
+### Changed
+
+- **BREAKING**: `QueueDriverInterface::nack()` signature changed to `nack(string $queue, int $jobId, int $delaySeconds = 0): void`
+- `PdoJobStorage::claimJob()` now checks `available_at` column to prevent claiming jobs before their scheduled retry time
+
+### Fixed
+
+- **Redis retry delays ignored** - Previously `nack()` immediately re-enqueued jobs, defeating exponential backoff. Now respects delay via ZSET
+- **Redis stale job recovery** - After worker crash, jobs are now properly recovered from Redis processing list back to pending
+- **`processOne()` blocks forever with Redis** - Now uses non-blocking `RPOPLPUSH` when `timeout=0` instead of blocking `BRPOPLPUSH`
+- **Storage/driver exceptions crash worker** - All storage and driver calls in `processJob()` and `handleJobFailure()` are now wrapped in try/catch
+- Worker now calls `promoteDelayedJobs()` before each dequeue to move due delayed jobs to pending
+- Worker now calls `recoverStaleProcessing()` on driver during stale job recovery
+
 ## [1.1.0] - 2026-02-03
 
 ### Added

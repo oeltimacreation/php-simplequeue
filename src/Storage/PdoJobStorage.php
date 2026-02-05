@@ -169,7 +169,9 @@ class PdoJobStorage implements JobStorageInterface
                 locked_at = :locked_at,
                 started_at = :started_at,
                 updated_at = :updated_at
-            WHERE id = :id AND status = 'pending'";
+            WHERE id = :id
+            AND status = 'pending'
+            AND (available_at IS NULL OR available_at <= :now)";
 
         $stmt = $this->getPdo()->prepare($sql);
         $stmt->execute([
@@ -178,6 +180,7 @@ class PdoJobStorage implements JobStorageInterface
             'locked_at' => $now,
             'started_at' => $now,
             'updated_at' => $now,
+            'now' => $now,
         ]);
 
         return $stmt->rowCount() > 0;

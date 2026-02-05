@@ -105,6 +105,12 @@ final class Worker
     public function processOne(): bool
     {
         $driver = $this->queueManager->driver();
+
+        // Promote any delayed jobs that are now due
+        if (method_exists($driver, 'promoteDelayedJobs')) {
+            $driver->promoteDelayedJobs($this->queue);
+        }
+
         $jobId = $driver->dequeue($this->queue, 0);
 
         if ($jobId === null) {
@@ -134,6 +140,12 @@ final class Worker
     private function processNextJob(): void
     {
         $driver = $this->queueManager->driver();
+
+        // Promote any delayed jobs that are now due
+        if (method_exists($driver, 'promoteDelayedJobs')) {
+            $driver->promoteDelayedJobs($this->queue);
+        }
+
         $jobId = $driver->dequeue($this->queue, $this->pollTimeout);
 
         if ($jobId === null) {
@@ -145,17 +157,44 @@ final class Worker
 
     private function processJob(int $jobId, QueueDriverInterface $driver): void
     {
-        $claimed = $this->storage->claimJob($jobId, $this->workerId);
-        if (!$claimed) {
-            $this->logger->warning('Failed to claim job, may have been claimed by another process', ['job_id' => $jobId]);
-            $driver->ack($this->queue, $jobId);
+        try {
+            $claimed = $this->storage->claimJob($jobId, $this->workerId);
+        } catch (\Throwable $e) {
+            $this->logger->error('Failed to claim job from storage', [
+                'job_id' => $jobId,
+                'error' => $e->getMessage(),
+            ]);
+            // Don't ack - let another worker try or let it recover as stale
             return;
         }
 
-        $job = $this->storage->find($jobId);
+        if (!$claimed) {
+            $this->logger->warning('Failed to claim job, may have been claimed by another process', ['job_id' => $jobId]);
+            try {
+                $driver->ack($this->queue, $jobId);
+            } catch (\Throwable $e) {
+                $this->logger->error('Failed to ack unclaimed job', ['job_id' => $jobId, 'error' => $e->getMessage()]);
+            }
+            return;
+        }
+
+        try {
+            $job = $this->storage->find($jobId);
+        } catch (\Throwable $e) {
+            $this->logger->error('Failed to fetch job details', [
+                'job_id' => $jobId,
+                'error' => $e->getMessage(),
+            ]);
+            return;
+        }
+
         if ($job === null) {
             $this->logger->error('Job not found after claiming', ['job_id' => $jobId]);
-            $driver->ack($this->queue, $jobId);
+            try {
+                $driver->ack($this->queue, $jobId);
+            } catch (\Throwable $e) {
+                $this->logger->error('Failed to ack missing job', ['job_id' => $jobId, 'error' => $e->getMessage()]);
+            }
             return;
         }
 
@@ -177,7 +216,11 @@ final class Worker
                 'duration_seconds' => $duration,
             ]);
 
-            $driver->ack($this->queue, $jobId);
+            try {
+                $driver->ack($this->queue, $jobId);
+            } catch (\Throwable $e) {
+                $this->logger->error('Failed to ack completed job', ['job_id' => $jobId, 'error' => $e->getMessage()]);
+            }
         } catch (\Throwable $e) {
             $duration = round(microtime(true) - $startTime, 3);
             $this->handleJobFailure($job, $e, $driver, $duration);
@@ -214,12 +257,22 @@ final class Worker
             'error' => $e->getMessage(),
         ]);
 
-        if ($attempts < $job->maxAttempts) {
-            $this->scheduleRetry($job, $attempts, $e);
-            $driver->nack($this->queue, $job->id);
-        } else {
-            $this->storage->markFailed($job->id, $e->getMessage(), $this->truncateTrace($e));
-            $driver->ack($this->queue, $job->id);
+        try {
+            if ($attempts < $job->maxAttempts) {
+                $delay = min($this->retryMaxDelay, (int) pow($this->retryBaseDelay, $attempts));
+                $this->scheduleRetry($job, $attempts, $e);
+                $driver->nack($this->queue, $job->id, $delay);
+            } else {
+                $this->storage->markFailed($job->id, $e->getMessage(), $this->truncateTrace($e));
+                $driver->ack($this->queue, $job->id);
+            }
+        } catch (\Throwable $storageError) {
+            $this->logger->error('Failed to update job status after failure', [
+                'job_id' => $job->id,
+                'original_error' => $e->getMessage(),
+                'storage_error' => $storageError->getMessage(),
+            ]);
+            // Leave job in processing state - will be recovered as stale
         }
     }
 
@@ -239,6 +292,13 @@ final class Worker
     private function recoverStaleJobs(): void
     {
         $recovered = $this->storage->recoverStaleJobs($this->stuckJobTtl);
+
+        // Also recover from driver if supported
+        $driver = $this->queueManager->driver();
+        if (method_exists($driver, 'recoverStaleProcessing')) {
+            $driverRecovered = $driver->recoverStaleProcessing($this->queue, $this->stuckJobTtl);
+            $recovered += $driverRecovered;
+        }
 
         if ($recovered > 0) {
             $this->logger->warning('Recovered stale jobs', ['count' => $recovered, 'ttl_seconds' => $this->stuckJobTtl]);

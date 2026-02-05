@@ -45,28 +45,109 @@ final class RedisQueueDriver implements QueueDriverInterface
 
     public function dequeue(string $queue, int $timeoutSeconds): ?int
     {
-        $result = $this->redis->brpoplpush(
-            $this->pendingKey($queue),
-            $this->processingKey($queue),
-            $timeoutSeconds
-        );
+        if ($timeoutSeconds <= 0) {
+            // Non-blocking: use RPOPLPUSH instead of BRPOPLPUSH
+            $result = $this->redis->rpoplpush(
+                $this->pendingKey($queue),
+                $this->processingKey($queue)
+            );
+        } else {
+            // Blocking with timeout
+            $result = $this->redis->brpoplpush(
+                $this->pendingKey($queue),
+                $this->processingKey($queue),
+                $timeoutSeconds
+            );
+        }
 
         if (empty($result)) {
             return null;
         }
 
-        return (int) $result;
+        $jobId = (int) $result;
+
+        // Track processing start time in ZSET
+        $this->redis->zadd($this->processingZKey($queue), [$jobId => time()]);
+
+        return $jobId;
     }
 
     public function ack(string $queue, int $jobId): void
     {
         $this->redis->lrem($this->processingKey($queue), 1, (string) $jobId);
+        $this->redis->zrem($this->processingZKey($queue), (string) $jobId);
     }
 
-    public function nack(string $queue, int $jobId): void
+    public function nack(string $queue, int $jobId, int $delaySeconds = 0): void
     {
+        // Remove from processing lists
         $this->redis->lrem($this->processingKey($queue), 1, (string) $jobId);
-        $this->enqueue($queue, $jobId);
+        $this->redis->zrem($this->processingZKey($queue), (string) $jobId);
+
+        if ($delaySeconds > 0) {
+            // Add to delayed ZSET with future timestamp
+            $availableAt = time() + $delaySeconds;
+            $this->redis->zadd($this->delayedKey($queue), [$jobId => $availableAt]);
+        } else {
+            // Immediate re-enqueue
+            $this->enqueue($queue, $jobId);
+        }
+    }
+
+    /**
+     * Promote delayed jobs that are now due to the pending queue.
+     *
+     * @param string $queue Queue name
+     * @return int Number of jobs promoted
+     */
+    public function promoteDelayedJobs(string $queue): int
+    {
+        $now = time();
+        $dueJobs = $this->redis->zrangebyscore($this->delayedKey($queue), '-inf', (string) $now);
+
+        if (empty($dueJobs)) {
+            return 0;
+        }
+
+        $pipe = $this->redis->pipeline();
+        foreach ($dueJobs as $jobId) {
+            $pipe->lpush($this->pendingKey($queue), (string) $jobId);
+        }
+        $pipe->zremrangebyscore($this->delayedKey($queue), '-inf', (string) $now);
+        $pipe->execute();
+
+        return count($dueJobs);
+    }
+
+    /**
+     * Recover stale processing jobs back to the pending queue.
+     *
+     * @param string $queue Queue name
+     * @param int $ttlSeconds Time threshold - jobs processing longer than this are considered stale
+     * @return int Number of jobs recovered
+     */
+    public function recoverStaleProcessing(string $queue, int $ttlSeconds): int
+    {
+        $staleThreshold = time() - $ttlSeconds;
+        $staleJobs = $this->redis->zrangebyscore(
+            $this->processingZKey($queue),
+            '-inf',
+            (string) $staleThreshold
+        );
+
+        if (empty($staleJobs)) {
+            return 0;
+        }
+
+        $pipe = $this->redis->pipeline();
+        foreach ($staleJobs as $jobId) {
+            $pipe->lrem($this->processingKey($queue), 1, (string) $jobId);
+            $pipe->lpush($this->pendingKey($queue), (string) $jobId);
+        }
+        $pipe->zremrangebyscore($this->processingZKey($queue), '-inf', (string) $staleThreshold);
+        $pipe->execute();
+
+        return count($staleJobs);
     }
 
     /**
@@ -92,13 +173,29 @@ final class RedisQueueDriver implements QueueDriverInterface
     }
 
     /**
-     * Clear all jobs from a queue (both pending and processing).
+     * Get the count of delayed jobs waiting for retry.
+     *
+     * @param string $queue Queue name
+     * @return int Number of delayed jobs
+     */
+    public function getDelayedCount(string $queue): int
+    {
+        return (int) $this->redis->zcard($this->delayedKey($queue));
+    }
+
+    /**
+     * Clear all jobs from a queue (pending, processing, and delayed).
      *
      * @param string $queue Queue name
      */
     public function clear(string $queue): void
     {
-        $this->redis->del([$this->pendingKey($queue), $this->processingKey($queue)]);
+        $this->redis->del([
+            $this->pendingKey($queue),
+            $this->processingKey($queue),
+            $this->processingZKey($queue),
+            $this->delayedKey($queue)
+        ]);
     }
 
     private function pendingKey(string $queue): string
@@ -109,5 +206,15 @@ final class RedisQueueDriver implements QueueDriverInterface
     private function processingKey(string $queue): string
     {
         return sprintf('%s:queue:%s:processing', $this->prefix, $queue);
+    }
+
+    private function processingZKey(string $queue): string
+    {
+        return sprintf('%s:queue:%s:processing_z', $this->prefix, $queue);
+    }
+
+    private function delayedKey(string $queue): string
+    {
+        return sprintf('%s:queue:%s:delayed', $this->prefix, $queue);
     }
 }

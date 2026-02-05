@@ -55,10 +55,11 @@ interface QueueDriverInterface
      * Reject a job and return it to the queue for retry.
      *
      * This is called when a job fails but should be retried.
-     * The job is moved back to the pending queue.
+     * If delaySeconds > 0, the job should not be available until that time passes.
      *
      * @param string $queue Queue name
      * @param int $jobId Job identifier
+     * @param int $delaySeconds Seconds to wait before job is available again (default: 0 = immediate)
      */
-    public function nack(string $queue, int $jobId): void;
+    public function nack(string $queue, int $jobId, int $delaySeconds = 0): void;
 }

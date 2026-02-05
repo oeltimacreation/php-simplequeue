@@ -62,9 +62,10 @@ final class InMemoryQueueDriver implements QueueDriverInterface
         }
     }
 
-    public function nack(string $queue, int $jobId): void
+    public function nack(string $queue, int $jobId, int $delaySeconds = 0): void
     {
         $this->ack($queue, $jobId);
+        // In-memory driver ignores delay for simplicity (testing purposes)
         $this->enqueue($queue, $jobId);
     }
 

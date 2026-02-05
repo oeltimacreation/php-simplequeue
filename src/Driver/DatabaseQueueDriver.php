@@ -71,11 +71,12 @@ final class DatabaseQueueDriver implements QueueDriverInterface
         // Job status is managed by storage, nothing to do
     }
 
-    public function nack(string $queue, int $jobId): void
+    public function nack(string $queue, int $jobId, int $delaySeconds = 0): void
     {
         if ($jobId <= 0) {
             throw new \InvalidArgumentException(self::ERR_INVALID_JOB_ID);
         }
         // Retry is handled by storage scheduleRetry, nothing to do
+        // The delaySeconds is already handled via storage->scheduleRetry()
     }
 }
