@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Storage;
 
 use Oeltima\SimpleQueue\Contract\JobData;
+use Oeltima\SimpleQueue\Contract\JobStorageAdminInterface;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 
 /**
@@ -13,7 +14,7 @@ use Oeltima\SimpleQueue\Contract\JobStorageInterface;
  * This storage keeps all jobs in memory and is useful for unit testing.
  * All data is lost when the process terminates.
  */
-class InMemoryJobStorage implements JobStorageInterface
+class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterface
 {
     /** @var array<int, array<string, mixed>> */
     private array $jobs = [];
@@ -64,6 +65,19 @@ class InMemoryJobStorage implements JobStorageInterface
         }
 
         return JobData::fromRaw($this->jobs[$id]);
+    }
+
+    public function findActiveByRequestId(string $requestId): ?JobData
+    {
+        foreach ($this->jobs as $job) {
+            if ($job['request_id'] === $requestId
+                && in_array($job['status'], ['pending', 'running'], true)
+            ) {
+                return JobData::fromRaw($job);
+            }
+        }
+
+        return null;
     }
 
     public function getNextPendingJobId(string $queue = 'default'): ?int
@@ -189,6 +203,60 @@ class InMemoryJobStorage implements JobStorageInterface
             $job['locked_at'] = null;
             $job['available_at'] = null;
             $job['updated_at'] = $now;
+            $count++;
+        }
+
+        return $count;
+    }
+
+    public function list(?string $status = null, ?string $queue = null, int $limit = 100, int $offset = 0): array
+    {
+        $filtered = array_filter($this->jobs, function (array $job) use ($status, $queue): bool {
+            if ($status !== null && $job['status'] !== $status) {
+                return false;
+            }
+            if ($queue !== null && $job['queue'] !== $queue) {
+                return false;
+            }
+            return true;
+        });
+
+        $filtered = array_reverse($filtered, true);
+        $filtered = array_slice($filtered, $offset, $limit, true);
+
+        return array_values(array_map(fn($job) => JobData::fromRaw($job), $filtered));
+    }
+
+    public function count(?string $status = null, ?string $queue = null): int
+    {
+        $count = 0;
+
+        foreach ($this->jobs as $job) {
+            if ($status !== null && $job['status'] !== $status) {
+                continue;
+            }
+            if ($queue !== null && $job['queue'] !== $queue) {
+                continue;
+            }
+            $count++;
+        }
+
+        return $count;
+    }
+
+    public function pruneCompleted(int $days = 7): int
+    {
+        $threshold = date($this->dateFormat, strtotime("-{$days} days"));
+        $count = 0;
+
+        foreach ($this->jobs as $id => $job) {
+            if (!in_array($job['status'], ['completed', 'cancelled'], true)) {
+                continue;
+            }
+            if ($job['completed_at'] === null || $job['completed_at'] >= $threshold) {
+                continue;
+            }
+            unset($this->jobs[$id]);
             $count++;
         }
 

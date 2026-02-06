@@ -39,6 +39,14 @@ interface JobStorageInterface
     public function find(int $id): ?JobData;
 
     /**
+     * Find an active (pending or running) job by request ID.
+     *
+     * @param string $requestId Request correlation ID
+     * @return JobData|null Active job or null if none found
+     */
+    public function findActiveByRequestId(string $requestId): ?JobData;
+
+    /**
      * Get the next pending job ID for a queue.
      *
      * @param string $queue Queue name

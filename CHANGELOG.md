@@ -15,11 +15,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `promoteDelayedJobs()` method on `RedisQueueDriver` to move due delayed jobs to pending queue
 - `recoverStaleProcessing()` method on `RedisQueueDriver` to recover jobs stuck in processing after worker crash
 - `getDelayedCount()` method on `RedisQueueDriver` to get count of delayed jobs
+- **Idempotent dispatch** - `JobDispatcher::dispatchIdempotent()` returns existing active job instead of creating duplicates
+- `findActiveByRequestId()` method on `JobStorageInterface` to find pending/running jobs by request correlation ID
+- **`JobStorageAdminInterface`** - New interface for administrative operations (`list()`, `count()`, `pruneCompleted()`)
+- `InMemoryJobStorage` now implements `JobStorageAdminInterface` with full filter support
+- `PdoJobStorage` now implements `JobStorageAdminInterface` (methods already existed, now formalized)
 
 ### Changed
 
 - **BREAKING**: `QueueDriverInterface::nack()` signature changed to `nack(string $queue, int $jobId, int $delaySeconds = 0): void`
+- **BREAKING**: `JobStorageInterface` now requires `findActiveByRequestId(string $requestId): ?JobData`
 - `PdoJobStorage::claimJob()` now checks `available_at` column to prevent claiming jobs before their scheduled retry time
+
+### Removed
+
+- `JobFailedException` - Unused exception class removed
 
 ### Fixed
 

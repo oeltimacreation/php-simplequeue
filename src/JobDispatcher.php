@@ -47,6 +47,34 @@ final class JobDispatcher
     }
 
     /**
+     * Dispatch a job idempotently, returning existing job if one with the same requestId is active.
+     *
+     * @param string $type Job type identifier
+     * @param array<string, mixed> $payload Job payload data
+     * @param string $requestId Request correlation ID (required for idempotency)
+     * @param string $queue Queue name (default: 'default')
+     * @param int $maxAttempts Maximum retry attempts (default: 3)
+     * @return array{job_id: int, created: bool}
+     */
+    public function dispatchIdempotent(
+        string $type,
+        array $payload,
+        string $requestId,
+        string $queue = 'default',
+        int $maxAttempts = 3
+    ): array {
+        $existing = $this->storage->findActiveByRequestId($requestId);
+
+        if ($existing !== null) {
+            return ['job_id' => $existing->id, 'created' => false];
+        }
+
+        $jobId = $this->dispatch($type, $payload, $queue, $maxAttempts, $requestId);
+
+        return ['job_id' => $jobId, 'created' => true];
+    }
+
+    /**
      * Dispatch multiple jobs of the same type.
      *
      * @param string $type Job type identifier

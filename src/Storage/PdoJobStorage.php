@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Storage;
 
 use Oeltima\SimpleQueue\Contract\JobData;
+use Oeltima\SimpleQueue\Contract\JobStorageAdminInterface;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use PDO;
 
@@ -16,7 +17,7 @@ use PDO;
  *
  * Supports auto-reconnect for long-running workers via connection factory.
  */
-class PdoJobStorage implements JobStorageInterface
+class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
 {
     protected ?PDO $pdo = null;
 
@@ -128,6 +129,24 @@ class PdoJobStorage implements JobStorageInterface
         $sql = "SELECT * FROM {$this->table} WHERE id = :id";
         $stmt = $this->getPdo()->prepare($sql);
         $stmt->execute(['id' => $id]);
+
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return null;
+        }
+
+        return JobData::fromRaw($row);
+    }
+
+    public function findActiveByRequestId(string $requestId): ?JobData
+    {
+        $sql = "SELECT * FROM {$this->table}
+            WHERE request_id = :request_id
+            AND status IN ('pending', 'running')
+            LIMIT 1";
+
+        $stmt = $this->getPdo()->prepare($sql);
+        $stmt->execute(['request_id' => $requestId]);
 
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if ($row === false) {

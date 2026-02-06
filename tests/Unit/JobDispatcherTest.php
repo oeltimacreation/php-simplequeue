@@ -122,4 +122,100 @@ class JobDispatcherTest extends TestCase
 
         $this->assertNull($job);
     }
+
+    public function testDispatchIdempotentCreatesNewJob(): void
+    {
+        $result = $this->dispatcher->dispatchIdempotent(
+            'email.send',
+            ['to' => 'test@example.com'],
+            'req-unique-1'
+        );
+
+        $this->assertTrue($result['created']);
+        $this->assertGreaterThan(0, $result['job_id']);
+
+        $job = $this->storage->find($result['job_id']);
+        $this->assertNotNull($job);
+        $this->assertEquals('email.send', $job->type);
+        $this->assertEquals('req-unique-1', $job->requestId);
+    }
+
+    public function testDispatchIdempotentReturnsExistingJobWhenDuplicate(): void
+    {
+        $first = $this->dispatcher->dispatchIdempotent(
+            'email.send',
+            ['to' => 'test@example.com'],
+            'req-dup-1'
+        );
+
+        $second = $this->dispatcher->dispatchIdempotent(
+            'email.send',
+            ['to' => 'other@example.com'],
+            'req-dup-1'
+        );
+
+        $this->assertTrue($first['created']);
+        $this->assertFalse($second['created']);
+        $this->assertEquals($first['job_id'], $second['job_id']);
+    }
+
+    public function testDispatchIdempotentCreatesNewAfterCompletion(): void
+    {
+        $first = $this->dispatcher->dispatchIdempotent(
+            'email.send',
+            ['to' => 'test@example.com'],
+            'req-complete-1'
+        );
+
+        // Complete the first job
+        $this->storage->claimJob($first['job_id'], 'worker-1');
+        $this->storage->markCompleted($first['job_id']);
+
+        $second = $this->dispatcher->dispatchIdempotent(
+            'email.send',
+            ['to' => 'test@example.com'],
+            'req-complete-1'
+        );
+
+        $this->assertTrue($second['created']);
+        $this->assertNotEquals($first['job_id'], $second['job_id']);
+    }
+
+    public function testDispatchIdempotentWithCustomQueue(): void
+    {
+        $result = $this->dispatcher->dispatchIdempotent(
+            'email.send',
+            ['to' => 'test@example.com'],
+            'req-queue-1',
+            'emails'
+        );
+
+        $job = $this->storage->find($result['job_id']);
+        $this->assertEquals('emails', $job->queue);
+        $this->assertTrue($result['created']);
+    }
+
+    public function testDispatchIdempotentEnqueuesInDriver(): void
+    {
+        $result = $this->dispatcher->dispatchIdempotent(
+            'email.send',
+            ['to' => 'test@example.com'],
+            'req-driver-1'
+        );
+
+        $this->assertTrue($result['created']);
+        $pending = $this->driver->getPending('default');
+        $this->assertContains($result['job_id'], $pending);
+    }
+
+    public function testDispatchIdempotentDoesNotEnqueueDuplicate(): void
+    {
+        $first = $this->dispatcher->dispatchIdempotent('email.send', [], 'req-no-dup');
+        $pendingBefore = count($this->driver->getPending('default'));
+
+        $this->dispatcher->dispatchIdempotent('email.send', [], 'req-no-dup');
+        $pendingAfter = count($this->driver->getPending('default'));
+
+        $this->assertEquals($pendingBefore, $pendingAfter);
+    }
 }
