@@ -169,7 +169,10 @@ final class Worker
         }
 
         if (!$claimed) {
-            $this->logger->warning('Failed to claim job, may have been claimed by another process', ['job_id' => $jobId]);
+            $this->logger->warning(
+                'Failed to claim job, may have been claimed by another process',
+                ['job_id' => $jobId]
+            );
             try {
                 $driver->ack($this->queue, $jobId);
             } catch (\Throwable $e) {
@@ -301,7 +304,10 @@ final class Worker
         }
 
         if ($recovered > 0) {
-            $this->logger->warning('Recovered stale jobs', ['count' => $recovered, 'ttl_seconds' => $this->stuckJobTtl]);
+            $this->logger->warning(
+                'Recovered stale jobs',
+                ['count' => $recovered, 'ttl_seconds' => $this->stuckJobTtl]
+            );
         }
     }
 

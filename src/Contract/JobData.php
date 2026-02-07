@@ -16,6 +16,7 @@ final class JobData
         public readonly string $queue,
         public readonly string $type,
         public readonly string $status,
+        /** @var array<string, mixed> */
         public readonly array $payload,
         public readonly int $attempts,
         public readonly int $maxAttempts,
@@ -32,7 +33,8 @@ final class JobData
         public readonly ?string $requestId = null,
         public readonly ?string $createdAt = null,
         public readonly ?string $updatedAt = null,
-    ) {}
+    ) {
+    }
 
     /**
      * Create a JobData instance from an array or object.

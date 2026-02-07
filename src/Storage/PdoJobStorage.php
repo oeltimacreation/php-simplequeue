@@ -401,7 +401,10 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
      */
     public function pruneCompleted(int $days = 7): int
     {
-        $threshold = date($this->dateFormat, strtotime("-{$days} days"));
+        $threshold = date(
+            $this->dateFormat,
+            (int) strtotime("-{$days} days")
+        );
 
         $sql = "DELETE FROM {$this->table}
             WHERE status IN ('completed', 'cancelled')

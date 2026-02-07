@@ -70,7 +70,8 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
     public function findActiveByRequestId(string $requestId): ?JobData
     {
         foreach ($this->jobs as $job) {
-            if ($job['request_id'] === $requestId
+            if (
+                $job['request_id'] === $requestId
                 && in_array($job['status'], ['pending', 'running'], true)
             ) {
                 return JobData::fromRaw($job);
@@ -246,7 +247,10 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
 
     public function pruneCompleted(int $days = 7): int
     {
-        $threshold = date($this->dateFormat, strtotime("-{$days} days"));
+        $threshold = date(
+            $this->dateFormat,
+            (int) strtotime("-{$days} days")
+        );
         $count = 0;
 
         foreach ($this->jobs as $id => $job) {
