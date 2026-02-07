@@ -62,13 +62,15 @@ final class QueueManager
      * @param ClientInterface|null $redis Redis client (optional)
      * @param JobStorageInterface|null $storage Job storage for DB fallback
      * @param string $redisPrefix Prefix for Redis keys
+     * @param int $pollIntervalMs Polling interval in milliseconds for DB driver
      * @return self
      */
     public static function create(
         string $driverName = 'auto',
         ?ClientInterface $redis = null,
         ?JobStorageInterface $storage = null,
-        string $redisPrefix = 'simplequeue'
+        string $redisPrefix = 'simplequeue',
+        int $pollIntervalMs = 250
     ): self {
         $driverName = strtolower(trim($driverName));
 
@@ -79,7 +81,7 @@ final class QueueManager
 
         $dbDriver = null;
         if ($storage !== null) {
-            $dbDriver = new DatabaseQueueDriver($storage);
+            $dbDriver = new DatabaseQueueDriver($storage, $pollIntervalMs);
         }
 
         // Select driver based on configuration
@@ -123,10 +125,11 @@ final class QueueManager
      * Create a QueueManager with database polling driver.
      *
      * @param JobStorageInterface $storage Job storage implementation
+     * @param int $pollIntervalMs Polling interval in milliseconds
      * @return self
      */
-    public static function database(JobStorageInterface $storage): self
+    public static function database(JobStorageInterface $storage, int $pollIntervalMs = 250): self
     {
-        return new self(new DatabaseQueueDriver($storage));
+        return new self(new DatabaseQueueDriver($storage, $pollIntervalMs));
     }
 }
