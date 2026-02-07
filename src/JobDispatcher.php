@@ -91,8 +91,18 @@ final class JobDispatcher
     ): array {
         $jobIds = [];
         foreach ($payloads as $payload) {
-            $jobIds[] = $this->dispatch($type, $payload, $queue, $maxAttempts);
+            $jobIds[] = $this->storage->createJob($type, $payload, $queue, $maxAttempts);
         }
+
+        $driver = $this->queueManager->driver();
+        if ($driver instanceof \Oeltima\SimpleQueue\Driver\RedisQueueDriver) {
+            $driver->enqueueBatch($queue, $jobIds);
+        } else {
+            foreach ($jobIds as $jobId) {
+                $this->queueManager->enqueue($jobId, $queue);
+            }
+        }
+
         return $jobIds;
     }
 

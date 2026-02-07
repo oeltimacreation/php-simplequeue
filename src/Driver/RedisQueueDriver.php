@@ -198,6 +198,26 @@ final class RedisQueueDriver implements QueueDriverInterface
         ]);
     }
 
+    /**
+     * Enqueue multiple job IDs efficiently using Redis pipeline.
+     *
+     * @param string $queue Queue name
+     * @param int[] $jobIds Array of job identifiers
+     */
+    public function enqueueBatch(string $queue, array $jobIds): void
+    {
+        if ($jobIds === []) {
+            return;
+        }
+
+        $key = $this->pendingKey($queue);
+        $pipe = $this->redis->pipeline();
+        foreach ($jobIds as $jobId) {
+            $pipe->lpush($key, [(string) $jobId]);
+        }
+        $pipe->execute();
+    }
+
     private function pendingKey(string $queue): string
     {
         return sprintf('%s:queue:%s:pending', $this->prefix, $queue);
