@@ -245,4 +245,67 @@ class RedisQueueDriverTest extends TestCase
 
         $this->assertEquals(5, $count);
     }
+
+    public function testEnqueueBatchUsesPipeline(): void
+    {
+        $this->driver->enqueueBatch('default', [1, 2, 3]);
+
+        $this->assertNotNull($this->redis->pipeline);
+        $this->assertTrue($this->redis->pipeline->executed);
+
+        $lpushCalls = array_filter(
+            $this->redis->pipeline->calls,
+            fn($c) => $c['method'] === 'lpush'
+        );
+        $this->assertCount(3, $lpushCalls);
+
+        foreach ($lpushCalls as $call) {
+            $this->assertEquals('test:queue:default:pending', $call['args'][0]);
+        }
+    }
+
+    public function testEnqueueBatchEmptyArrayDoesNothing(): void
+    {
+        $this->driver->enqueueBatch('default', []);
+
+        $this->assertNull($this->redis->pipeline);
+    }
+
+    public function testGetPendingCount(): void
+    {
+        $this->redis->returns['llen'] = 10;
+
+        $count = $this->driver->getPendingCount('default');
+
+        $this->assertEquals(10, $count);
+    }
+
+    public function testGetProcessingCount(): void
+    {
+        $this->redis->returns['llen'] = 3;
+
+        $count = $this->driver->getProcessingCount('default');
+
+        $this->assertEquals(3, $count);
+    }
+
+    public function testIsAvailableReturnsTrueOnSuccessfulPing(): void
+    {
+        $this->redis->returns['ping'] = 'PONG';
+
+        $this->assertTrue($this->driver->isAvailable());
+    }
+
+    public function testEnqueueAddsToCorrectKey(): void
+    {
+        $this->driver->enqueue('myqueue', 42);
+
+        $lpushCall = array_filter(
+            $this->redis->calls,
+            fn($c) => $c['method'] === 'lpush'
+        );
+        $lpushCall = reset($lpushCall);
+
+        $this->assertEquals('test:queue:myqueue:pending', $lpushCall['args'][0]);
+    }
 }

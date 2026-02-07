@@ -257,6 +257,288 @@ class WorkerTest extends TestCase
         $worker->processOne();
     }
 
+    public function testProcessOneNonBlockingReturnsFalseWhenQueueEmpty(): void
+    {
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $driver->expects($this->once())
+            ->method('dequeue')
+            ->with('default', 0)
+            ->willReturn(null);
+
+        $worker = $this->createWorkerWithDriver($driver);
+        $result = $worker->processOne();
+
+        $this->assertFalse($result);
+    }
+
+    public function testProcessOneSuccessfulJobCompletion(): void
+    {
+        $handler = new class implements JobHandlerInterface {
+            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
+            {
+                return ['processed' => true];
+            }
+        };
+
+        $this->registry->register('test.job', get_class($handler));
+
+        $jobData = new JobData(
+            id: 100,
+            queue: 'default',
+            type: 'test.job',
+            status: 'running',
+            payload: [],
+            attempts: 0,
+            maxAttempts: 3,
+            createdAt: date('Y-m-d H:i:s'),
+            updatedAt: date('Y-m-d H:i:s')
+        );
+
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $driver->expects($this->once())
+            ->method('dequeue')
+            ->willReturn(100);
+
+        $this->storage->expects($this->once())
+            ->method('claimJob')
+            ->with(100, $this->isType('string'))
+            ->willReturn(true);
+
+        $this->storage->expects($this->once())
+            ->method('find')
+            ->with(100)
+            ->willReturn($jobData);
+
+        $this->storage->expects($this->once())
+            ->method('markCompleted')
+            ->with(100, ['processed' => true]);
+
+        $driver->expects($this->once())
+            ->method('ack')
+            ->with('default', 100);
+
+        $worker = $this->createWorkerWithDriver($driver);
+        $result = $worker->processOne();
+
+        $this->assertTrue($result);
+    }
+
+    public function testProcessOneJobFailedAfterMaxAttempts(): void
+    {
+        $handler = new class implements JobHandlerInterface {
+            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
+            {
+                throw new \RuntimeException('Job failed permanently');
+            }
+        };
+
+        $this->registry->register('test.job', get_class($handler));
+
+        $jobData = new JobData(
+            id: 200,
+            queue: 'default',
+            type: 'test.job',
+            status: 'running',
+            payload: [],
+            attempts: 2,
+            maxAttempts: 3,
+            createdAt: date('Y-m-d H:i:s'),
+            updatedAt: date('Y-m-d H:i:s')
+        );
+
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $driver->expects($this->once())
+            ->method('dequeue')
+            ->willReturn(200);
+
+        $this->storage->expects($this->once())
+            ->method('claimJob')
+            ->willReturn(true);
+
+        $this->storage->expects($this->once())
+            ->method('find')
+            ->willReturn($jobData);
+
+        $this->storage->expects($this->once())
+            ->method('markFailed')
+            ->with(200, $this->isType('string'), $this->anything());
+
+        $driver->expects($this->once())
+            ->method('ack')
+            ->with('default', 200);
+
+        $this->storage->expects($this->never())
+            ->method('scheduleRetry');
+
+        $worker = $this->createWorkerWithDriver($driver);
+        $result = $worker->processOne();
+
+        $this->assertTrue($result);
+    }
+
+    public function testWorkerRetryDelayIsExponential(): void
+    {
+        $handler = new class implements JobHandlerInterface {
+            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
+            {
+                throw new \RuntimeException('Temporary failure');
+            }
+        };
+
+        $this->registry->register('test.job', get_class($handler));
+
+        $jobData = new JobData(
+            id: 300,
+            queue: 'default',
+            type: 'test.job',
+            status: 'running',
+            payload: [],
+            attempts: 0,
+            maxAttempts: 5,
+            createdAt: date('Y-m-d H:i:s'),
+            updatedAt: date('Y-m-d H:i:s')
+        );
+
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $driver->expects($this->once())
+            ->method('dequeue')
+            ->willReturn(300);
+
+        $this->storage->expects($this->once())
+            ->method('claimJob')
+            ->willReturn(true);
+
+        $this->storage->expects($this->once())
+            ->method('find')
+            ->willReturn($jobData);
+
+        $this->storage->expects($this->once())
+            ->method('scheduleRetry')
+            ->with(300, 1, 2, $this->isType('string'));
+
+        $driver->expects($this->once())
+            ->method('nack')
+            ->with('default', 300, 2);
+
+        $worker = $this->createWorkerWithDriver($driver, [
+            'retry_base_delay' => 2,
+            'retry_max_delay' => 300,
+        ]);
+
+        $worker->processOne();
+    }
+
+    public function testWorkerRetryDelayCappedAtMaxDelay(): void
+    {
+        $handler = new class implements JobHandlerInterface {
+            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
+            {
+                throw new \RuntimeException('Temporary failure');
+            }
+        };
+
+        $this->registry->register('test.job', get_class($handler));
+
+        $jobData = new JobData(
+            id: 400,
+            queue: 'default',
+            type: 'test.job',
+            status: 'running',
+            payload: [],
+            attempts: 8,
+            maxAttempts: 15,
+            createdAt: date('Y-m-d H:i:s'),
+            updatedAt: date('Y-m-d H:i:s')
+        );
+
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $driver->expects($this->once())
+            ->method('dequeue')
+            ->willReturn(400);
+
+        $this->storage->expects($this->once())
+            ->method('claimJob')
+            ->willReturn(true);
+
+        $this->storage->expects($this->once())
+            ->method('find')
+            ->willReturn($jobData);
+
+        $this->storage->expects($this->once())
+            ->method('scheduleRetry')
+            ->with(400, 9, 300, $this->isType('string'));
+
+        $driver->expects($this->once())
+            ->method('nack')
+            ->with('default', 400, 300);
+
+        $worker = $this->createWorkerWithDriver($driver, [
+            'retry_base_delay' => 2,
+            'retry_max_delay' => 300,
+        ]);
+
+        $worker->processOne();
+    }
+
+    public function testWorkerHandlesAckExceptionAfterCompletedJob(): void
+    {
+        $handler = new class implements JobHandlerInterface {
+            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
+            {
+                return ['done' => true];
+            }
+        };
+
+        $this->registry->register('test.job', get_class($handler));
+
+        $jobData = new JobData(
+            id: 500,
+            queue: 'default',
+            type: 'test.job',
+            status: 'running',
+            payload: [],
+            attempts: 0,
+            maxAttempts: 3,
+            createdAt: date('Y-m-d H:i:s'),
+            updatedAt: date('Y-m-d H:i:s')
+        );
+
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $driver->expects($this->once())
+            ->method('dequeue')
+            ->willReturn(500);
+
+        $this->storage->expects($this->once())
+            ->method('claimJob')
+            ->willReturn(true);
+
+        $this->storage->expects($this->once())
+            ->method('find')
+            ->willReturn($jobData);
+
+        $this->storage->expects($this->once())
+            ->method('markCompleted')
+            ->with(500, ['done' => true]);
+
+        $driver->expects($this->once())
+            ->method('ack')
+            ->willThrowException(new \RuntimeException('Redis error'));
+
+        $this->logger->expects($this->atLeastOnce())
+            ->method('error')
+            ->with(
+                'Failed to ack completed job',
+                $this->callback(function ($context) {
+                    return isset($context['job_id']) && $context['job_id'] === 500;
+                })
+            );
+
+        $worker = $this->createWorkerWithDriver($driver);
+        $result = $worker->processOne();
+
+        $this->assertTrue($result);
+    }
+
     public function testHandleJobFailureCatchesStorageErrors(): void
     {
         $jobData = new JobData(
