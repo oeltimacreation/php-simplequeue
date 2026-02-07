@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-02-07
+
 ### Added
 
 - **Delayed retry support for Redis** - `nack()` now accepts optional `$delaySeconds` parameter to schedule retries with proper exponential backoff
@@ -20,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`JobStorageAdminInterface`** - New interface for administrative operations (`list()`, `count()`, `pruneCompleted()`)
 - `InMemoryJobStorage` now implements `JobStorageAdminInterface` with full filter support
 - `PdoJobStorage` now implements `JobStorageAdminInterface` (methods already existed, now formalized)
+- **DB poll interval option** - `QueueManager::create()` and `QueueManager::database()` now accept `pollIntervalMs` parameter for database driver tuning
+- **Batch enqueue with Redis pipeline** - `RedisQueueDriver::enqueueBatch()` uses Redis pipeline for efficient multi-job enqueueing
+- `JobDispatcher::dispatchBatch()` automatically uses pipeline optimization when Redis driver is active
+- **InMemoryQueueDriver** enhanced with `promoteDelayedJobs()`, `recoverStaleProcessing()`, and delayed job tracking for integration testing
+- **Integration test suite** - Full job lifecycle tests (dispatch → process → complete) and crash recovery scenarios
+- **GitHub Actions CI** - Automated test runs on PHP 8.1, 8.2, 8.3, 8.4
+- Expanded unit tests for Worker (retry, exponential backoff, max attempts), QueueManager (driver selection), and Redis/InMemory drivers
 
 ### Changed
 

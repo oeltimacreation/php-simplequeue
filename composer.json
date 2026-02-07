@@ -3,7 +3,7 @@
     "description": "A lightweight, framework-agnostic background job queue system for PHP with Redis and database drivers",
     "type": "library",
     "license": "MIT",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "keywords": [
         "queue",
         "job",
