@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `composer test` now runs without coverage collection so missing coverage drivers do not fail the default test command.
 - `JobData::fromRaw()` now normalizes scalar decoded payloads to an empty array instead of triggering a type error.
+- `PdoJobStorage` now enforces `PDO::ERRMODE_EXCEPTION` for direct and factory-created connections.
 
 ## [1.2.0] - 2026-02-07
 

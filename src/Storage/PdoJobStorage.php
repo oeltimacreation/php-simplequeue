@@ -23,7 +23,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
 {
     protected ?PDO $pdo = null;
 
-    /** @var callable|null Factory function to create PDO connection: fn(): PDO */
+    /** @var callable(): PDO|null Factory function to create PDO connection */
     protected $connectionFactory = null;
 
     protected string $table;
@@ -40,7 +40,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         private readonly ?ClockInterface $clock = null
     ) {
         if ($connection instanceof PDO) {
-            $this->pdo = $connection;
+            $this->pdo = $this->configurePdo($connection);
         } else {
             $this->connectionFactory = $connection;
         }
@@ -59,7 +59,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         }
 
         if ($this->connectionFactory !== null) {
-            $this->pdo = ($this->connectionFactory)();
+            $this->pdo = $this->configurePdo(($this->connectionFactory)());
             return $this->pdo;
         }
 
@@ -94,6 +94,19 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
     public function reconnect(): void
     {
         $this->pdo = null;
+    }
+
+    /**
+     * Configure a PDO connection for reliable error handling.
+     *
+     * @param PDO $pdo PDO connection
+     * @return PDO Configured PDO connection
+     */
+    protected function configurePdo(PDO $pdo): PDO
+    {
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+
+        return $pdo;
     }
 
     public function createJob(

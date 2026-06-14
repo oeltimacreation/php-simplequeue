@@ -55,6 +55,16 @@ class PdoJobStorageTest extends TestCase
         $this->assertEquals('test.job', $job->type);
     }
 
+    public function testConstructorEnforcesExceptionErrorModeForPdoInstance(): void
+    {
+        $pdo = $this->createSqlitePdo();
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_SILENT);
+
+        new PdoJobStorage($pdo);
+
+        $this->assertSame(PDO::ERRMODE_EXCEPTION, $pdo->getAttribute(PDO::ATTR_ERRMODE));
+    }
+
     public function testConstructorAcceptsCallableFactory(): void
     {
         $callCount = 0;
@@ -68,6 +78,23 @@ class PdoJobStorageTest extends TestCase
         $id = $storage->createJob('test.job', ['data' => 'value']);
         $this->assertEquals(1, $id);
         $this->assertEquals(1, $callCount, 'Factory should be called once for initial connection');
+    }
+
+    public function testFactoryConnectionEnforcesExceptionErrorMode(): void
+    {
+        $createdPdo = null;
+        $factory = function () use (&$createdPdo): PDO {
+            $createdPdo = $this->createSqlitePdo();
+            $createdPdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_SILENT);
+
+            return $createdPdo;
+        };
+
+        $storage = new PdoJobStorage($factory);
+        $storage->createJob('test.job', []);
+
+        $this->assertInstanceOf(PDO::class, $createdPdo);
+        $this->assertSame(PDO::ERRMODE_EXCEPTION, $createdPdo->getAttribute(PDO::ATTR_ERRMODE));
     }
 
     public function testReconnectForcesNewConnection(): void
