@@ -1021,5 +1021,64 @@ class WorkerTest extends TestCase
         $worker = $this->createWorkerWithDriver($driver);
         $worker->processOne();
     }
+
+    public function testReconcileDbAndRedis(): void
+    {
+        $driver = $this->getMockBuilder(QueueDriverInterface::class)
+            ->onlyMethods(['isAvailable', 'enqueue', 'dequeue', 'ack', 'nack'])
+            ->addMethods(['getPendingIds', 'getDelayedIds'])
+            ->getMock();
+
+        // 1. Storage has a pending job and a delayed job
+        $storage = new \Oeltima\SimpleQueue\Storage\InMemoryJobStorage();
+        $jobIdPending = $storage->createJob('test.job', [], 'default', 3);
+        $jobIdDelayed = $storage->createJob('test.job', [], 'default', 3);
+
+        // Make the second job delayed
+        $ref = new \ReflectionClass($storage);
+        $prop = $ref->getProperty('jobs');
+        $jobs = $prop->getValue($storage);
+        $jobs[$jobIdDelayed]['available_at'] = date('Y-m-d H:i:s', time() + 3600);
+        $prop->setValue($storage, $jobs);
+
+        // 2. Redis currently has NOTHING (missing both jobs)
+        $driver->expects($this->any())
+            ->method('getPendingIds')
+            ->with('default')
+            ->willReturn([]);
+
+        $driver->expects($this->any())
+            ->method('getDelayedIds')
+            ->with('default')
+            ->willReturn([]);
+
+        // 3. We expect the worker to reconcile both:
+        // - Enqueue the pending one
+        // - Nack (delayed enqueue) the delayed one
+        $driver->expects($this->once())
+            ->method('enqueue')
+            ->with('default', $jobIdPending);
+
+        $driver->expects($this->once())
+            ->method('nack')
+            ->with('default', $jobIdDelayed, $this->greaterThan(0));
+
+        $queueManager = new QueueManager($driver);
+        $worker = new Worker(
+            $storage,
+            $queueManager,
+            $this->registry,
+            $this->logger,
+            'default',
+            [
+                'lock_file' => null,
+                'poll_timeout' => 0,
+            ]
+        );
+
+        $method = new \ReflectionMethod($worker, 'reconcileDbAndRedis');
+        $method->setAccessible(true);
+        $method->invoke($worker);
+    }
 }
 

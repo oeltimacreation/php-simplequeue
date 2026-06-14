@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added exit codes (`EXIT_SUCCESS`, `EXIT_ERROR`, `EXIT_LOCK_UNAVAILABLE`) to `Worker::run()` for better process supervision.
 - Added worker recycling limits (`max_jobs`, `max_time`, `memory_limit`) and a `stop_when_empty` option to prevent unbounded memory growth and support clean process recycling.
 - Added attempts incrementing and poison job handling during stale job recovery to prevent infinite retry loops.
+- Added `getPendingIds()` and `getDelayedIds()` methods to both `RedisQueueDriver` and `InMemoryQueueDriver` to expose enqueued job identifiers for reconciliation.
+- Added startup validation checking to `Worker` to ensure the configured `poll_timeout` is strictly less than the Predis `read_write_timeout` parameters.
 
 ### Changed
 
@@ -34,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DatabaseQueueDriver` now delegates to the storage's atomic claim mechanism for polling, eliminating the thundering herd problem.
 - GitHub Actions now tests the documented PHP 8.1 through 8.4 support range.
 - Worker retry delay calculation is now centralized so storage and queue retry scheduling share one computed value.
+- Optimized `RedisQueueDriver::ack()` and `nack()` commands using Redis pipelines to reduce network roundtrips.
+- Optimized `RedisQueueDriver::enqueueBatch()` to use a single `LPUSH` call rather than a pipeline loop.
+- Converted `RedisQueueDriver::promoteDelayedJobs()` and `recoverStaleProcessing()` to utilize atomic and limit-bounded Lua scripts.
+- Migrated `RedisQueueDriver::dequeue()` from the deprecated `RPOPLPUSH`/`BRPOPLPUSH` commands to the modern `LMOVE`/`BLMOVE` commands.
+- Implemented a DB-to-Redis reconciliation sweep in `Worker` to safely restore enqueued pending and delayed jobs from the database (source of truth) back to Redis on a periodic/startup basis.
 
 ### Fixed
 

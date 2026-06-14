@@ -217,4 +217,61 @@ class InMemoryQueueDriverTest extends TestCase
         $this->assertEmpty($this->driver->getProcessing('default'));
         $this->assertEmpty($this->driver->getDelayed('default'));
     }
+
+    public function testPromoteDelayedJobsRespectsLimit(): void
+    {
+        // Add 3 delayed jobs
+        $this->driver->enqueue('default', 1);
+        $this->driver->dequeue('default', 0);
+        $this->driver->nack('default', 1, 60);
+
+        $this->driver->enqueue('default', 2);
+        $this->driver->dequeue('default', 0);
+        $this->driver->nack('default', 2, 60);
+
+        $this->driver->enqueue('default', 3);
+        $this->driver->dequeue('default', 0);
+        $this->driver->nack('default', 3, 60);
+
+        $ref = new \ReflectionClass($this->driver);
+        $prop = $ref->getProperty('delayed');
+        $delayed = $prop->getValue($this->driver);
+        $delayed['default'][1] = time() - 10;
+        $delayed['default'][2] = time() - 10;
+        $delayed['default'][3] = time() - 10;
+        $prop->setValue($this->driver, $delayed);
+
+        // Limit to 2
+        $count = $this->driver->promoteDelayedJobs('default', 2);
+
+        $this->assertEquals(2, $count);
+        $this->assertCount(2, $this->driver->getPending('default'));
+        $this->assertCount(1, $this->driver->getDelayed('default'));
+    }
+
+    public function testRecoverStaleProcessingRespectsLimit(): void
+    {
+        // Add 3 processing jobs
+        $this->driver->enqueue('default', 1);
+        $this->driver->dequeue('default', 0);
+        $this->driver->enqueue('default', 2);
+        $this->driver->dequeue('default', 0);
+        $this->driver->enqueue('default', 3);
+        $this->driver->dequeue('default', 0);
+
+        $ref = new \ReflectionClass($this->driver);
+        $prop = $ref->getProperty('processingStartedAt');
+        $startedAt = $prop->getValue($this->driver);
+        $startedAt['default'][1] = time() - 700;
+        $startedAt['default'][2] = time() - 700;
+        $startedAt['default'][3] = time() - 700;
+        $prop->setValue($this->driver, $startedAt);
+
+        // Limit to 2
+        $count = $this->driver->recoverStaleProcessing('default', 600, 2);
+
+        $this->assertEquals(2, $count);
+        $this->assertCount(2, $this->driver->getPending('default'));
+        $this->assertCount(1, $this->driver->getProcessing('default'));
+    }
 }

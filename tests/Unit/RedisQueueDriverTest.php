@@ -42,9 +42,11 @@ class MockRedisClient implements ClientInterface
     {
     }
 
+    public $connection = null;
+
     public function getConnection()
     {
-        return null;
+        return $this->connection;
     }
 
     public function createCommand($commandID, $arguments = [])
@@ -102,34 +104,34 @@ class RedisQueueDriverTest extends TestCase
 
     public function testDequeueNonBlockingWhenTimeoutZero(): void
     {
-        $this->redis->returns['rpoplpush'] = '123';
+        $this->redis->returns['lmove'] = '123';
 
         $jobId = $this->driver->dequeue('default', 0);
 
         $this->assertEquals(123, $jobId);
         
         $callMethods = array_column($this->redis->calls, 'method');
-        $this->assertContains('rpoplpush', $callMethods, 'Should use non-blocking rpoplpush');
-        $this->assertNotContains('brpoplpush', $callMethods, 'Should not use blocking brpoplpush');
+        $this->assertContains('lmove', $callMethods, 'Should use non-blocking lmove');
+        $this->assertNotContains('blmove', $callMethods, 'Should not use blocking blmove');
         $this->assertContains('zadd', $callMethods, 'Should track in processing ZSET');
     }
 
     public function testDequeueBlockingWhenTimeoutPositive(): void
     {
-        $this->redis->returns['brpoplpush'] = '456';
+        $this->redis->returns['blmove'] = '456';
 
         $jobId = $this->driver->dequeue('default', 5);
 
         $this->assertEquals(456, $jobId);
         
         $callMethods = array_column($this->redis->calls, 'method');
-        $this->assertContains('brpoplpush', $callMethods, 'Should use blocking brpoplpush');
-        $this->assertNotContains('rpoplpush', $callMethods, 'Should not use non-blocking rpoplpush');
+        $this->assertContains('blmove', $callMethods, 'Should use blocking blmove');
+        $this->assertNotContains('lmove', $callMethods, 'Should not use non-blocking lmove');
     }
 
     public function testDequeueReturnsNullWhenEmpty(): void
     {
-        $this->redis->returns['rpoplpush'] = null;
+        $this->redis->returns['lmove'] = null;
 
         $jobId = $this->driver->dequeue('default', 0);
 
@@ -140,22 +142,28 @@ class RedisQueueDriverTest extends TestCase
     {
         $this->driver->ack('default', 123);
 
-        $callMethods = array_column($this->redis->calls, 'method');
-        $this->assertContains('lrem', $callMethods, 'Should remove from processing list');
-        $this->assertContains('zrem', $callMethods, 'Should remove from processing ZSET');
+        $this->assertNotNull($this->redis->pipeline);
+        $this->assertTrue($this->redis->pipeline->executed);
+
+        $pipelineMethods = array_column($this->redis->pipeline->calls, 'method');
+        $this->assertContains('lrem', $pipelineMethods, 'Should remove from processing list');
+        $this->assertContains('zrem', $pipelineMethods, 'Should remove from processing ZSET');
     }
 
     public function testNackWithDelayAddsToDelayedZset(): void
     {
         $this->driver->nack('default', 123, 60);
 
-        $callMethods = array_column($this->redis->calls, 'method');
-        $this->assertContains('lrem', $callMethods);
-        $this->assertContains('zrem', $callMethods);
-        $this->assertContains('zadd', $callMethods, 'Should add to delayed ZSET');
-        $this->assertNotContains('lpush', $callMethods, 'Should not immediately re-enqueue');
+        $this->assertNotNull($this->redis->pipeline);
+        $this->assertTrue($this->redis->pipeline->executed);
 
-        $zaddCall = array_filter($this->redis->calls, fn($c) => $c['method'] === 'zadd');
+        $pipelineMethods = array_column($this->redis->pipeline->calls, 'method');
+        $this->assertContains('lrem', $pipelineMethods);
+        $this->assertContains('zrem', $pipelineMethods);
+        $this->assertContains('zadd', $pipelineMethods, 'Should add to delayed ZSET');
+        $this->assertNotContains('lpush', $pipelineMethods, 'Should not immediately re-enqueue');
+
+        $zaddCall = array_filter($this->redis->pipeline->calls, fn($c) => $c['method'] === 'zadd');
         $zaddCall = reset($zaddCall);
         $this->assertStringContainsString('delayed', $zaddCall['args'][0]);
     }
@@ -164,61 +172,58 @@ class RedisQueueDriverTest extends TestCase
     {
         $this->driver->nack('default', 123, 0);
 
-        $callMethods = array_column($this->redis->calls, 'method');
-        $this->assertContains('lrem', $callMethods);
-        $this->assertContains('zrem', $callMethods);
-        $this->assertContains('lpush', $callMethods, 'Should immediately re-enqueue');
+        $this->assertNotNull($this->redis->pipeline);
+        $this->assertTrue($this->redis->pipeline->executed);
+
+        $pipelineMethods = array_column($this->redis->pipeline->calls, 'method');
+        $this->assertContains('lrem', $pipelineMethods);
+        $this->assertContains('zrem', $pipelineMethods);
+        $this->assertContains('lpush', $pipelineMethods, 'Should immediately re-enqueue');
     }
 
-    public function testPromoteDelayedJobsMovesJobsToPending(): void
+    public function testPromoteDelayedJobsEvaluatesLuaScript(): void
     {
-        $this->redis->returns['zrangebyscore'] = ['100', '101', '102'];
+        $this->redis->returns['eval'] = 3;
 
-        $count = $this->driver->promoteDelayedJobs('default');
+        $count = $this->driver->promoteDelayedJobs('default', 50);
 
         $this->assertEquals(3, $count);
-        $this->assertNotNull($this->redis->pipeline);
-        $this->assertTrue($this->redis->pipeline->executed);
-        
-        $pipelineMethods = array_column($this->redis->pipeline->calls, 'method');
-        $this->assertCount(3, array_filter($pipelineMethods, fn($m) => $m === 'lpush'));
-        $this->assertContains('zremrangebyscore', $pipelineMethods);
+
+        $evalCall = array_filter(
+            $this->redis->calls,
+            fn($c) => $c['method'] === 'eval'
+        );
+        $this->assertCount(1, $evalCall);
+
+        $call = reset($evalCall);
+        $this->assertStringContainsString('ZRANGEBYSCORE', $call['args'][0]);
+        $this->assertEquals(2, $call['args'][1]); // numKeys
+        $this->assertEquals('test:queue:default:delayed', $call['args'][2]);
+        $this->assertEquals('test:queue:default:pending', $call['args'][3]);
+        $this->assertEquals('50', $call['args'][5]);
     }
 
-    public function testPromoteDelayedJobsReturnsZeroWhenNoDueJobs(): void
+    public function testRecoverStaleProcessingEvaluatesLuaScript(): void
     {
-        $this->redis->returns['zrangebyscore'] = [];
+        $this->redis->returns['eval'] = 2;
 
-        $count = $this->driver->promoteDelayedJobs('default');
-
-        $this->assertEquals(0, $count);
-        $this->assertNull($this->redis->pipeline, 'Pipeline should not be created when no jobs');
-    }
-
-    public function testRecoverStaleProcessingMovesStaleJobsBack(): void
-    {
-        $this->redis->returns['zrangebyscore'] = ['200', '201'];
-
-        $count = $this->driver->recoverStaleProcessing('default', 600);
+        $count = $this->driver->recoverStaleProcessing('default', 600, 75);
 
         $this->assertEquals(2, $count);
-        $this->assertNotNull($this->redis->pipeline);
-        $this->assertTrue($this->redis->pipeline->executed);
 
-        $pipelineMethods = array_column($this->redis->pipeline->calls, 'method');
-        $this->assertCount(2, array_filter($pipelineMethods, fn($m) => $m === 'lrem'));
-        $this->assertCount(2, array_filter($pipelineMethods, fn($m) => $m === 'lpush'));
-        $this->assertContains('zremrangebyscore', $pipelineMethods);
-    }
+        $evalCall = array_filter(
+            $this->redis->calls,
+            fn($c) => $c['method'] === 'eval'
+        );
+        $this->assertCount(1, $evalCall);
 
-    public function testRecoverStaleProcessingReturnsZeroWhenNoStaleJobs(): void
-    {
-        $this->redis->returns['zrangebyscore'] = [];
-
-        $count = $this->driver->recoverStaleProcessing('default', 600);
-
-        $this->assertEquals(0, $count);
-        $this->assertNull($this->redis->pipeline);
+        $call = reset($evalCall);
+        $this->assertStringContainsString('ZRANGEBYSCORE', $call['args'][0]);
+        $this->assertEquals(3, $call['args'][1]); // numKeys
+        $this->assertEquals('test:queue:default:processing_z', $call['args'][2]);
+        $this->assertEquals('test:queue:default:processing', $call['args'][3]);
+        $this->assertEquals('test:queue:default:pending', $call['args'][4]);
+        $this->assertEquals('75', $call['args'][6]);
     }
 
     public function testClearRemovesAllKeys(): void
@@ -246,29 +251,30 @@ class RedisQueueDriverTest extends TestCase
         $this->assertEquals(5, $count);
     }
 
-    public function testEnqueueBatchUsesPipeline(): void
+    public function testEnqueueBatchUsesSingleLpush(): void
     {
         $this->driver->enqueueBatch('default', [1, 2, 3]);
 
-        $this->assertNotNull($this->redis->pipeline);
-        $this->assertTrue($this->redis->pipeline->executed);
-
         $lpushCalls = array_filter(
-            $this->redis->pipeline->calls,
+            $this->redis->calls,
             fn($c) => $c['method'] === 'lpush'
         );
-        $this->assertCount(3, $lpushCalls);
+        $this->assertCount(1, $lpushCalls);
 
-        foreach ($lpushCalls as $call) {
-            $this->assertEquals('test:queue:default:pending', $call['args'][0]);
-        }
+        $call = reset($lpushCalls);
+        $this->assertEquals('test:queue:default:pending', $call['args'][0]);
+        $this->assertEquals(['1', '2', '3'], $call['args'][1]);
     }
 
     public function testEnqueueBatchEmptyArrayDoesNothing(): void
     {
         $this->driver->enqueueBatch('default', []);
 
-        $this->assertNull($this->redis->pipeline);
+        $lpushCalls = array_filter(
+            $this->redis->calls,
+            fn($c) => $c['method'] === 'lpush'
+        );
+        $this->assertCount(0, $lpushCalls);
     }
 
     public function testGetPendingCount(): void
@@ -307,5 +313,53 @@ class RedisQueueDriverTest extends TestCase
         $lpushCall = reset($lpushCall);
 
         $this->assertEquals('test:queue:myqueue:pending', $lpushCall['args'][0]);
+    }
+
+    public function testValidateTimeoutThrowsExceptionWhenUnsafe(): void
+    {
+        $parameters = new MockRedisParameters(5);
+        $connection = new MockRedisConnection($parameters);
+        $this->redis->connection = $connection;
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Unsafe timeout configuration');
+
+        $this->driver->validateTimeout(5);
+    }
+
+    public function testValidateTimeoutAllowsSafeTimeouts(): void
+    {
+        $parameters = new MockRedisParameters(60);
+        $connection = new MockRedisConnection($parameters);
+        $this->redis->connection = $connection;
+
+        // Should not throw exception
+        $this->driver->validateTimeout(5);
+        $this->assertTrue(true);
+    }
+}
+
+class MockRedisConnection
+{
+    public $parameters;
+
+    public function __construct($parameters = null)
+    {
+        $this->parameters = $parameters;
+    }
+
+    public function getParameters()
+    {
+        return $this->parameters;
+    }
+}
+
+class MockRedisParameters
+{
+    public $read_write_timeout;
+
+    public function __construct($read_write_timeout)
+    {
+        $this->read_write_timeout = $read_write_timeout;
     }
 }

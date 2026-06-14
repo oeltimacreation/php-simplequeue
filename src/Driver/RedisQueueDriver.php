@@ -15,6 +15,38 @@ use Predis\ClientInterface;
  */
 final class RedisQueueDriver implements QueueDriverInterface
 {
+    private const PROMOTE_DELAYED_LUA = <<<'LUA'
+local delayedKey = KEYS[1]
+local pendingKey = KEYS[2]
+local now = tonumber(ARGV[1])
+local limit = tonumber(ARGV[2])
+
+local dueJobs = redis.call('ZRANGEBYSCORE', delayedKey, '-inf', now, 'LIMIT', 0, limit)
+if #dueJobs > 0 then
+    redis.call('LPUSH', pendingKey, unpack(dueJobs))
+    redis.call('ZREM', delayedKey, unpack(dueJobs))
+end
+return #dueJobs
+LUA;
+
+    private const RECOVER_STALE_LUA = <<<'LUA'
+local processingZKey = KEYS[1]
+local processingKey = KEYS[2]
+local pendingKey = KEYS[3]
+local staleThreshold = tonumber(ARGV[1])
+local limit = tonumber(ARGV[2])
+
+local staleJobs = redis.call('ZRANGEBYSCORE', processingZKey, '-inf', staleThreshold, 'LIMIT', 0, limit)
+if #staleJobs > 0 then
+    for _, jobId in ipairs(staleJobs) do
+        redis.call('LREM', processingKey, 1, jobId)
+    end
+    redis.call('LPUSH', pendingKey, unpack(staleJobs))
+    redis.call('ZREM', processingZKey, unpack(staleJobs))
+end
+return #staleJobs
+LUA;
+
     private ClientInterface $redis;
     private string $prefix;
 
@@ -38,6 +70,40 @@ final class RedisQueueDriver implements QueueDriverInterface
         }
     }
 
+    /**
+     * Validate that the poll timeout is safe relative to the Redis read/write timeout.
+     *
+     * @param int $pollTimeout Seconds the worker will block waiting for a job
+     * @throws \InvalidArgumentException If the timeout configuration is unsafe
+     */
+    public function validateTimeout(int $pollTimeout): void
+    {
+        try {
+            $connection = $this->redis->getConnection();
+
+            if (method_exists($connection, 'getParameters')) {
+                $parameters = $connection->getParameters();
+                if (isset($parameters->read_write_timeout)) {
+                    $rwTimeout = $parameters->read_write_timeout;
+                    if ($rwTimeout > 0) {
+                        if ($pollTimeout >= $rwTimeout) {
+                            throw new \InvalidArgumentException(sprintf(
+                                'Unsafe timeout configuration: poll_timeout (%ds) must be strictly less than ' .
+                                'Predis read_write_timeout (%ds) to prevent connection dropped errors.',
+                                $pollTimeout,
+                                $rwTimeout
+                            ));
+                        }
+                    }
+                }
+            }
+        } catch (\InvalidArgumentException $e) {
+            throw $e;
+        } catch (\Throwable) {
+            // Fallback for custom/mock connections
+        }
+    }
+
     public function enqueue(string $queue, int $jobId): void
     {
         $this->redis->lpush($this->pendingKey($queue), [(string) $jobId]);
@@ -46,16 +112,20 @@ final class RedisQueueDriver implements QueueDriverInterface
     public function dequeue(string $queue, int $timeoutSeconds): ?int
     {
         if ($timeoutSeconds <= 0) {
-            // Non-blocking: use RPOPLPUSH instead of BRPOPLPUSH
-            $result = $this->redis->rpoplpush(
+            // Non-blocking: use LMOVE instead of BLMOVE
+            $result = $this->redis->lmove(
                 $this->pendingKey($queue),
-                $this->processingKey($queue)
+                $this->processingKey($queue),
+                'RIGHT',
+                'LEFT'
             );
         } else {
             // Blocking with timeout
-            $result = $this->redis->brpoplpush(
+            $result = $this->redis->blmove(
                 $this->pendingKey($queue),
                 $this->processingKey($queue),
+                'RIGHT',
+                'LEFT',
                 $timeoutSeconds
             );
         }
@@ -74,50 +144,53 @@ final class RedisQueueDriver implements QueueDriverInterface
 
     public function ack(string $queue, int $jobId): void
     {
-        $this->redis->lrem($this->processingKey($queue), 1, (string) $jobId);
-        $this->redis->zrem($this->processingZKey($queue), (string) $jobId);
+        /** @var \Predis\Pipeline\Pipeline $pipe */
+        $pipe = $this->redis->pipeline();
+        $pipe->lrem($this->processingKey($queue), 1, (string) $jobId);
+        $pipe->zrem($this->processingZKey($queue), (string) $jobId);
+        $pipe->execute();
     }
 
     public function nack(string $queue, int $jobId, int $delaySeconds = 0): void
     {
+        /** @var \Predis\Pipeline\Pipeline $pipe */
+        $pipe = $this->redis->pipeline();
         // Remove from processing lists
-        $this->redis->lrem($this->processingKey($queue), 1, (string) $jobId);
-        $this->redis->zrem($this->processingZKey($queue), (string) $jobId);
+        $pipe->lrem($this->processingKey($queue), 1, (string) $jobId);
+        $pipe->zrem($this->processingZKey($queue), (string) $jobId);
 
         if ($delaySeconds > 0) {
             // Add to delayed ZSET with future timestamp
             $availableAt = time() + $delaySeconds;
-            $this->redis->zadd($this->delayedKey($queue), [$jobId => $availableAt]);
+            $pipe->zadd($this->delayedKey($queue), [$jobId => $availableAt]);
         } else {
             // Immediate re-enqueue
-            $this->enqueue($queue, $jobId);
+            $pipe->lpush($this->pendingKey($queue), [(string) $jobId]);
         }
+        $pipe->execute();
     }
 
     /**
      * Promote delayed jobs that are now due to the pending queue.
      *
      * @param string $queue Queue name
+     * @param int $limit Maximum number of jobs to promote
      * @return int Number of jobs promoted
      */
-    public function promoteDelayedJobs(string $queue): int
+    public function promoteDelayedJobs(string $queue, int $limit = 100): int
     {
         $now = time();
-        $dueJobs = $this->redis->zrangebyscore($this->delayedKey($queue), '-inf', (string) $now);
 
-        if (empty($dueJobs)) {
-            return 0;
-        }
+        $result = $this->redis->eval(
+            self::PROMOTE_DELAYED_LUA,
+            2,
+            $this->delayedKey($queue),
+            $this->pendingKey($queue),
+            (string) $now,
+            (string) $limit
+        );
 
-        /** @var \Predis\Pipeline\Pipeline $pipe */
-        $pipe = $this->redis->pipeline();
-        foreach ($dueJobs as $jobId) {
-            $pipe->lpush($this->pendingKey($queue), [(string) $jobId]);
-        }
-        $pipe->zremrangebyscore($this->delayedKey($queue), '-inf', (string) $now);
-        $pipe->execute();
-
-        return count($dueJobs);
+        return (int) $result;
     }
 
     /**
@@ -125,31 +198,24 @@ final class RedisQueueDriver implements QueueDriverInterface
      *
      * @param string $queue Queue name
      * @param int $ttlSeconds Time threshold - jobs processing longer than this are considered stale
+     * @param int $limit Maximum number of jobs to recover
      * @return int Number of jobs recovered
      */
-    public function recoverStaleProcessing(string $queue, int $ttlSeconds): int
+    public function recoverStaleProcessing(string $queue, int $ttlSeconds, int $limit = 100): int
     {
         $staleThreshold = time() - $ttlSeconds;
-        $staleJobs = $this->redis->zrangebyscore(
+
+        $result = $this->redis->eval(
+            self::RECOVER_STALE_LUA,
+            3,
             $this->processingZKey($queue),
-            '-inf',
-            (string) $staleThreshold
+            $this->processingKey($queue),
+            $this->pendingKey($queue),
+            (string) $staleThreshold,
+            (string) $limit
         );
 
-        if (empty($staleJobs)) {
-            return 0;
-        }
-
-        /** @var \Predis\Pipeline\Pipeline $pipe */
-        $pipe = $this->redis->pipeline();
-        foreach ($staleJobs as $jobId) {
-            $pipe->lrem($this->processingKey($queue), 1, (string) $jobId);
-            $pipe->lpush($this->pendingKey($queue), [(string) $jobId]);
-        }
-        $pipe->zremrangebyscore($this->processingZKey($queue), '-inf', (string) $staleThreshold);
-        $pipe->execute();
-
-        return count($staleJobs);
+        return (int) $result;
     }
 
     /**
@@ -202,7 +268,6 @@ final class RedisQueueDriver implements QueueDriverInterface
 
     /**
      * Enqueue multiple job IDs efficiently using Redis pipeline.
-     *
      * @param string $queue Queue name
      * @param int[] $jobIds Array of job identifiers
      */
@@ -213,12 +278,32 @@ final class RedisQueueDriver implements QueueDriverInterface
         }
 
         $key = $this->pendingKey($queue);
-        /** @var \Predis\Pipeline\Pipeline $pipe */
-        $pipe = $this->redis->pipeline();
-        foreach ($jobIds as $jobId) {
-            $pipe->lpush($key, [(string) $jobId]);
-        }
-        $pipe->execute();
+        $stringJobIds = array_map(fn($id) => (string) $id, $jobIds);
+        $this->redis->lpush($key, $stringJobIds);
+    }
+
+    /**
+     * Get all pending job IDs in the queue.
+     *
+     * @param string $queue Queue name
+     * @return int[] Pending job IDs
+     */
+    public function getPendingIds(string $queue): array
+    {
+        $results = $this->redis->lrange($this->pendingKey($queue), 0, -1);
+        return array_map('intval', $results ?: []);
+    }
+
+    /**
+     * Get all delayed job IDs in the queue.
+     *
+     * @param string $queue Queue name
+     * @return int[] Delayed job IDs
+     */
+    public function getDelayedIds(string $queue): array
+    {
+        $results = $this->redis->zrange($this->delayedKey($queue), 0, -1);
+        return array_map('intval', $results ?: []);
     }
 
     private function pendingKey(string $queue): string
