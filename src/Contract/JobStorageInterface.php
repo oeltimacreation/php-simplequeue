@@ -31,6 +31,14 @@ interface JobStorageInterface
     ): int;
 
     /**
+     * Batch create multiple job records in a single operation.
+     *
+     * @param array<int, array<string, mixed>> $jobs Array of job definitions
+     * @return int[] Array of created job IDs
+     */
+    public function createJobs(array $jobs): array;
+
+    /**
      * Get job details by ID.
      *
      * @param int $id Job identifier

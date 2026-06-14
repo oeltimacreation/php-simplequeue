@@ -67,6 +67,20 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
         return $id;
     }
 
+    public function createJobs(array $jobs): array
+    {
+        $ids = [];
+        foreach ($jobs as $job) {
+            $type = $job['type'];
+            $payload = $job['payload'];
+            $queue = $job['queue'] ?? 'default';
+            $maxAttempts = $job['maxAttempts'] ?? 3;
+            $requestId = $job['requestId'] ?? null;
+            $ids[] = $this->createJob($type, $payload, $queue, $maxAttempts, $requestId);
+        }
+        return $ids;
+    }
+
     public function find(int $id): ?JobData
     {
         if (!isset($this->jobs[$id])) {

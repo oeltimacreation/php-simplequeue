@@ -439,4 +439,30 @@ class PdoJobStorageTest extends TestCase
         $this->assertNull($job->leaseToken);
         $this->assertNotNull($job->completedAt);
     }
+
+    public function testCreateJobsBatch(): void
+    {
+        $pdo = $this->createSqlitePdo();
+        $storage = new PdoJobStorage($pdo);
+
+        $jobs = [
+            ['type' => 'test.job1', 'payload' => ['a' => 1], 'queue' => 'default', 'maxAttempts' => 3],
+            ['type' => 'test.job2', 'payload' => ['b' => 2], 'queue' => 'default', 'maxAttempts' => 5],
+        ];
+
+        $ids = $storage->createJobs($jobs);
+        $this->assertCount(2, $ids);
+
+        $job1 = $storage->find($ids[0]);
+        $this->assertNotNull($job1);
+        $this->assertEquals('test.job1', $job1->type);
+        $this->assertEquals(['a' => 1], $job1->payload);
+        $this->assertEquals(3, $job1->maxAttempts);
+
+        $job2 = $storage->find($ids[1]);
+        $this->assertNotNull($job2);
+        $this->assertEquals('test.job2', $job2->type);
+        $this->assertEquals(['b' => 2], $job2->payload);
+        $this->assertEquals(5, $job2->maxAttempts);
+    }
 }

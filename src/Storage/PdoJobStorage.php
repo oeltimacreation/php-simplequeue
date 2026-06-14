@@ -202,6 +202,73 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         );
     }
 
+    public function createJobs(array $jobs): array
+    {
+        if (empty($jobs)) {
+            return [];
+        }
+
+        $now = $this->now();
+
+        return $this->withReconnect(function (PDO $pdo) use ($jobs, $now): array {
+            $driver = (string) $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+
+            $columns = [
+                'queue', 'type', 'status', 'payload', 'attempts', 'max_attempts',
+                'available_at', 'request_id', 'created_at', 'updated_at'
+            ];
+
+            $placeholders = [];
+            $params = [];
+
+            foreach ($jobs as $job) {
+                $placeholders[] = "(?, ?, 'pending', ?, 0, ?, ?, ?, ?, ?)";
+                $params[] = $job['queue'] ?? 'default';
+                $params[] = $job['type'];
+                $params[] = json_encode($job['payload']);
+                $params[] = $job['maxAttempts'] ?? 3;
+                $params[] = $now;
+                $params[] = $job['requestId'] ?? null;
+                $params[] = $now;
+                $params[] = $now;
+            }
+
+            $sql = "INSERT INTO {$this->table} (" . implode(', ', $columns) . ") " .
+                "VALUES " . implode(', ', $placeholders);
+
+            if ($driver === 'pgsql') {
+                $sql .= " RETURNING id";
+                $stmt = $pdo->prepare($sql);
+                if (!$stmt instanceof PDOStatement) {
+                    throw new \RuntimeException('Failed to prepare SQL statement');
+                }
+                $stmt->execute($params);
+                return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN, 0));
+            }
+
+            $stmt = $pdo->prepare($sql);
+            if (!$stmt instanceof PDOStatement) {
+                throw new \RuntimeException('Failed to prepare SQL statement');
+            }
+            $stmt->execute($params);
+            $count = $stmt->rowCount();
+
+            if ($count === 0) {
+                return [];
+            }
+
+            $lastId = (int) $pdo->lastInsertId();
+
+            if ($driver === 'sqlite') {
+                $firstId = $lastId - $count + 1;
+                return range($firstId, $lastId);
+            } else {
+                $firstId = $lastId;
+                return range($firstId, $firstId + $count - 1);
+            }
+        });
+    }
+
     public function find(int $id): ?JobData
     {
         $sql = "SELECT * FROM {$this->table} WHERE id = :id";

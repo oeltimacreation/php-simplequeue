@@ -90,10 +90,17 @@ final class JobDispatcher
         string $queue = 'default',
         int $maxAttempts = 3
     ): array {
-        $jobIds = [];
+        $jobs = [];
         foreach ($payloads as $payload) {
-            $jobIds[] = $this->storage->createJob($type, $payload, $queue, $maxAttempts);
+            $jobs[] = [
+                'type' => $type,
+                'payload' => $payload,
+                'queue' => $queue,
+                'maxAttempts' => $maxAttempts,
+            ];
         }
+
+        $jobIds = $this->storage->createJobs($jobs);
 
         $driver = $this->queueManager->driver();
         if ($driver instanceof SupportsBatchEnqueue) {
