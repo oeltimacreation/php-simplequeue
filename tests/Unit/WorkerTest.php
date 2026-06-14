@@ -604,4 +604,422 @@ class WorkerTest extends TestCase
 
         $this->assertTrue($result);
     }
+
+    public function testRunReturnsExitLockUnavailableOnLockFailure(): void
+    {
+        $lockFile = tempnam(sys_get_temp_dir(), 'sq_lock_');
+        $fp = fopen($lockFile, 'c');
+        flock($fp, LOCK_EX);
+
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $worker = $this->createWorkerWithDriver($driver, [
+            'lock_file' => $lockFile,
+        ]);
+
+        $exitCode = $worker->run();
+        $this->assertEquals(Worker::EXIT_LOCK_UNAVAILABLE, $exitCode);
+
+        fclose($fp);
+        unlink($lockFile);
+    }
+
+    public function testRunReturnsExitSuccessOnGracefulShutdown(): void
+    {
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $worker = $this->createWorkerWithDriver($driver);
+
+        $driver->expects($this->once())
+            ->method('dequeue')
+            ->willReturnCallback(function () use ($worker) {
+                $worker->stop();
+                return null;
+            });
+
+        $exitCode = $worker->run();
+        $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
+    }
+
+    public function testRunRetriesWithBackoffOnInfrastructureError(): void
+    {
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $worker = $this->createWorkerWithDriver($driver, [
+            'retry_base_delay' => 0,
+            'retry_max_delay' => 0,
+        ]);
+
+        $calls = 0;
+        $driver->expects($this->exactly(2))
+            ->method('dequeue')
+            ->willReturnCallback(function () use (&$calls, $worker) {
+                $calls++;
+                if ($calls === 1) {
+                    throw new \PDOException('Connection lost');
+                }
+                $worker->stop();
+                return null;
+            });
+
+        $this->logger->expects($this->atLeastOnce())
+            ->method('error')
+            ->with(
+                'Infrastructure error encountered. Backing off.',
+                $this->anything()
+            );
+
+        $exitCode = $worker->run();
+        $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
+    }
+
+    public function testWorkerExitsAfterMaxJobs(): void
+    {
+        $handler = new class implements JobHandlerInterface {
+            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
+            {
+                return true;
+            }
+        };
+        $this->registry->register('test.job', get_class($handler));
+
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $jobData = new JobData(
+            id: 111,
+            queue: 'default',
+            type: 'test.job',
+            status: 'running',
+            payload: [],
+            attempts: 0,
+            maxAttempts: 3,
+            createdAt: date('Y-m-d H:i:s'),
+            updatedAt: date('Y-m-d H:i:s')
+        );
+
+        $driver->expects($this->exactly(2))
+            ->method('dequeue')
+            ->willReturn(111);
+
+        $this->storage->expects($this->exactly(2))
+            ->method('claimById')
+            ->willReturn(new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, 'worker', 'token'));
+
+        $this->storage->expects($this->exactly(2))
+            ->method('markCompleted')
+            ->willReturn(true);
+
+        $worker = $this->createWorkerWithDriver($driver, [
+            'max_jobs' => 2,
+        ]);
+
+        $exitCode = $worker->run();
+        $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
+    }
+
+    public function testWorkerExitsAfterMaxTime(): void
+    {
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $clock = $this->createMock(\Oeltima\SimpleQueue\Contract\ClockInterface::class);
+
+        $time = 100.0;
+        $clock->expects($this->any())
+            ->method('monotonic')
+            ->willReturnCallback(function () use (&$time) {
+                $currentTime = $time;
+                $time += 5.0; // Automatically advance time on each check
+                return $currentTime;
+            });
+
+        $worker = $this->createWorkerWithDriver($driver, [
+            'clock' => $clock,
+            'max_time' => 5,
+        ]);
+
+        $exitCode = $worker->run();
+        $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
+    }
+
+    public function testWorkerExitsOnMemoryLimit(): void
+    {
+        $driver = $this->createMock(QueueDriverInterface::class);
+
+        $worker = $this->createWorkerWithDriver($driver, [
+            'memory_limit' => 1,
+        ]);
+
+        $exitCode = $worker->run();
+        $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
+    }
+
+    public function testWorkerStopsWhenEmpty(): void
+    {
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $driver->expects($this->once())
+            ->method('dequeue')
+            ->willReturn(null);
+
+        $worker = $this->createWorkerWithDriver($driver, [
+            'stop_when_empty' => true,
+        ]);
+
+        $exitCode = $worker->run();
+        $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
+    }
+
+    public function testThrottledMaintenanceIsCalled(): void
+    {
+        $driver = $this->getMockBuilder(QueueDriverInterface::class)
+            ->onlyMethods(['isAvailable', 'enqueue', 'dequeue', 'ack', 'nack'])
+            ->addMethods(['promoteDelayedJobs'])
+            ->getMock();
+
+        $clock = $this->createMock(\Oeltima\SimpleQueue\Contract\ClockInterface::class);
+
+        $time = 100.0;
+        $clock->expects($this->any())
+            ->method('monotonic')
+            ->willReturnCallback(function () use (&$time) {
+                return $time;
+            });
+
+        $driver->expects($this->exactly(3))
+            ->method('promoteDelayedJobs')
+            ->with('default')
+            ->willReturn(0);
+
+        $this->storage->expects($this->exactly(2))
+            ->method('recoverStaleJobs')
+            ->with(600)
+            ->willReturn(0);
+
+        $worker = $this->createWorkerWithDriver($driver, [
+            'clock' => $clock,
+            'promote_interval' => 5.0,
+            'recovery_interval' => 10.0,
+            'poll_timeout' => 0,
+        ]);
+
+        $calls = 0;
+        $driver->expects($this->any())
+            ->method('dequeue')
+            ->willReturnCallback(function () use (&$calls, &$time, $worker) {
+                $calls++;
+                if ($calls === 1) {
+                    $time = 106.0;
+                } elseif ($calls === 2) {
+                    $time = 111.0;
+                } else {
+                    $worker->stop();
+                }
+                return null;
+            });
+
+        $exitCode = $worker->run();
+        $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
+    }
+
+    public function testProgressCallbackTriggersUpdateProgressAndHeartbeat(): void
+    {
+        $handler = new class implements JobHandlerInterface {
+            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
+            {
+                if ($progressCallback !== null) {
+                    $progressCallback(45, 'Progress message');
+                }
+                return true;
+            }
+        };
+        $this->registry->register('test.job', get_class($handler));
+
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $jobData = new JobData(
+            id: 123,
+            queue: 'default',
+            type: 'test.job',
+            status: 'running',
+            payload: [],
+            attempts: 0,
+            maxAttempts: 3,
+            createdAt: date('Y-m-d H:i:s'),
+            updatedAt: date('Y-m-d H:i:s')
+        );
+
+        $driver->expects($this->once())
+            ->method('dequeue')
+            ->willReturn(123);
+
+        $claim = new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, 'worker-1', 'token-123');
+
+        $this->storage->expects($this->once())
+            ->method('claimById')
+            ->willReturn($claim);
+
+        $this->storage->expects($this->once())
+            ->method('updateProgress')
+            ->with($claim, 45, 'Progress message')
+            ->willReturn(true);
+
+        $this->storage->expects($this->once())
+            ->method('heartbeat')
+            ->with($claim)
+            ->willReturn(true);
+
+        $this->storage->expects($this->once())
+            ->method('markCompleted')
+            ->willReturn(true);
+
+        $worker = $this->createWorkerWithDriver($driver);
+        $worker->processOne();
+    }
+
+    public function testWorkerHandlesLostOwnershipOnJobCompletion(): void
+    {
+        $handler = new class implements JobHandlerInterface {
+            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
+            {
+                return true;
+            }
+        };
+        $this->registry->register('test.job', get_class($handler));
+
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $jobData = new JobData(
+            id: 123,
+            queue: 'default',
+            type: 'test.job',
+            status: 'running',
+            payload: [],
+            attempts: 0,
+            maxAttempts: 3,
+            createdAt: date('Y-m-d H:i:s'),
+            updatedAt: date('Y-m-d H:i:s')
+        );
+
+        $driver->expects($this->once())
+            ->method('dequeue')
+            ->willReturn(123);
+
+        $claim = new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, 'worker-1', 'token-123');
+
+        $this->storage->expects($this->once())
+            ->method('claimById')
+            ->willReturn($claim);
+
+        $this->storage->expects($this->once())
+            ->method('markCompleted')
+            ->willReturn(false);
+
+        $driver->expects($this->never())
+            ->method('ack');
+
+        $this->logger->expects($this->once())
+            ->method('warning')
+            ->with(
+                'Lost job ownership before completion ack',
+                ['job_id' => 123]
+            );
+
+        $worker = $this->createWorkerWithDriver($driver);
+        $worker->processOne();
+    }
+
+    public function testWorkerHandlesLostOwnershipOnRetryScheduling(): void
+    {
+        $handler = new class implements JobHandlerInterface {
+            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
+            {
+                throw new \RuntimeException('Temporary error');
+            }
+        };
+        $this->registry->register('test.job', get_class($handler));
+
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $jobData = new JobData(
+            id: 123,
+            queue: 'default',
+            type: 'test.job',
+            status: 'running',
+            payload: [],
+            attempts: 0,
+            maxAttempts: 3,
+            createdAt: date('Y-m-d H:i:s'),
+            updatedAt: date('Y-m-d H:i:s')
+        );
+
+        $driver->expects($this->once())
+            ->method('dequeue')
+            ->willReturn(123);
+
+        $claim = new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, 'worker-1', 'token-123');
+
+        $this->storage->expects($this->once())
+            ->method('claimById')
+            ->willReturn($claim);
+
+        $this->storage->expects($this->once())
+            ->method('scheduleRetry')
+            ->willReturn(false);
+
+        $driver->expects($this->never())
+            ->method('nack');
+
+        $this->logger->expects($this->once())
+            ->method('warning')
+            ->with(
+                'Lost job ownership before retry scheduling',
+                ['job_id' => 123]
+            );
+
+        $worker = $this->createWorkerWithDriver($driver);
+        $worker->processOne();
+    }
+
+    public function testWorkerHandlesLostOwnershipOnMarkingFailed(): void
+    {
+        $handler = new class implements JobHandlerInterface {
+            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
+            {
+                throw new \RuntimeException('Fatal error');
+            }
+        };
+        $this->registry->register('test.job', get_class($handler));
+
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $jobData = new JobData(
+            id: 123,
+            queue: 'default',
+            type: 'test.job',
+            status: 'running',
+            payload: [],
+            attempts: 2,
+            maxAttempts: 3,
+            createdAt: date('Y-m-d H:i:s'),
+            updatedAt: date('Y-m-d H:i:s')
+        );
+
+        $driver->expects($this->once())
+            ->method('dequeue')
+            ->willReturn(123);
+
+        $claim = new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, 'worker-1', 'token-123');
+
+        $this->storage->expects($this->once())
+            ->method('claimById')
+            ->willReturn($claim);
+
+        $this->storage->expects($this->once())
+            ->method('markFailed')
+            ->willReturn(false);
+
+        $driver->expects($this->never())
+            ->method('ack');
+
+        $this->logger->expects($this->once())
+            ->method('warning')
+            ->with(
+                'Lost job ownership before marking failed',
+                ['job_id' => 123]
+            );
+
+        $worker = $this->createWorkerWithDriver($driver);
+        $worker->processOne();
+    }
 }
+
