@@ -7,6 +7,7 @@ namespace Oeltima\SimpleQueue\Tests\Unit;
 use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Storage\PdoJobStorage;
 use PDO;
+use PDOStatement;
 use PHPUnit\Framework\TestCase;
 
 class PdoJobStorageTest extends TestCase
@@ -15,6 +16,13 @@ class PdoJobStorageTest extends TestCase
     {
         $pdo = new PDO('sqlite::memory:');
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $this->createSchema($pdo);
+
+        return $pdo;
+    }
+
+    private function createSchema(PDO $pdo): void
+    {
         $pdo->exec('
             CREATE TABLE background_jobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,7 +47,6 @@ class PdoJobStorageTest extends TestCase
                 updated_at TEXT
             )
         ');
-        return $pdo;
     }
 
     public function testConstructorAcceptsPdoInstance(): void
@@ -134,6 +141,55 @@ class PdoJobStorageTest extends TestCase
 
         $storage->createJob('another.job', []);
         $this->assertEquals(1, $callCount, 'Should reuse existing healthy connection');
+    }
+
+    public function testDoesNotRunHealthCheckBeforeEveryQuery(): void
+    {
+        $pdo = new class ('sqlite::memory:') extends PDO {
+            public int $queryCount = 0;
+
+            public function query(string $query, ?int $fetchMode = null, mixed ...$fetchModeArgs): PDOStatement|false
+            {
+                $this->queryCount++;
+
+                return parent::query($query, $fetchMode, ...$fetchModeArgs);
+            }
+        };
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $this->createSchema($pdo);
+
+        $storage = new PdoJobStorage($pdo);
+
+        $id = $storage->createJob('test.job', []);
+        $storage->find($id);
+
+        $this->assertSame(0, $pdo->queryCount);
+    }
+
+    public function testReconnectsAfterConnectionLossException(): void
+    {
+        $callCount = 0;
+        $factory = function () use (&$callCount): PDO {
+            $callCount++;
+
+            if ($callCount === 1) {
+                return new class ('sqlite::memory:') extends PDO {
+                    public function prepare(string $query, array $options = []): PDOStatement|false
+                    {
+                        throw new \PDOException('SQLSTATE[HY000]: 2006 MySQL server has gone away', 2006);
+                    }
+                };
+            }
+
+            return $this->createSqlitePdo();
+        };
+
+        $storage = new PdoJobStorage($factory);
+
+        $id = $storage->createJob('test.job', []);
+
+        $this->assertSame(1, $id);
+        $this->assertSame(2, $callCount);
     }
 
     public function testCreateJobStoresPayload(): void

@@ -10,6 +10,8 @@ use Oeltima\SimpleQueue\Contract\JobStorageAdminInterface;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\SystemClock;
 use PDO;
+use PDOException;
+use PDOStatement;
 
 /**
  * PDO-based job storage implementation.
@@ -54,7 +56,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
      */
     protected function getPdo(): PDO
     {
-        if ($this->pdo !== null && $this->isConnectionAlive()) {
+        if ($this->pdo !== null) {
             return $this->pdo;
         }
 
@@ -63,29 +65,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
             return $this->pdo;
         }
 
-        if ($this->pdo === null) {
-            throw new \RuntimeException('PDO connection is not available and no factory provided');
-        }
-
-        return $this->pdo;
-    }
-
-    /**
-     * Check if the current PDO connection is still alive.
-     */
-    protected function isConnectionAlive(): bool
-    {
-        if ($this->pdo === null) {
-            return false;
-        }
-
-        try {
-            $this->pdo->query('SELECT 1');
-            return true;
-        } catch (\PDOException) {
-            $this->pdo = null;
-            return false;
-        }
+        throw new \RuntimeException('PDO connection is not available and no factory provided');
     }
 
     /**
@@ -94,6 +74,76 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
     public function reconnect(): void
     {
         $this->pdo = null;
+    }
+
+    /**
+     * Run a database operation, retrying once after a connection-loss exception.
+     *
+     * @template T
+     * @param callable(PDO): T $operation Database operation
+     * @return T Operation result
+     */
+    protected function withReconnect(callable $operation): mixed
+    {
+        try {
+            return $operation($this->getPdo());
+        } catch (PDOException $e) {
+            if ($this->connectionFactory === null || !$this->isConnectionException($e)) {
+                throw $e;
+            }
+
+            $this->pdo = null;
+            return $operation($this->getPdo());
+        }
+    }
+
+    /**
+     * Prepare and execute a SQL statement with reconnect support.
+     *
+     * @param string $sql SQL statement
+     * @param array<string, mixed> $params Bound parameters
+     * @return PDOStatement Executed statement
+     */
+    protected function execute(string $sql, array $params = []): PDOStatement
+    {
+        return $this->withReconnect(function (PDO $pdo) use ($sql, $params): PDOStatement {
+            $stmt = $pdo->prepare($sql);
+            if (!$stmt instanceof PDOStatement) {
+                throw new \RuntimeException('Failed to prepare SQL statement');
+            }
+
+            $stmt->execute($params);
+            return $stmt;
+        });
+    }
+
+    /**
+     * Check whether a PDO exception likely represents a lost connection.
+     *
+     * @param PDOException $e PDO exception
+     * @return bool True for connection-loss errors
+     */
+    protected function isConnectionException(PDOException $e): bool
+    {
+        $message = strtolower($e->getMessage());
+        $code = (string) $e->getCode();
+        $errorInfoCode = isset($e->errorInfo[1]) ? (string) $e->errorInfo[1] : '';
+
+        if (in_array($code, ['2006', '2013', '08003', '08006'], true)) {
+            return true;
+        }
+
+        if (in_array($errorInfoCode, ['2006', '2013'], true)) {
+            return true;
+        }
+
+        foreach (['server has gone away', 'lost connection', 'connection refused', 'connection is closed'] as $needle) {
+            if (str_contains($message, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -128,26 +178,32 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
             NULL, NULL, :request_id, :created_at, :updated_at
         )";
 
-        $pdo = $this->getPdo();
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([
-            'queue' => $queue,
-            'type' => $type,
-            'payload' => json_encode($payload),
-            'max_attempts' => $maxAttempts,
-            'request_id' => $requestId,
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
+        return $this->withReconnect(
+            function (PDO $pdo) use ($sql, $queue, $type, $payload, $maxAttempts, $requestId, $now): int {
+                $stmt = $pdo->prepare($sql);
+                if (!$stmt instanceof PDOStatement) {
+                    throw new \RuntimeException('Failed to prepare SQL statement');
+                }
 
-        return (int) $pdo->lastInsertId();
+                $stmt->execute([
+                    'queue' => $queue,
+                    'type' => $type,
+                    'payload' => json_encode($payload),
+                    'max_attempts' => $maxAttempts,
+                    'request_id' => $requestId,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+
+                return (int) $pdo->lastInsertId();
+            }
+        );
     }
 
     public function find(int $id): ?JobData
     {
         $sql = "SELECT * FROM {$this->table} WHERE id = :id";
-        $stmt = $this->getPdo()->prepare($sql);
-        $stmt->execute(['id' => $id]);
+        $stmt = $this->execute($sql, ['id' => $id]);
 
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if ($row === false) {
@@ -164,8 +220,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
             AND status IN ('pending', 'running')
             LIMIT 1";
 
-        $stmt = $this->getPdo()->prepare($sql);
-        $stmt->execute(['request_id' => $requestId]);
+        $stmt = $this->execute($sql, ['request_id' => $requestId]);
 
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if ($row === false) {
@@ -186,8 +241,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
             ORDER BY id ASC
             LIMIT 1";
 
-        $stmt = $this->getPdo()->prepare($sql);
-        $stmt->execute(['queue' => $queue, 'now' => $now]);
+        $stmt = $this->execute($sql, ['queue' => $queue, 'now' => $now]);
 
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if ($row === false || empty($row['id'])) {
@@ -211,8 +265,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
             AND status = 'pending'
             AND (available_at IS NULL OR available_at <= :now)";
 
-        $stmt = $this->getPdo()->prepare($sql);
-        $stmt->execute([
+        $stmt = $this->execute($sql, [
             'id' => $id,
             'worker_id' => $workerId,
             'locked_at' => $now,
@@ -235,8 +288,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
                 updated_at = :updated_at
             WHERE id = :id";
 
-        $stmt = $this->getPdo()->prepare($sql);
-        $stmt->execute([
+        $stmt = $this->execute($sql, [
             'id' => $id,
             'result' => $result === null ? null : json_encode($result),
             'completed_at' => $now,
@@ -258,8 +310,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
                 updated_at = :updated_at
             WHERE id = :id";
 
-        $stmt = $this->getPdo()->prepare($sql);
-        $stmt->execute([
+        $stmt = $this->execute($sql, [
             'id' => $id,
             'error_message' => $errorMessage,
             'error_trace' => $errorTrace,
@@ -280,8 +331,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
                 updated_at = :updated_at
             WHERE id = :id";
 
-        $stmt = $this->getPdo()->prepare($sql);
-        $stmt->execute([
+        $stmt = $this->execute($sql, [
             'id' => $id,
             'progress' => $progress,
             'message' => $message,
@@ -306,8 +356,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
                 updated_at = :updated_at
             WHERE id = :id";
 
-        $stmt = $this->getPdo()->prepare($sql);
-        $stmt->execute([
+        $stmt = $this->execute($sql, [
             'id' => $id,
             'attempts' => $attempts,
             'available_at' => $availableAt,
@@ -332,8 +381,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
             WHERE status = 'running'
             AND locked_at < :stale_threshold";
 
-        $stmt = $this->getPdo()->prepare($sql);
-        $stmt->execute([
+        $stmt = $this->execute($sql, [
             'stale_threshold' => $staleThreshold,
             'updated_at' => $now,
         ]);
@@ -367,13 +415,23 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
 
         $sql .= " ORDER BY id DESC LIMIT :limit OFFSET :offset";
 
-        $stmt = $this->getPdo()->prepare($sql);
-        foreach ($params as $key => $value) {
-            $stmt->bindValue($key, $value);
-        }
-        $stmt->bindValue('limit', $limit, PDO::PARAM_INT);
-        $stmt->bindValue('offset', $offset, PDO::PARAM_INT);
-        $stmt->execute();
+        $stmt = $this->withReconnect(
+            function (PDO $pdo) use ($sql, $params, $limit, $offset): PDOStatement {
+                $stmt = $pdo->prepare($sql);
+                if (!$stmt instanceof PDOStatement) {
+                    throw new \RuntimeException('Failed to prepare SQL statement');
+                }
+
+                foreach ($params as $key => $value) {
+                    $stmt->bindValue($key, $value);
+                }
+                $stmt->bindValue('limit', $limit, PDO::PARAM_INT);
+                $stmt->bindValue('offset', $offset, PDO::PARAM_INT);
+                $stmt->execute();
+
+                return $stmt;
+            }
+        );
 
         $jobs = [];
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
@@ -405,8 +463,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
             $params['queue'] = $queue;
         }
 
-        $stmt = $this->getPdo()->prepare($sql);
-        $stmt->execute($params);
+        $stmt = $this->execute($sql, $params);
 
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         return (int) ($row['cnt'] ?? 0);
@@ -429,8 +486,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
             WHERE status IN ('completed', 'cancelled')
             AND completed_at < :threshold";
 
-        $stmt = $this->getPdo()->prepare($sql);
-        $stmt->execute(['threshold' => $threshold]);
+        $stmt = $this->execute($sql, ['threshold' => $threshold]);
 
         return $stmt->rowCount();
     }
