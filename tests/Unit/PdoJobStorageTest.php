@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue\Tests\Unit;
 
+use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Storage\PdoJobStorage;
 use PDO;
 use PHPUnit\Framework\TestCase;
@@ -118,6 +119,63 @@ class PdoJobStorageTest extends TestCase
 
         $job = $storage->find($id);
         $this->assertEquals($payload, $job->payload);
+    }
+
+    public function testCreateJobUsesInjectedClock(): void
+    {
+        $pdo = $this->createSqlitePdo();
+        $clock = new class implements ClockInterface {
+            public function now(): string
+            {
+                return '2026-01-02 03:04:05';
+            }
+
+            public function timestamp(): int
+            {
+                return 1767323045;
+            }
+
+            public function monotonic(): float
+            {
+                return 1.0;
+            }
+        };
+        $storage = new PdoJobStorage($pdo, 'background_jobs', $clock);
+
+        $id = $storage->createJob('test.job', []);
+        $job = $storage->find($id);
+
+        $this->assertEquals('2026-01-02 03:04:05', $job->createdAt);
+        $this->assertEquals('2026-01-02 03:04:05', $job->updatedAt);
+    }
+
+    public function testScheduleRetryUsesInjectedClock(): void
+    {
+        $pdo = $this->createSqlitePdo();
+        $clock = new class implements ClockInterface {
+            public function now(): string
+            {
+                return '2026-01-02 03:04:05';
+            }
+
+            public function timestamp(): int
+            {
+                return 1767323045;
+            }
+
+            public function monotonic(): float
+            {
+                return 1.0;
+            }
+        };
+        $storage = new PdoJobStorage($pdo, 'background_jobs', $clock);
+
+        $id = $storage->createJob('test.job', []);
+        $storage->claimJob($id, 'worker-1');
+        $storage->scheduleRetry($id, 1, 60, 'Temporary failure');
+
+        $job = $storage->find($id);
+        $this->assertEquals('2026-01-02 03:05:05', $job->availableAt);
     }
 
     public function testClaimJobLocksProperly(): void

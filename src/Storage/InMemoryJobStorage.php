@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue\Storage;
 
+use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\JobData;
 use Oeltima\SimpleQueue\Contract\JobStorageAdminInterface;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
+use Oeltima\SimpleQueue\SystemClock;
 
 /**
  * In-memory job storage for testing purposes.
@@ -21,6 +23,11 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
 
     private int $nextId = 1;
     private string $dateFormat = 'Y-m-d H:i:s';
+
+    public function __construct(
+        private readonly ClockInterface $clock = new SystemClock()
+    ) {
+    }
 
     public function createJob(
         string $type,
@@ -172,7 +179,7 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
         }
 
         $now = $this->now();
-        $availableAt = date($this->dateFormat, strtotime($now) + $delaySeconds);
+        $availableAt = gmdate($this->dateFormat, (int) strtotime($now) + $delaySeconds);
 
         $this->jobs[$id]['status'] = 'pending';
         $this->jobs[$id]['attempts'] = $attempts;
@@ -188,7 +195,7 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
     public function recoverStaleJobs(int $ttlSeconds): int
     {
         $now = $this->now();
-        $staleThreshold = date($this->dateFormat, strtotime($now) - $ttlSeconds);
+        $staleThreshold = gmdate($this->dateFormat, (int) strtotime($now) - $ttlSeconds);
         $count = 0;
 
         foreach ($this->jobs as &$job) {
@@ -247,9 +254,9 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
 
     public function pruneCompleted(int $days = 7): int
     {
-        $threshold = date(
+        $threshold = gmdate(
             $this->dateFormat,
-            (int) strtotime("-{$days} days")
+            $this->clock->timestamp() - ($days * 86400)
         );
         $count = 0;
 
@@ -288,6 +295,6 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
 
     private function now(): string
     {
-        return date($this->dateFormat);
+        return $this->clock->now();
     }
 }

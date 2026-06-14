@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue\Storage;
 
+use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\JobData;
 use Oeltima\SimpleQueue\Contract\JobStorageAdminInterface;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
+use Oeltima\SimpleQueue\SystemClock;
 use PDO;
 
 /**
@@ -30,9 +32,13 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
     /**
      * @param PDO|callable $connection PDO instance or factory callable (fn(): PDO)
      * @param string $table Table name for jobs (default: 'background_jobs')
+     * @param ClockInterface|null $clock Clock implementation
      */
-    public function __construct(PDO|callable $connection, string $table = 'background_jobs')
-    {
+    public function __construct(
+        PDO|callable $connection,
+        string $table = 'background_jobs',
+        private readonly ?ClockInterface $clock = null
+    ) {
         if ($connection instanceof PDO) {
             $this->pdo = $connection;
         } else {
@@ -275,7 +281,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
     public function scheduleRetry(int $id, int $attempts, int $delaySeconds, ?string $errorMessage = null): bool
     {
         $now = $this->now();
-        $availableAt = date($this->dateFormat, strtotime($now) + $delaySeconds);
+        $availableAt = gmdate($this->dateFormat, (int) strtotime($now) + $delaySeconds);
 
         $sql = "UPDATE {$this->table}
             SET status = 'pending',
@@ -302,7 +308,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
     public function recoverStaleJobs(int $ttlSeconds): int
     {
         $now = $this->now();
-        $staleThreshold = date($this->dateFormat, strtotime($now) - $ttlSeconds);
+        $staleThreshold = gmdate($this->dateFormat, (int) strtotime($now) - $ttlSeconds);
 
         $sql = "UPDATE {$this->table}
             SET status = 'pending',
@@ -401,9 +407,9 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
      */
     public function pruneCompleted(int $days = 7): int
     {
-        $threshold = date(
+        $threshold = gmdate(
             $this->dateFormat,
-            (int) strtotime("-{$days} days")
+            $this->clock()->timestamp() - ($days * 86400)
         );
 
         $sql = "DELETE FROM {$this->table}
@@ -418,6 +424,11 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
 
     protected function now(): string
     {
-        return date($this->dateFormat);
+        return $this->clock()->now();
+    }
+
+    private function clock(): ClockInterface
+    {
+        return $this->clock ?? new SystemClock();
     }
 }
