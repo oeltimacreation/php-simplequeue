@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a SQL migration example for upgrading existing MySQL, PostgreSQL, and SQLite job tables to lease-based claims.
 - Added exit codes (`EXIT_SUCCESS`, `EXIT_ERROR`, `EXIT_LOCK_UNAVAILABLE`) to `Worker::run()` for better process supervision.
 - Added worker recycling limits (`max_jobs`, `max_time`, `memory_limit`) and a `stop_when_empty` option to prevent unbounded memory growth and support clean process recycling.
+- Added attempts incrementing and poison job handling during stale job recovery to prevent infinite retry loops.
 
 ### Changed
 
@@ -23,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING**: New job schemas require `available_at` to be non-null and include `lease_token` for fenced claim ownership.
 - **BREAKING**: `JobStorageInterface` methods (`markCompleted`, `markFailed`, `updateProgress`, `scheduleRetry`, `heartbeat`) now require a `ClaimedJob` value object instead of an integer `$id` to enforce fenced writes.
 - **BREAKING**: Removed `getNextPendingJobId` and `claimJob` from `JobStorageInterface` in favor of `claimNextAvailable` and `claimById`.
+- Progress updates now automatically issue a heartbeat to storage to keep the lease fresh for long-running jobs.
 - Rebuilt the worker execution loop to support backoff with jitter on infrastructure errors.
 - Throttled delayed job promotion and stale job recovery using monotonic timers to reduce idle database/Redis command overhead.
 - Improved graceful worker shutdown to release lock in a `finally` block and immediately release any claimed job back to the pending queue.

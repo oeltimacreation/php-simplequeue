@@ -437,6 +437,7 @@ final class Worker
 
         $progressCallback = function (int $percent, ?string $message = null) use ($claim): void {
             $this->storage->updateProgress($claim, $percent, $message);
+            $this->storage->heartbeat($claim);
         };
 
         $result = $handler->handle($job->id, $job->payload, $progressCallback);

@@ -252,11 +252,20 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
                 continue;
             }
 
-            $job['status'] = 'pending';
+            $nextAttempts = $job['attempts'] + 1;
+            if ($nextAttempts >= $job['max_attempts']) {
+                $job['status'] = 'failed';
+                $job['error_message'] = 'Job timed out / worker crashed (stale recovery)';
+                $job['completed_at'] = $now;
+            } else {
+                $job['status'] = 'pending';
+                $job['attempts'] = $nextAttempts;
+                $job['available_at'] = $now;
+            }
+
             $job['locked_by'] = null;
             $job['locked_at'] = null;
             $job['lease_token'] = null;
-            $job['available_at'] = $now;
             $job['updated_at'] = $now;
             $count++;
         }

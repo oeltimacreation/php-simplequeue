@@ -383,4 +383,60 @@ class InMemoryStorageTest extends TestCase
             $this->storage
         );
     }
+
+    public function testRecoverStaleJobsIncrementsAttempts(): void
+    {
+        $clock = $this->createMock(ClockInterface::class);
+        $clock->expects($this->any())
+            ->method('now')
+            ->willReturnOnConsecutiveCalls(
+                '2026-06-14 12:00:00',
+                '2026-06-14 12:00:00',
+                '2026-06-14 12:15:00',
+                '2026-06-14 12:15:00'
+            );
+
+        $storage = new InMemoryJobStorage($clock);
+
+        $id = $storage->createJob('test.job', [], 'default', 3);
+        $claim = $storage->claimById($id, 'worker-1');
+        $this->assertNotNull($claim);
+
+        $recovered = $storage->recoverStaleJobs(600);
+        $this->assertSame(1, $recovered);
+
+        $job = $storage->find($id);
+        $this->assertSame('pending', $job->status);
+        $this->assertSame(1, $job->attempts);
+        $this->assertNull($job->lockedBy);
+        $this->assertNull($job->leaseToken);
+    }
+
+    public function testRecoverStaleJobsFailsPoisonJobs(): void
+    {
+        $clock = $this->createMock(ClockInterface::class);
+        $clock->expects($this->any())
+            ->method('now')
+            ->willReturnOnConsecutiveCalls(
+                '2026-06-14 12:00:00',
+                '2026-06-14 12:00:00',
+                '2026-06-14 12:15:00',
+                '2026-06-14 12:15:00'
+            );
+
+        $storage = new InMemoryJobStorage($clock);
+
+        $id = $storage->createJob('test.job', [], 'default', 1);
+        $claim = $storage->claimById($id, 'worker-1');
+        $this->assertNotNull($claim);
+
+        $recovered = $storage->recoverStaleJobs(600);
+        $this->assertSame(1, $recovered);
+
+        $job = $storage->find($id);
+        $this->assertSame('failed', $job->status);
+        $this->assertSame('Job timed out / worker crashed (stale recovery)', $job->errorMessage);
+        $this->assertNull($job->lockedBy);
+        $this->assertNull($job->leaseToken);
+    }
 }

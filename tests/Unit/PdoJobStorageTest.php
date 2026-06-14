@@ -396,4 +396,47 @@ class PdoJobStorageTest extends TestCase
         $this->assertNull($job->lockedBy);
         $this->assertNotNull($job->availableAt);
     }
+
+    public function testRecoverStaleJobsIncrementsAttempts(): void
+    {
+        $pdo = $this->createSqlitePdo();
+        $storage = new PdoJobStorage($pdo);
+
+        $id = $storage->createJob('test.job', [], 'default', 3);
+        $claim = $storage->claimById($id, 'worker-1');
+        $this->assertNotNull($claim);
+
+        $pdo->exec("UPDATE background_jobs SET locked_at = '2026-01-01 00:00:00'");
+
+        $recovered = $storage->recoverStaleJobs(60);
+        $this->assertSame(1, $recovered);
+
+        $job = $storage->find($id);
+        $this->assertSame('pending', $job->status);
+        $this->assertSame(1, $job->attempts);
+        $this->assertNull($job->lockedBy);
+        $this->assertNull($job->leaseToken);
+    }
+
+    public function testRecoverStaleJobsFailsPoisonJobs(): void
+    {
+        $pdo = $this->createSqlitePdo();
+        $storage = new PdoJobStorage($pdo);
+
+        $id = $storage->createJob('test.job', [], 'default', 1);
+        $claim = $storage->claimById($id, 'worker-1');
+        $this->assertNotNull($claim);
+
+        $pdo->exec("UPDATE background_jobs SET locked_at = '2026-01-01 00:00:00'");
+
+        $recovered = $storage->recoverStaleJobs(60);
+        $this->assertSame(1, $recovered);
+
+        $job = $storage->find($id);
+        $this->assertSame('failed', $job->status);
+        $this->assertSame('Job timed out / worker crashed (stale recovery)', $job->errorMessage);
+        $this->assertNull($job->lockedBy);
+        $this->assertNull($job->leaseToken);
+        $this->assertNotNull($job->completedAt);
+    }
 }

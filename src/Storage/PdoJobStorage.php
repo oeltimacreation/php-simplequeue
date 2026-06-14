@@ -419,23 +419,47 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         $now = $this->now();
         $staleThreshold = gmdate($this->dateFormat, (int) strtotime($now) - $ttlSeconds);
 
-        $sql = "UPDATE {$this->table}
+        // Fail poison jobs that have reached max attempts
+        $sqlFailed = "UPDATE {$this->table}
+            SET status = 'failed',
+                error_message = 'Job timed out / worker crashed (stale recovery)',
+                completed_at = :completed_at,
+                locked_by = NULL,
+                locked_at = NULL,
+                lease_token = NULL,
+                updated_at = :updated_at
+            WHERE status = 'running'
+            AND locked_at < :stale_threshold
+            AND attempts + 1 >= max_attempts";
+
+        $stmtFailed = $this->execute($sqlFailed, [
+            'stale_threshold' => $staleThreshold,
+            'completed_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $countFailed = $stmtFailed->rowCount();
+
+        // Recover the rest to pending, incrementing attempts
+        $sqlPending = "UPDATE {$this->table}
             SET status = 'pending',
+                attempts = attempts + 1,
                 locked_by = NULL,
                 locked_at = NULL,
                 lease_token = NULL,
                 available_at = :available_at,
                 updated_at = :updated_at
             WHERE status = 'running'
-            AND locked_at < :stale_threshold";
+            AND locked_at < :stale_threshold
+            AND attempts + 1 < max_attempts";
 
-        $stmt = $this->execute($sql, [
+        $stmtPending = $this->execute($sqlPending, [
             'stale_threshold' => $staleThreshold,
             'available_at' => $now,
             'updated_at' => $now,
         ]);
+        $countPending = $stmtPending->rowCount();
 
-        return $stmt->rowCount();
+        return $countFailed + $countPending;
     }
 
     /**

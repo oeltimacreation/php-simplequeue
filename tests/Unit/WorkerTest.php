@@ -814,5 +814,59 @@ class WorkerTest extends TestCase
         $exitCode = $worker->run();
         $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
     }
+
+    public function testProgressCallbackTriggersUpdateProgressAndHeartbeat(): void
+    {
+        $handler = new class implements JobHandlerInterface {
+            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
+            {
+                if ($progressCallback !== null) {
+                    $progressCallback(45, 'Progress message');
+                }
+                return true;
+            }
+        };
+        $this->registry->register('test.job', get_class($handler));
+
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $jobData = new JobData(
+            id: 123,
+            queue: 'default',
+            type: 'test.job',
+            status: 'running',
+            payload: [],
+            attempts: 0,
+            maxAttempts: 3,
+            createdAt: date('Y-m-d H:i:s'),
+            updatedAt: date('Y-m-d H:i:s')
+        );
+
+        $driver->expects($this->once())
+            ->method('dequeue')
+            ->willReturn(123);
+
+        $claim = new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, 'worker-1', 'token-123');
+
+        $this->storage->expects($this->once())
+            ->method('claimById')
+            ->willReturn($claim);
+
+        $this->storage->expects($this->once())
+            ->method('updateProgress')
+            ->with($claim, 45, 'Progress message')
+            ->willReturn(true);
+
+        $this->storage->expects($this->once())
+            ->method('heartbeat')
+            ->with($claim)
+            ->willReturn(true);
+
+        $this->storage->expects($this->once())
+            ->method('markCompleted')
+            ->willReturn(true);
+
+        $worker = $this->createWorkerWithDriver($driver);
+        $worker->processOne();
+    }
 }
 
