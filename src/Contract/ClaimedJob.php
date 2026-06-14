@@ -7,7 +7,7 @@ namespace Oeltima\SimpleQueue\Contract;
 /**
  * Value object representing a job claim owned by a worker.
  */
-final readonly class ClaimedJob
+final class ClaimedJob
 {
     /**
      * @param JobData $job Claimed job data
@@ -15,9 +15,9 @@ final readonly class ClaimedJob
      * @param string $leaseToken Unique fencing token for this claim
      */
     public function __construct(
-        public JobData $job,
-        public string $workerId,
-        public string $leaseToken
+        public readonly JobData $job,
+        public readonly string $workerId,
+        public readonly string $leaseToken
     ) {
     }
 }
