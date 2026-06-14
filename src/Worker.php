@@ -43,6 +43,13 @@ final class Worker
     private int $retryMaxDelay;
     private ClockInterface $clock;
 
+    private int $maxJobs;
+    private int $maxTime;
+    private int $memoryLimit;
+    private bool $stopWhenEmpty;
+    private int $processedJobsCount = 0;
+    private float $startTime = 0.0;
+
     /**
      * @param JobStorageInterface $storage Job storage implementation
      * @param QueueManager $queueManager Queue manager instance
@@ -79,6 +86,11 @@ final class Worker
         $this->retryMaxDelay = (int) ($options['retry_max_delay'] ?? 300);
         $clock = $options['clock'] ?? null;
         $this->clock = $clock instanceof ClockInterface ? $clock : new SystemClock();
+
+        $this->maxJobs = (int) ($options['max_jobs'] ?? 0);
+        $this->maxTime = (int) ($options['max_time'] ?? 0);
+        $this->memoryLimit = (int) ($options['memory_limit'] ?? 0);
+        $this->stopWhenEmpty = (bool) ($options['stop_when_empty'] ?? false);
     }
 
     /**
@@ -105,9 +117,15 @@ final class Worker
             $driverClass = get_class($this->queueManager->driver());
             $this->logger->info('Using queue driver', ['driver' => $driverClass]);
 
+            $this->startTime = $this->clock->monotonic();
+            $this->processedJobsCount = 0;
             $consecutiveErrors = 0;
 
             while ($this->shouldRun) {
+                if ($this->limitsReached()) {
+                    break;
+                }
+
                 // Promote any delayed jobs that are now due
                 $driver = $this->queueManager->driver();
                 if (method_exists($driver, 'promoteDelayedJobs')) {
@@ -119,6 +137,10 @@ final class Worker
 
                     if ($claim === null) {
                         $consecutiveErrors = 0;
+                        if ($this->stopWhenEmpty) {
+                            $this->logger->info('Queue is empty and stop_when_empty is enabled. Stopping worker.');
+                            break;
+                        }
                         continue;
                     }
 
@@ -297,6 +319,29 @@ final class Worker
         usleep((int) ($seconds * 1_000_000));
     }
 
+    private function limitsReached(): bool
+    {
+        if ($this->maxJobs > 0 && $this->processedJobsCount >= $this->maxJobs) {
+            $this->logger->info('Worker limit reached: max_jobs', ['max_jobs' => $this->maxJobs]);
+            return true;
+        }
+
+        if ($this->maxTime > 0 && ($this->clock->monotonic() - $this->startTime) >= $this->maxTime) {
+            $this->logger->info('Worker limit reached: max_time', ['max_time' => $this->maxTime]);
+            return true;
+        }
+
+        if ($this->memoryLimit > 0 && memory_get_usage(true) >= $this->memoryLimit) {
+            $this->logger->info('Worker limit reached: memory_limit', [
+                'memory_limit' => $this->memoryLimit,
+                'current_memory' => memory_get_usage(true)
+            ]);
+            return true;
+        }
+
+        return false;
+    }
+
     private function processClaimedJob(ClaimedJob $claim, QueueDriverInterface $driver): void
     {
         $job = $claim->job;
@@ -335,6 +380,8 @@ final class Worker
         } catch (\Throwable $e) {
             $duration = round($this->clock->monotonic() - $startTime, 3);
             $this->handleJobFailure($claim, $e, $driver, $duration);
+        } finally {
+            $this->processedJobsCount++;
         }
     }
 

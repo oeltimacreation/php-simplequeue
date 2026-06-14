@@ -669,5 +669,93 @@ class WorkerTest extends TestCase
         $exitCode = $worker->run();
         $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
     }
+
+    public function testWorkerExitsAfterMaxJobs(): void
+    {
+        $handler = new class implements JobHandlerInterface {
+            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
+            {
+                return true;
+            }
+        };
+        $this->registry->register('test.job', get_class($handler));
+
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $jobData = new JobData(
+            id: 111,
+            queue: 'default',
+            type: 'test.job',
+            status: 'running',
+            payload: [],
+            attempts: 0,
+            maxAttempts: 3,
+            createdAt: date('Y-m-d H:i:s'),
+            updatedAt: date('Y-m-d H:i:s')
+        );
+
+        $driver->expects($this->exactly(2))
+            ->method('dequeue')
+            ->willReturn(111);
+
+        $this->storage->expects($this->exactly(2))
+            ->method('claimById')
+            ->willReturn(new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, 'worker', 'token'));
+
+        $this->storage->expects($this->exactly(2))
+            ->method('markCompleted')
+            ->willReturn(true);
+
+        $worker = $this->createWorkerWithDriver($driver, [
+            'max_jobs' => 2,
+        ]);
+
+        $exitCode = $worker->run();
+        $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
+    }
+
+    public function testWorkerExitsAfterMaxTime(): void
+    {
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $clock = $this->createMock(\Oeltima\SimpleQueue\Contract\ClockInterface::class);
+
+        $clock->expects($this->any())
+            ->method('monotonic')
+            ->willReturnOnConsecutiveCalls(100.0, 105.0, 115.0);
+
+        $worker = $this->createWorkerWithDriver($driver, [
+            'clock' => $clock,
+            'max_time' => 5,
+        ]);
+
+        $exitCode = $worker->run();
+        $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
+    }
+
+    public function testWorkerExitsOnMemoryLimit(): void
+    {
+        $driver = $this->createMock(QueueDriverInterface::class);
+
+        $worker = $this->createWorkerWithDriver($driver, [
+            'memory_limit' => 1,
+        ]);
+
+        $exitCode = $worker->run();
+        $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
+    }
+
+    public function testWorkerStopsWhenEmpty(): void
+    {
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $driver->expects($this->once())
+            ->method('dequeue')
+            ->willReturn(null);
+
+        $worker = $this->createWorkerWithDriver($driver, [
+            'stop_when_empty' => true,
+        ]);
+
+        $exitCode = $worker->run();
+        $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
+    }
 }
 
