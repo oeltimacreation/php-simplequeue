@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue;
 
+use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\JobData;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
@@ -36,6 +37,7 @@ final class Worker
     private int $stuckJobTtl;
     private int $retryBaseDelay;
     private int $retryMaxDelay;
+    private ClockInterface $clock;
 
     /**
      * @param JobStorageInterface $storage Job storage implementation
@@ -66,6 +68,8 @@ final class Worker
         $this->stuckJobTtl = (int) ($options['stuck_job_ttl'] ?? self::DEFAULT_STUCK_JOB_TTL);
         $this->retryBaseDelay = (int) ($options['retry_base_delay'] ?? 2);
         $this->retryMaxDelay = (int) ($options['retry_max_delay'] ?? 300);
+        $clock = $options['clock'] ?? null;
+        $this->clock = $clock instanceof ClockInterface ? $clock : new SystemClock();
     }
 
     /**
@@ -207,11 +211,11 @@ final class Worker
             'attempts' => $job->attempts + 1,
         ]);
 
-        $startTime = microtime(true);
+        $startTime = $this->clock->monotonic();
 
         try {
             $this->executeJob($job);
-            $duration = round(microtime(true) - $startTime, 3);
+            $duration = round($this->clock->monotonic() - $startTime, 3);
 
             $this->logger->info('Job completed', [
                 'job_id' => $jobId,
@@ -225,7 +229,7 @@ final class Worker
                 $this->logger->error('Failed to ack completed job', ['job_id' => $jobId, 'error' => $e->getMessage()]);
             }
         } catch (\Throwable $e) {
-            $duration = round(microtime(true) - $startTime, 3);
+            $duration = round($this->clock->monotonic() - $startTime, 3);
             $this->handleJobFailure($job, $e, $driver, $duration);
         }
     }
@@ -262,8 +266,8 @@ final class Worker
 
         try {
             if ($attempts < $job->maxAttempts) {
-                $delay = min($this->retryMaxDelay, (int) pow($this->retryBaseDelay, $attempts));
-                $this->scheduleRetry($job, $attempts, $e);
+                $delay = $this->calculateRetryDelay($attempts);
+                $this->scheduleRetry($job, $attempts, $delay, $e);
                 $driver->nack($this->queue, $job->id, $delay);
             } else {
                 $this->storage->markFailed($job->id, $e->getMessage(), $this->truncateTrace($e));
@@ -279,10 +283,8 @@ final class Worker
         }
     }
 
-    private function scheduleRetry(JobData $job, int $attempts, \Throwable $e): void
+    private function scheduleRetry(JobData $job, int $attempts, int $delay, \Throwable $e): void
     {
-        $delay = min($this->retryMaxDelay, (int) pow($this->retryBaseDelay, $attempts));
-
         $this->storage->scheduleRetry($job->id, $attempts, $delay, $e->getMessage());
 
         $this->logger->info('Job scheduled for retry', [
@@ -290,6 +292,11 @@ final class Worker
             'attempts' => $attempts,
             'delay_seconds' => $delay,
         ]);
+    }
+
+    private function calculateRetryDelay(int $attempts): int
+    {
+        return min($this->retryMaxDelay, (int) pow($this->retryBaseDelay, $attempts));
     }
 
     private function recoverStaleJobs(): void

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- CI now runs PHPStan and PHPCS quality gates, with a new `composer check` aggregate for tests, static analysis, and style checks.
+- Added repository hygiene files: `.editorconfig`, `SECURITY.md`, issue templates, and a pull request template.
+- Added an injectable clock abstraction for UTC wall-clock timestamps and monotonic duration measurement.
+
+### Changed
+
+- GitHub Actions now tests the documented PHP 8.1 through 8.4 support range.
+- Worker retry delay calculation is now centralized so storage and queue retry scheduling share one computed value.
+
+### Fixed
+
+- `composer test` now runs without coverage collection so missing coverage drivers do not fail the default test command.
+- `JobData::fromRaw()` now normalizes scalar decoded payloads to an empty array instead of triggering a type error.
+- `PdoJobStorage` now enforces `PDO::ERRMODE_EXCEPTION` for direct and factory-created connections.
+- `PdoJobStorage` now avoids per-query health checks and reconnects only after connection-loss exceptions.
+
 ## [1.2.0] - 2026-02-07
 
 ### Added

@@ -52,6 +52,9 @@ final class JobData
         if (is_string($payload)) {
             $payload = json_decode($payload, true) ?? [];
         }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
 
         $result = $data['result'] ?? null;
         if (is_string($result) && !empty($result)) {

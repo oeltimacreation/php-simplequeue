@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue\Tests\Unit;
 
+use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Storage\PdoJobStorage;
 use PDO;
+use PDOStatement;
 use PHPUnit\Framework\TestCase;
 
 class PdoJobStorageTest extends TestCase
@@ -14,6 +16,13 @@ class PdoJobStorageTest extends TestCase
     {
         $pdo = new PDO('sqlite::memory:');
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $this->createSchema($pdo);
+
+        return $pdo;
+    }
+
+    private function createSchema(PDO $pdo): void
+    {
         $pdo->exec('
             CREATE TABLE background_jobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,7 +47,6 @@ class PdoJobStorageTest extends TestCase
                 updated_at TEXT
             )
         ');
-        return $pdo;
     }
 
     public function testConstructorAcceptsPdoInstance(): void
@@ -54,6 +62,16 @@ class PdoJobStorageTest extends TestCase
         $this->assertEquals('test.job', $job->type);
     }
 
+    public function testConstructorEnforcesExceptionErrorModeForPdoInstance(): void
+    {
+        $pdo = $this->createSqlitePdo();
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_SILENT);
+
+        new PdoJobStorage($pdo);
+
+        $this->assertSame(PDO::ERRMODE_EXCEPTION, $pdo->getAttribute(PDO::ATTR_ERRMODE));
+    }
+
     public function testConstructorAcceptsCallableFactory(): void
     {
         $callCount = 0;
@@ -67,6 +85,23 @@ class PdoJobStorageTest extends TestCase
         $id = $storage->createJob('test.job', ['data' => 'value']);
         $this->assertEquals(1, $id);
         $this->assertEquals(1, $callCount, 'Factory should be called once for initial connection');
+    }
+
+    public function testFactoryConnectionEnforcesExceptionErrorMode(): void
+    {
+        $createdPdo = null;
+        $factory = function () use (&$createdPdo): PDO {
+            $createdPdo = $this->createSqlitePdo();
+            $createdPdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_SILENT);
+
+            return $createdPdo;
+        };
+
+        $storage = new PdoJobStorage($factory);
+        $storage->createJob('test.job', []);
+
+        $this->assertInstanceOf(PDO::class, $createdPdo);
+        $this->assertSame(PDO::ERRMODE_EXCEPTION, $createdPdo->getAttribute(PDO::ATTR_ERRMODE));
     }
 
     public function testReconnectForcesNewConnection(): void
@@ -108,6 +143,55 @@ class PdoJobStorageTest extends TestCase
         $this->assertEquals(1, $callCount, 'Should reuse existing healthy connection');
     }
 
+    public function testDoesNotRunHealthCheckBeforeEveryQuery(): void
+    {
+        $pdo = new class ('sqlite::memory:') extends PDO {
+            public int $queryCount = 0;
+
+            public function query(string $query, ?int $fetchMode = null, mixed ...$fetchModeArgs): PDOStatement|false
+            {
+                $this->queryCount++;
+
+                return parent::query($query, $fetchMode, ...$fetchModeArgs);
+            }
+        };
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $this->createSchema($pdo);
+
+        $storage = new PdoJobStorage($pdo);
+
+        $id = $storage->createJob('test.job', []);
+        $storage->find($id);
+
+        $this->assertSame(0, $pdo->queryCount);
+    }
+
+    public function testReconnectsAfterConnectionLossException(): void
+    {
+        $callCount = 0;
+        $factory = function () use (&$callCount): PDO {
+            $callCount++;
+
+            if ($callCount === 1) {
+                return new class ('sqlite::memory:') extends PDO {
+                    public function prepare(string $query, array $options = []): PDOStatement|false
+                    {
+                        throw new \PDOException('SQLSTATE[HY000]: 2006 MySQL server has gone away', 2006);
+                    }
+                };
+            }
+
+            return $this->createSqlitePdo();
+        };
+
+        $storage = new PdoJobStorage($factory);
+
+        $id = $storage->createJob('test.job', []);
+
+        $this->assertSame(1, $id);
+        $this->assertSame(2, $callCount);
+    }
+
     public function testCreateJobStoresPayload(): void
     {
         $pdo = $this->createSqlitePdo();
@@ -118,6 +202,63 @@ class PdoJobStorageTest extends TestCase
 
         $job = $storage->find($id);
         $this->assertEquals($payload, $job->payload);
+    }
+
+    public function testCreateJobUsesInjectedClock(): void
+    {
+        $pdo = $this->createSqlitePdo();
+        $clock = new class implements ClockInterface {
+            public function now(): string
+            {
+                return '2026-01-02 03:04:05';
+            }
+
+            public function timestamp(): int
+            {
+                return 1767323045;
+            }
+
+            public function monotonic(): float
+            {
+                return 1.0;
+            }
+        };
+        $storage = new PdoJobStorage($pdo, 'background_jobs', $clock);
+
+        $id = $storage->createJob('test.job', []);
+        $job = $storage->find($id);
+
+        $this->assertEquals('2026-01-02 03:04:05', $job->createdAt);
+        $this->assertEquals('2026-01-02 03:04:05', $job->updatedAt);
+    }
+
+    public function testScheduleRetryUsesInjectedClock(): void
+    {
+        $pdo = $this->createSqlitePdo();
+        $clock = new class implements ClockInterface {
+            public function now(): string
+            {
+                return '2026-01-02 03:04:05';
+            }
+
+            public function timestamp(): int
+            {
+                return 1767323045;
+            }
+
+            public function monotonic(): float
+            {
+                return 1.0;
+            }
+        };
+        $storage = new PdoJobStorage($pdo, 'background_jobs', $clock);
+
+        $id = $storage->createJob('test.job', []);
+        $storage->claimJob($id, 'worker-1');
+        $storage->scheduleRetry($id, 1, 60, 'Temporary failure');
+
+        $job = $storage->find($id);
+        $this->assertEquals('2026-01-02 03:05:05', $job->availableAt);
     }
 
     public function testClaimJobLocksProperly(): void
