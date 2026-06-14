@@ -23,31 +23,7 @@ class PdoJobStorageTest extends TestCase
 
     private function createSchema(PDO $pdo): void
     {
-        $pdo->exec('
-            CREATE TABLE background_jobs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                queue TEXT NOT NULL,
-                type TEXT NOT NULL,
-                status TEXT NOT NULL,
-                payload TEXT,
-                result TEXT,
-                attempts INTEGER DEFAULT 0,
-                max_attempts INTEGER DEFAULT 3,
-                progress INTEGER,
-                progress_message TEXT,
-                available_at TEXT NOT NULL,
-                started_at TEXT,
-                completed_at TEXT,
-                locked_by TEXT,
-                locked_at TEXT,
-                lease_token TEXT,
-                error_message TEXT,
-                error_trace TEXT,
-                request_id TEXT,
-                created_at TEXT,
-                updated_at TEXT
-            )
-        ');
+        \Oeltima\SimpleQueue\Tests\DbHelper::createSchema($pdo);
     }
 
     public function testConstructorAcceptsPdoInstance(): void

@@ -423,7 +423,21 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
             'updated_at' => $now,
         ]);
 
-        return $stmt->rowCount() > 0;
+        if ($stmt->rowCount() > 0) {
+            return true;
+        }
+
+        $checkSql = "SELECT 1 FROM {$this->table}
+            WHERE id = :id
+            AND status = 'running'
+            AND lease_token = :lease_token";
+
+        $checkStmt = $this->execute($checkSql, [
+            'id' => $claim->job->id,
+            'lease_token' => $claim->leaseToken,
+        ]);
+
+        return $checkStmt->fetch() !== false;
     }
 
     public function scheduleRetry(
@@ -478,7 +492,21 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
             'updated_at' => $now,
         ]);
 
-        return $stmt->rowCount() > 0;
+        if ($stmt->rowCount() > 0) {
+            return true;
+        }
+
+        $checkSql = "SELECT 1 FROM {$this->table}
+            WHERE id = :id
+            AND status = 'running'
+            AND lease_token = :lease_token";
+
+        $checkStmt = $this->execute($checkSql, [
+            'id' => $claim->job->id,
+            'lease_token' => $claim->leaseToken,
+        ]);
+
+        return $checkStmt->fetch() !== false;
     }
 
     public function recoverStaleJobs(int $ttlSeconds): int

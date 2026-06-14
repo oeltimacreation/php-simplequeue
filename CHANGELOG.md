@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added conditional unique index schema definitions and documentation to prevent duplicate active jobs under concurrency when using `JobDispatcher::dispatchIdempotent()`.
 - Added optional observability listener hooks to `Worker` for tracking lifecycle events (`claimed`, `completed`, `failed`, `retried`, `lost_ownership`, `infra_error`, `backoff`) with runtime execution metrics such as `duration_ms` and `acquire_latency_ms`.
 - Added a `cancel` method to `JobStorageInterface` (implemented in `InMemoryJobStorage` and `PdoJobStorage`) and exposed via `JobDispatcher::cancelJob()` to allow cancelling pending jobs.
+- Added `DatabaseQueueDriverTest` covering database polling, timeouts, invalid IDs, and queue filtering.
+- Added `ConcurrencyTest` verifying lease fencing, poison job recovery, and concurrent `SKIP LOCKED` claim distribution.
+- Added `RealServicesTest` to run integration tests against live Redis, MySQL, and PostgreSQL services.
+- Added a `DbHelper` shared schema fixture to unify database creation across unit and integration tests.
+- Added a micro-benchmark harness in `examples/benchmark.php` to measure job throughput and database roundtrips.
 
 ### Changed
 
@@ -48,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Converted `RedisQueueDriver::promoteDelayedJobs()` and `recoverStaleProcessing()` to utilize atomic and limit-bounded Lua scripts.
 - Migrated `RedisQueueDriver::dequeue()` from the deprecated `RPOPLPUSH`/`BRPOPLPUSH` commands to the modern `LMOVE`/`BLMOVE` commands.
 - Implemented a DB-to-Redis reconciliation sweep in `Worker` to safely restore enqueued pending and delayed jobs from the database (source of truth) back to Redis on a periodic/startup basis.
+- Updated `README.md` documentation with a v1.3.0 migration guide, idempotency caveats, Predis profile timeout warnings, and stats monitoring examples.
 
 ### Fixed
 

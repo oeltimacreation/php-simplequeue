@@ -323,9 +323,9 @@ $storage = new PdoJobStorage($connectionFactory);
 ```
 
 The storage will automatically:
-1. Detect stale connections using a health check (`SELECT 1`)
-2. Call the factory to create a fresh connection when needed
-3. Continue processing without crashing
+1. Optimistically execute queries on the database.
+2. If a connection loss exception is caught (e.g., MySQL server has gone away), it will immediately clear the stale connection, invoke the factory to establish a fresh connection, and retry the operation once.
+3. Continue processing without crashing, eliminating the overhead of running `SELECT 1` before every query.
 
 You can also force a reconnection manually:
 
@@ -404,6 +404,91 @@ $worker->processOne(); // Process single job
 $job = $storage->find($jobId);
 $this->assertEquals('completed', $job->status);
 ```
+
+### Idempotency & At-Least-Once Caveats
+
+OeltimaCreation SimpleQueue guarantees **at-least-once delivery**. In rare scenarios (e.g. worker crashing after finishing a task but before acknowledging it, network partition, or lease expiration), a job may be executed more than once. 
+
+**Therefore, your job handlers MUST be idempotent.**
+
+#### Idempotent Dispatching
+
+The library provides `dispatchIdempotent()` to prevent duplicate active jobs for the same unique transaction or request. For this to be safe under concurrent calls, you **must** configure database unique constraints:
+
+```php
+// Dispatch a job with a unique request ID
+$result = $dispatcher->dispatchIdempotent(
+    type: 'order.process',
+    payload: ['order_id' => 12345],
+    requestId: 'req_order_12345'
+);
+
+if ($result['created']) {
+    echo "Dispatched new job: " . $result['job_id'];
+} else {
+    echo "Using existing active job: " . $result['job_id'];
+}
+```
+
+Ensure your database enforces this uniqueness. See the **Database Schema** section for MySQL, PostgreSQL, and SQLite configurations.
+
+---
+
+### Safe Predis Timeout Configuration
+
+If you use the Redis queue driver with a blocking dequeue call (when `poll_timeout` is positive), you must configure your Predis connection timeout carefully. If Predis's `read_write_timeout` is less than or equal to the worker's `poll_timeout`, Predis will close the connection while waiting, causing connection errors in the worker.
+
+When starting up, the worker automatically validates this configuration. Ensure your Predis client is configured as follows:
+
+```php
+use Predis\Client;
+
+$redis = new Client([
+    'host' => '127.0.0.1',
+    'port' => 6379,
+    // Set read_write_timeout to -1 (disable) or a value higher than your poll_timeout (e.g. 60)
+    'read_write_timeout' => -1,
+]);
+```
+
+---
+
+### Queue Statistics & Monitoring
+
+If your queue driver supports statistics (implements `QueueStatsInterface` like `RedisQueueDriver`), you can query queue sizes and processing status:
+
+```php
+use Oeltima\SimpleQueue\Contract\QueueStatsInterface;
+
+if ($queueManager->getDriver() instanceof QueueStatsInterface) {
+    /** @var QueueStatsInterface $driver */
+    $driver = $queueManager->getDriver();
+    
+    $pending = $driver->getPendingCount('default');
+    $processing = $driver->getProcessingCount('default');
+    $delayed = $driver->getDelayedCount('default');
+    
+    echo "Pending: $pending | Processing: $processing | Delayed: $delayed\n";
+}
+```
+
+---
+
+## Migration from v1.2.x to v1.3.0
+
+v1.3.0 introduces breaking changes to resolve concurrency races and improve performance:
+
+### 1. Database Schema Update
+You must add a `lease_token` column and alter the `available_at` column. See the [1.3.0 migration script](file:///home/nerdv2/work/Oeltimacreation/php-simplequeue/examples/migrations/1.3.0-lease-based-claims.sql) for details.
+
+### 2. JobStorageInterface Changes
+If you have written custom job storage backends, you must implement the new lease-based claim flow:
+- Implement `claimNextAvailable(string $queue, string $workerId): ?ClaimedJob`.
+- Implement `claimById(int $id, string $workerId): ?ClaimedJob`.
+- Update `markCompleted`, `markFailed`, `updateProgress`, `scheduleRetry`, and `heartbeat` to accept a `ClaimedJob` instead of `$jobId`.
+- Remove the deprecated `getNextPendingJobId()` and `claimJob()`.
+
+---
 
 ## API Reference
 
