@@ -26,31 +26,7 @@ final class ConcurrencyTest extends TestCase
     {
         $pdo = new PDO("sqlite:$dbFile");
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        $pdo->exec('
-            CREATE TABLE background_jobs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                queue TEXT NOT NULL,
-                type TEXT NOT NULL,
-                status TEXT NOT NULL,
-                payload TEXT,
-                result TEXT,
-                attempts INTEGER DEFAULT 0,
-                max_attempts INTEGER DEFAULT 3,
-                progress INTEGER,
-                progress_message TEXT,
-                available_at TEXT NOT NULL,
-                started_at TEXT,
-                completed_at TEXT,
-                locked_by TEXT,
-                locked_at TEXT,
-                lease_token TEXT,
-                error_message TEXT,
-                error_trace TEXT,
-                request_id TEXT,
-                created_at TEXT,
-                updated_at TEXT
-            )
-        ');
+        \Oeltima\SimpleQueue\Tests\DbHelper::createSchema($pdo);
         return $pdo;
     }
 
@@ -222,31 +198,7 @@ final class ConcurrencyTest extends TestCase
 
         // Re-create table if needed
         $pdo1->exec('DROP TABLE IF EXISTS test_concurrency_jobs');
-        $pdo1->exec('
-            CREATE TABLE test_concurrency_jobs (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                queue VARCHAR(255) NOT NULL,
-                type VARCHAR(255) NOT NULL,
-                status VARCHAR(50) NOT NULL,
-                payload TEXT,
-                result TEXT,
-                attempts INT DEFAULT 0,
-                max_attempts INT DEFAULT 3,
-                progress INT,
-                progress_message TEXT,
-                available_at DATETIME NOT NULL,
-                started_at DATETIME,
-                completed_at DATETIME,
-                locked_by VARCHAR(255),
-                locked_at DATETIME,
-                lease_token VARCHAR(255),
-                error_message TEXT,
-                error_trace TEXT,
-                request_id VARCHAR(255),
-                created_at DATETIME,
-                updated_at DATETIME
-            )
-        ');
+        \Oeltima\SimpleQueue\Tests\DbHelper::createSchema($pdo1, 'test_concurrency_jobs');
 
         $storage1 = new PdoJobStorage($pdo1, 'test_concurrency_jobs');
         $storage2 = new PdoJobStorage($pdo2, 'test_concurrency_jobs');
