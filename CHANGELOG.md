@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **BREAKING**: New job schemas require `available_at` to be non-null and include `lease_token` for fenced claim ownership.
 - `PdoJobStorage` can now atomically claim the next available job or a specific queued job with a unique lease token.
+- `InMemoryJobStorage` now matches lease-based claim semantics for tests and local development.
 - GitHub Actions now tests the documented PHP 8.1 through 8.4 support range.
 - Worker retry delay calculation is now centralized so storage and queue retry scheduling share one computed value.
 

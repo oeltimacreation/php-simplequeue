@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue\Storage;
 
+use Oeltima\SimpleQueue\Contract\ClaimedJob;
 use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\JobData;
 use Oeltima\SimpleQueue\Contract\JobStorageAdminInterface;
@@ -47,11 +48,12 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
             'payload' => json_encode($payload),
             'attempts' => 0,
             'max_attempts' => $maxAttempts,
-            'available_at' => null,
+            'available_at' => $now,
             'started_at' => null,
             'completed_at' => null,
             'locked_by' => null,
             'locked_at' => null,
+            'lease_token' => null,
             'error_message' => null,
             'error_trace' => null,
             'progress' => null,
@@ -110,22 +112,61 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
 
     public function claimJob(int $id, string $workerId): bool
     {
-        if (!isset($this->jobs[$id])) {
-            return false;
-        }
+        return $this->claimById($id, $workerId) !== null;
+    }
 
-        if ($this->jobs[$id]['status'] !== 'pending') {
-            return false;
-        }
-
+    /**
+     * Atomically claim the next available job in a queue.
+     *
+     * @param string $queue Queue name
+     * @param string $workerId Worker identifier
+     * @return ClaimedJob|null Claimed job or null when no job is available
+     */
+    public function claimNextAvailable(string $queue, string $workerId): ?ClaimedJob
+    {
         $now = $this->now();
-        $this->jobs[$id]['status'] = 'running';
-        $this->jobs[$id]['locked_by'] = $workerId;
-        $this->jobs[$id]['locked_at'] = $now;
-        $this->jobs[$id]['started_at'] = $now;
-        $this->jobs[$id]['updated_at'] = $now;
+        $candidateId = null;
+        $candidateAvailableAt = null;
 
-        return true;
+        foreach ($this->jobs as $id => $job) {
+            if ($job['status'] !== 'pending') {
+                continue;
+            }
+            if ($job['queue'] !== $queue) {
+                continue;
+            }
+            if ($job['available_at'] > $now) {
+                continue;
+            }
+            if (
+                $candidateAvailableAt !== null
+                && ($job['available_at'] > $candidateAvailableAt
+                    || ($job['available_at'] === $candidateAvailableAt && $id > (int) $candidateId))
+            ) {
+                continue;
+            }
+
+            $candidateId = $id;
+            $candidateAvailableAt = $job['available_at'];
+        }
+
+        if ($candidateId === null) {
+            return null;
+        }
+
+        return $this->claimAvailableJob((int) $candidateId, $workerId, $now);
+    }
+
+    /**
+     * Atomically claim a specific job by ID.
+     *
+     * @param int $id Job identifier
+     * @param string $workerId Worker identifier
+     * @return ClaimedJob|null Claimed job or null when unavailable
+     */
+    public function claimById(int $id, string $workerId): ?ClaimedJob
+    {
+        return $this->claimAvailableJob($id, $workerId, $this->now());
     }
 
     public function markCompleted(int $id, mixed $result = null): bool
@@ -187,6 +228,7 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
         $this->jobs[$id]['error_message'] = $errorMessage;
         $this->jobs[$id]['locked_by'] = null;
         $this->jobs[$id]['locked_at'] = null;
+        $this->jobs[$id]['lease_token'] = null;
         $this->jobs[$id]['updated_at'] = $now;
 
         return true;
@@ -209,7 +251,8 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
             $job['status'] = 'pending';
             $job['locked_by'] = null;
             $job['locked_at'] = null;
-            $job['available_at'] = null;
+            $job['lease_token'] = null;
+            $job['available_at'] = $now;
             $job['updated_at'] = $now;
             $count++;
         }
@@ -296,5 +339,35 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
     private function now(): string
     {
         return $this->clock->now();
+    }
+
+    private function claimAvailableJob(int $id, string $workerId, string $now): ?ClaimedJob
+    {
+        if (!isset($this->jobs[$id])) {
+            return null;
+        }
+
+        if ($this->jobs[$id]['status'] !== 'pending') {
+            return null;
+        }
+
+        if ($this->jobs[$id]['available_at'] > $now) {
+            return null;
+        }
+
+        $leaseToken = $this->generateLeaseToken();
+        $this->jobs[$id]['status'] = 'running';
+        $this->jobs[$id]['locked_by'] = $workerId;
+        $this->jobs[$id]['locked_at'] = $now;
+        $this->jobs[$id]['started_at'] = $now;
+        $this->jobs[$id]['lease_token'] = $leaseToken;
+        $this->jobs[$id]['updated_at'] = $now;
+
+        return new ClaimedJob(JobData::fromRaw($this->jobs[$id]), $workerId, $leaseToken);
+    }
+
+    private function generateLeaseToken(): string
+    {
+        return bin2hex(random_bytes(32));
     }
 }

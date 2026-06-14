@@ -105,6 +105,7 @@ class InMemoryStorageTest extends TestCase
         $this->assertEquals('worker-1', $job->lockedBy);
         $this->assertNotNull($job->lockedAt);
         $this->assertNotNull($job->startedAt);
+        $this->assertNotNull($job->leaseToken);
     }
 
     public function testClaimJobReturnsFalseForNonPending(): void
@@ -116,6 +117,37 @@ class InMemoryStorageTest extends TestCase
         $claimed = $this->storage->claimJob($id, 'worker-2');
 
         $this->assertFalse($claimed);
+    }
+
+    public function testClaimNextAvailableReturnsClaimedJob(): void
+    {
+        $id = $this->storage->createJob('test.job', [], 'default');
+
+        $claim = $this->storage->claimNextAvailable('default', 'worker-1');
+
+        $this->assertNotNull($claim);
+        $this->assertSame($id, $claim->job->id);
+        $this->assertSame('worker-1', $claim->workerId);
+        $this->assertNotEmpty($claim->leaseToken);
+        $this->assertSame($claim->leaseToken, $claim->job->leaseToken);
+        $this->assertSame('running', $claim->job->status);
+    }
+
+    public function testClaimNextAvailableSkipsOtherQueues(): void
+    {
+        $this->storage->createJob('test.job', [], 'emails');
+
+        $claim = $this->storage->claimNextAvailable('default', 'worker-1');
+
+        $this->assertNull($claim);
+    }
+
+    public function testClaimByIdReturnsNullForUnavailableJob(): void
+    {
+        $id = $this->storage->createJob('test.job', []);
+
+        $this->assertNotNull($this->storage->claimById($id, 'worker-1'));
+        $this->assertNull($this->storage->claimById($id, 'worker-2'));
     }
 
     public function testMarkCompletedSetsStatusAndResult(): void
