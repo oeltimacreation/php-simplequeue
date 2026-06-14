@@ -718,9 +718,14 @@ class WorkerTest extends TestCase
         $driver = $this->createMock(QueueDriverInterface::class);
         $clock = $this->createMock(\Oeltima\SimpleQueue\Contract\ClockInterface::class);
 
+        $time = 100.0;
         $clock->expects($this->any())
             ->method('monotonic')
-            ->willReturnOnConsecutiveCalls(100.0, 105.0, 115.0);
+            ->willReturnCallback(function () use (&$time) {
+                $currentTime = $time;
+                $time += 5.0; // Automatically advance time on each check
+                return $currentTime;
+            });
 
         $worker = $this->createWorkerWithDriver($driver, [
             'clock' => $clock,
@@ -753,6 +758,58 @@ class WorkerTest extends TestCase
         $worker = $this->createWorkerWithDriver($driver, [
             'stop_when_empty' => true,
         ]);
+
+        $exitCode = $worker->run();
+        $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
+    }
+
+    public function testThrottledMaintenanceIsCalled(): void
+    {
+        $driver = $this->getMockBuilder(QueueDriverInterface::class)
+            ->onlyMethods(['isAvailable', 'enqueue', 'dequeue', 'ack', 'nack'])
+            ->addMethods(['promoteDelayedJobs'])
+            ->getMock();
+
+        $clock = $this->createMock(\Oeltima\SimpleQueue\Contract\ClockInterface::class);
+
+        $time = 100.0;
+        $clock->expects($this->any())
+            ->method('monotonic')
+            ->willReturnCallback(function () use (&$time) {
+                return $time;
+            });
+
+        $driver->expects($this->exactly(3))
+            ->method('promoteDelayedJobs')
+            ->with('default')
+            ->willReturn(0);
+
+        $this->storage->expects($this->exactly(2))
+            ->method('recoverStaleJobs')
+            ->with(600)
+            ->willReturn(0);
+
+        $worker = $this->createWorkerWithDriver($driver, [
+            'clock' => $clock,
+            'promote_interval' => 5.0,
+            'recovery_interval' => 10.0,
+            'poll_timeout' => 0,
+        ]);
+
+        $calls = 0;
+        $driver->expects($this->any())
+            ->method('dequeue')
+            ->willReturnCallback(function () use (&$calls, &$time, $worker) {
+                $calls++;
+                if ($calls === 1) {
+                    $time = 106.0;
+                } elseif ($calls === 2) {
+                    $time = 111.0;
+                } else {
+                    $worker->stop();
+                }
+                return null;
+            });
 
         $exitCode = $worker->run();
         $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);

@@ -50,6 +50,11 @@ final class Worker
     private int $processedJobsCount = 0;
     private float $startTime = 0.0;
 
+    private float $promoteInterval;
+    private float $recoveryInterval;
+    private float $lastPromoteTime = 0.0;
+    private float $lastRecoveryTime = 0.0;
+
     /**
      * @param JobStorageInterface $storage Job storage implementation
      * @param QueueManager $queueManager Queue manager instance
@@ -91,6 +96,9 @@ final class Worker
         $this->maxTime = (int) ($options['max_time'] ?? 0);
         $this->memoryLimit = (int) ($options['memory_limit'] ?? 0);
         $this->stopWhenEmpty = (bool) ($options['stop_when_empty'] ?? false);
+
+        $this->promoteInterval = (float) ($options['promote_interval'] ?? 5.0);
+        $this->recoveryInterval = (float) ($options['recovery_interval'] ?? 60.0);
     }
 
     /**
@@ -112,7 +120,13 @@ final class Worker
 
         try {
             $this->registerSignalHandlers();
+
+            // Run initial recovery and promotion immediately
             $this->recoverStaleJobs();
+            $this->lastRecoveryTime = $this->clock->monotonic();
+
+            $this->promoteDelayedJobs();
+            $this->lastPromoteTime = $this->clock->monotonic();
 
             $driverClass = get_class($this->queueManager->driver());
             $this->logger->info('Using queue driver', ['driver' => $driverClass]);
@@ -126,12 +140,9 @@ final class Worker
                     break;
                 }
 
-                // Promote any delayed jobs that are now due
-                $driver = $this->queueManager->driver();
-                if (method_exists($driver, 'promoteDelayedJobs')) {
-                    $driver->promoteDelayedJobs($this->queue);
-                }
+                $this->runDueMaintenance();
 
+                $driver = $this->queueManager->driver();
                 try {
                     $claim = $this->claimNextJob($this->pollTimeout);
 
@@ -340,6 +351,35 @@ final class Worker
         }
 
         return false;
+    }
+
+    private function runDueMaintenance(): void
+    {
+        $now = $this->clock->monotonic();
+
+        // Promote delayed jobs
+        if ($now - $this->lastPromoteTime >= $this->promoteInterval) {
+            $this->promoteDelayedJobs();
+            $this->lastPromoteTime = $now;
+        }
+
+        // Recover stale jobs
+        if ($now - $this->lastRecoveryTime >= $this->recoveryInterval) {
+            $this->recoverStaleJobs();
+            $this->lastRecoveryTime = $now;
+        }
+    }
+
+    private function promoteDelayedJobs(): void
+    {
+        $driver = $this->queueManager->driver();
+        if (method_exists($driver, 'promoteDelayedJobs')) {
+            try {
+                $driver->promoteDelayedJobs($this->queue);
+            } catch (\Throwable $e) {
+                $this->logger->error('Failed to promote delayed jobs', ['error' => $e->getMessage()]);
+            }
+        }
     }
 
     private function processClaimedJob(ClaimedJob $claim, QueueDriverInterface $driver): void

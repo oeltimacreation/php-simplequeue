@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING**: `JobStorageInterface` methods (`markCompleted`, `markFailed`, `updateProgress`, `scheduleRetry`, `heartbeat`) now require a `ClaimedJob` value object instead of an integer `$id` to enforce fenced writes.
 - **BREAKING**: Removed `getNextPendingJobId` and `claimJob` from `JobStorageInterface` in favor of `claimNextAvailable` and `claimById`.
 - Rebuilt the worker execution loop to support backoff with jitter on infrastructure errors.
+- Throttled delayed job promotion and stale job recovery using monotonic timers to reduce idle database/Redis command overhead.
 - Improved graceful worker shutdown to release lock in a `finally` block and immediately release any claimed job back to the pending queue.
 - `PdoJobStorage` can now atomically claim the next available job or a specific queued job with a unique lease token.
 - `InMemoryJobStorage` now matches lease-based claim semantics for tests and local development.
