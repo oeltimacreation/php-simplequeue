@@ -35,7 +35,7 @@ class PdoJobStorageTest extends TestCase
                 max_attempts INTEGER DEFAULT 3,
                 progress INTEGER,
                 progress_message TEXT,
-                available_at TEXT,
+                available_at TEXT NOT NULL,
                 started_at TEXT,
                 completed_at TEXT,
                 locked_by TEXT,
@@ -231,6 +231,7 @@ class PdoJobStorageTest extends TestCase
 
         $this->assertEquals('2026-01-02 03:04:05', $job->createdAt);
         $this->assertEquals('2026-01-02 03:04:05', $job->updatedAt);
+        $this->assertEquals('2026-01-02 03:04:05', $job->availableAt);
     }
 
     public function testScheduleRetryUsesInjectedClock(): void
@@ -275,9 +276,57 @@ class PdoJobStorageTest extends TestCase
         $job = $storage->find($id);
         $this->assertEquals('running', $job->status);
         $this->assertEquals('worker-1', $job->lockedBy);
+        $this->assertNotNull($job->leaseToken);
 
         $claimedAgain = $storage->claimJob($id, 'worker-2');
         $this->assertFalse($claimedAgain, 'Should not claim already running job');
+    }
+
+    public function testClaimNextAvailableReturnsClaimedJob(): void
+    {
+        $pdo = $this->createSqlitePdo();
+        $storage = new PdoJobStorage($pdo);
+
+        $id = $storage->createJob('test.job', [], 'default');
+
+        $claim = $storage->claimNextAvailable('default', 'worker-1');
+
+        $this->assertNotNull($claim);
+        $this->assertEquals($id, $claim->job->id);
+        $this->assertEquals('worker-1', $claim->workerId);
+        $this->assertNotEmpty($claim->leaseToken);
+        $this->assertEquals($claim->leaseToken, $claim->job->leaseToken);
+        $this->assertEquals('running', $claim->job->status);
+
+        $this->assertNull($storage->claimNextAvailable('default', 'worker-2'));
+    }
+
+    public function testClaimByIdReturnsNullForUnavailableJob(): void
+    {
+        $pdo = $this->createSqlitePdo();
+        $storage = new PdoJobStorage($pdo);
+
+        $id = $storage->createJob('test.job', []);
+        $this->assertNotNull($storage->claimById($id, 'worker-1'));
+
+        $this->assertNull($storage->claimById($id, 'worker-2'));
+    }
+
+    public function testClaimNextAvailableUsesAvailableAtOrdering(): void
+    {
+        $pdo = $this->createSqlitePdo();
+        $storage = new PdoJobStorage($pdo);
+
+        $laterId = $storage->createJob('later.job', []);
+        $earlierId = $storage->createJob('earlier.job', []);
+
+        $pdo->exec("UPDATE background_jobs SET available_at = '2026-01-02 03:04:06' WHERE id = {$laterId}");
+        $pdo->exec("UPDATE background_jobs SET available_at = '2026-01-02 03:04:05' WHERE id = {$earlierId}");
+
+        $claim = $storage->claimNextAvailable('default', 'worker-1');
+
+        $this->assertNotNull($claim);
+        $this->assertSame($earlierId, $claim->job->id);
     }
 
     public function testMarkCompletedWithResult(): void
