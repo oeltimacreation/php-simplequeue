@@ -207,21 +207,21 @@ final class ConcurrencyTest extends TestCase
         $jobId1 = $storage1->createJob('job1', [], 'default');
         $jobId2 = $storage1->createJob('job2', [], 'default');
 
-        // Start a transaction on connection 1 and claim next available
+        // Start a transaction on connection 1 and lock the first job manually
         $pdo1->beginTransaction();
-        $claim1 = $storage1->claimNextAvailable('default', 'worker-1');
-        $this->assertNotNull($claim1);
-        $this->assertSame($jobId1, $claim1->job->id);
+        $stmt = $pdo1->prepare('SELECT * FROM test_concurrency_jobs WHERE id = :id FOR UPDATE');
+        $stmt->execute(['id' => $jobId1]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        $this->assertNotFalse($row);
 
         // Connection 2 (separate connection/transaction) should claim the next one, SKIPPING the locked one!
-        $pdo2->beginTransaction();
+        // We do not call beginTransaction() on pdo2 because claimNextAvailable manages its transaction.
         $claim2 = $storage2->claimNextAvailable('default', 'worker-2');
         $this->assertNotNull($claim2);
         $this->assertSame($jobId2, $claim2->job->id);
 
-        // Commit both
+        // Commit transaction to release lock
         $pdo1->commit();
-        $pdo2->commit();
 
         $pdo1->exec('DROP TABLE IF EXISTS test_concurrency_jobs');
     }
