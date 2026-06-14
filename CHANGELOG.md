@@ -18,8 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **BREAKING**: New job schemas require `available_at` to be non-null and include `lease_token` for fenced claim ownership.
+- **BREAKING**: `JobStorageInterface` methods (`markCompleted`, `markFailed`, `updateProgress`, `scheduleRetry`, `heartbeat`) now require a `ClaimedJob` value object instead of an integer `$id` to enforce fenced writes.
+- **BREAKING**: Removed `getNextPendingJobId` and `claimJob` from `JobStorageInterface` in favor of `claimNextAvailable` and `claimById`.
 - `PdoJobStorage` can now atomically claim the next available job or a specific queued job with a unique lease token.
 - `InMemoryJobStorage` now matches lease-based claim semantics for tests and local development.
+- `DatabaseQueueDriver` now delegates to the storage's atomic claim mechanism for polling, eliminating the thundering herd problem.
 - GitHub Actions now tests the documented PHP 8.1 through 8.4 support range.
 - Worker retry delay calculation is now centralized so storage and queue retry scheduling share one computed value.
 

@@ -232,32 +232,6 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         return JobData::fromRaw($row);
     }
 
-    public function getNextPendingJobId(string $queue = 'default'): ?int
-    {
-        $now = $this->now();
-
-        $sql = "SELECT id FROM {$this->table}
-            WHERE status = 'pending'
-            AND queue = :queue
-            AND (available_at IS NULL OR available_at <= :now)
-            ORDER BY id ASC
-            LIMIT 1";
-
-        $stmt = $this->execute($sql, ['queue' => $queue, 'now' => $now]);
-
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        if ($row === false || empty($row['id'])) {
-            return null;
-        }
-
-        return (int) $row['id'];
-    }
-
-    public function claimJob(int $id, string $workerId): bool
-    {
-        return $this->claimById($id, $workerId) !== null;
-    }
-
     /**
      * Atomically claim the next available job in a queue.
      *
@@ -304,7 +278,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         });
     }
 
-    public function markCompleted(int $id, mixed $result = null): bool
+    public function markCompleted(ClaimedJob $claim, mixed $result = null): bool
     {
         $now = $this->now();
 
@@ -312,11 +286,17 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
             SET status = 'completed',
                 result = :result,
                 completed_at = :completed_at,
+                locked_by = NULL,
+                locked_at = NULL,
+                lease_token = NULL,
                 updated_at = :updated_at
-            WHERE id = :id";
+            WHERE id = :id
+            AND status = 'running'
+            AND lease_token = :lease_token";
 
         $stmt = $this->execute($sql, [
-            'id' => $id,
+            'id' => $claim->job->id,
+            'lease_token' => $claim->leaseToken,
             'result' => $result === null ? null : json_encode($result),
             'completed_at' => $now,
             'updated_at' => $now,
@@ -325,7 +305,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         return $stmt->rowCount() > 0;
     }
 
-    public function markFailed(int $id, string $errorMessage, ?string $errorTrace = null): bool
+    public function markFailed(ClaimedJob $claim, string $errorMessage, ?string $errorTrace = null): bool
     {
         $now = $this->now();
 
@@ -334,11 +314,17 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
                 error_message = :error_message,
                 error_trace = :error_trace,
                 completed_at = :completed_at,
+                locked_by = NULL,
+                locked_at = NULL,
+                lease_token = NULL,
                 updated_at = :updated_at
-            WHERE id = :id";
+            WHERE id = :id
+            AND status = 'running'
+            AND lease_token = :lease_token";
 
         $stmt = $this->execute($sql, [
-            'id' => $id,
+            'id' => $claim->job->id,
+            'lease_token' => $claim->leaseToken,
             'error_message' => $errorMessage,
             'error_trace' => $errorTrace,
             'completed_at' => $now,
@@ -348,28 +334,37 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         return $stmt->rowCount() > 0;
     }
 
-    public function updateProgress(int $id, ?int $progress = null, ?string $message = null): bool
+    public function updateProgress(ClaimedJob $claim, ?int $progress = null, ?string $message = null): bool
     {
         $now = $this->now();
 
         $sql = "UPDATE {$this->table}
             SET progress = :progress,
                 progress_message = :message,
+                locked_at = :locked_at,
                 updated_at = :updated_at
-            WHERE id = :id";
+            WHERE id = :id
+            AND status = 'running'
+            AND lease_token = :lease_token";
 
         $stmt = $this->execute($sql, [
-            'id' => $id,
+            'id' => $claim->job->id,
+            'lease_token' => $claim->leaseToken,
             'progress' => $progress,
             'message' => $message,
+            'locked_at' => $now,
             'updated_at' => $now,
         ]);
 
         return $stmt->rowCount() > 0;
     }
 
-    public function scheduleRetry(int $id, int $attempts, int $delaySeconds, ?string $errorMessage = null): bool
-    {
+    public function scheduleRetry(
+        ClaimedJob $claim,
+        int $attempts,
+        int $delaySeconds,
+        ?string $errorMessage = null
+    ): bool {
         $now = $this->now();
         $availableAt = gmdate($this->dateFormat, (int) strtotime($now) + $delaySeconds);
 
@@ -380,14 +375,39 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
                 error_message = :error_message,
                 locked_by = NULL,
                 locked_at = NULL,
+                lease_token = NULL,
                 updated_at = :updated_at
-            WHERE id = :id";
+            WHERE id = :id
+            AND status = 'running'
+            AND lease_token = :lease_token";
 
         $stmt = $this->execute($sql, [
-            'id' => $id,
+            'id' => $claim->job->id,
+            'lease_token' => $claim->leaseToken,
             'attempts' => $attempts,
             'available_at' => $availableAt,
             'error_message' => $errorMessage,
+            'updated_at' => $now,
+        ]);
+
+        return $stmt->rowCount() > 0;
+    }
+
+    public function heartbeat(ClaimedJob $claim): bool
+    {
+        $now = $this->now();
+
+        $sql = "UPDATE {$this->table}
+            SET locked_at = :locked_at,
+                updated_at = :updated_at
+            WHERE id = :id
+            AND status = 'running'
+            AND lease_token = :lease_token";
+
+        $stmt = $this->execute($sql, [
+            'id' => $claim->job->id,
+            'lease_token' => $claim->leaseToken,
+            'locked_at' => $now,
             'updated_at' => $now,
         ]);
 
@@ -403,13 +423,15 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
             SET status = 'pending',
                 locked_by = NULL,
                 locked_at = NULL,
-                available_at = NULL,
+                lease_token = NULL,
+                available_at = :available_at,
                 updated_at = :updated_at
             WHERE status = 'running'
             AND locked_at < :stale_threshold";
 
         $stmt = $this->execute($sql, [
             'stale_threshold' => $staleThreshold,
+            'available_at' => $now,
             'updated_at' => $now,
         ]);
 
@@ -582,8 +604,10 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
                 lease_token = :lease_token,
                 updated_at = :updated_at
             WHERE id = :id
-            AND status = 'pending'
-            AND available_at <= :now
+            AND (
+                (status = 'pending' AND available_at <= :now)
+                OR (status = 'running' AND locked_by = :worker_id)
+            )
             RETURNING *";
 
         $stmt = $this->prepare($pdo, $sql);
@@ -640,8 +664,10 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
     ): ?ClaimedJob {
         $selectSql = "SELECT * FROM {$this->table}
             WHERE id = :id
-            AND status = 'pending'
-            AND available_at <= :now
+            AND (
+                (status = 'pending' AND available_at <= :now)
+                OR (status = 'running' AND locked_by = :worker_id)
+            )
             LIMIT 1";
 
         if ($driver !== 'sqlite') {
@@ -652,7 +678,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
             $pdo,
             $driver,
             $selectSql,
-            ['id' => $id, 'now' => $now],
+            ['id' => $id, 'now' => $now, 'worker_id' => $workerId],
             $workerId,
             $leaseToken,
             $now
@@ -699,8 +725,10 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
                     lease_token = :lease_token,
                     updated_at = :updated_at
                 WHERE id = :id
-                AND status = 'pending'
-                AND available_at <= :now";
+                AND (
+                    (status = 'pending' AND available_at <= :now)
+                    OR (status = 'running' AND locked_by = :worker_id)
+                )";
 
             $update = $this->prepare($pdo, $updateSql);
             $update->execute([

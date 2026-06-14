@@ -75,30 +75,31 @@ class InMemoryStorageTest extends TestCase
         $this->assertNull($job);
     }
 
-    public function testGetNextPendingJobIdReturnsFirstPending(): void
+    public function testClaimNextAvailableReturnsFirstPending(): void
     {
         $id1 = $this->storage->createJob('test.job', [], 'default');
-        $id2 = $this->storage->createJob('test.job', [], 'default');
+        $this->storage->createJob('test.job', [], 'default');
 
-        $nextId = $this->storage->getNextPendingJobId('default');
+        $claim = $this->storage->claimNextAvailable('default', 'worker-1');
 
-        $this->assertEquals($id1, $nextId);
+        $this->assertNotNull($claim);
+        $this->assertEquals($id1, $claim->job->id);
     }
 
-    public function testGetNextPendingJobIdReturnsNullWhenEmpty(): void
+    public function testClaimNextAvailableReturnsNullWhenEmpty(): void
     {
-        $nextId = $this->storage->getNextPendingJobId('default');
+        $claim = $this->storage->claimNextAvailable('default', 'worker-1');
 
-        $this->assertNull($nextId);
+        $this->assertNull($claim);
     }
 
-    public function testClaimJobChangesStatusToRunning(): void
+    public function testClaimByIdChangesStatusToRunning(): void
     {
         $id = $this->storage->createJob('test.job', []);
 
-        $claimed = $this->storage->claimJob($id, 'worker-1');
+        $claim = $this->storage->claimById($id, 'worker-1');
 
-        $this->assertTrue($claimed);
+        $this->assertNotNull($claim);
 
         $job = $this->storage->find($id);
         $this->assertEquals('running', $job->status);
@@ -108,15 +109,15 @@ class InMemoryStorageTest extends TestCase
         $this->assertNotNull($job->leaseToken);
     }
 
-    public function testClaimJobReturnsFalseForNonPending(): void
+    public function testClaimByIdReturnsNullForNonPending(): void
     {
         $id = $this->storage->createJob('test.job', []);
-        $this->storage->claimJob($id, 'worker-1');
+        $this->storage->claimById($id, 'worker-1');
 
         // Try to claim again
-        $claimed = $this->storage->claimJob($id, 'worker-2');
+        $claim = $this->storage->claimById($id, 'worker-2');
 
-        $this->assertFalse($claimed);
+        $this->assertNull($claim);
     }
 
     public function testClaimNextAvailableReturnsClaimedJob(): void
@@ -153,9 +154,10 @@ class InMemoryStorageTest extends TestCase
     public function testMarkCompletedSetsStatusAndResult(): void
     {
         $id = $this->storage->createJob('test.job', []);
-        $this->storage->claimJob($id, 'worker-1');
+        $claim = $this->storage->claimById($id, 'worker-1');
+        $this->assertNotNull($claim);
 
-        $completed = $this->storage->markCompleted($id, ['result' => 'success']);
+        $completed = $this->storage->markCompleted($claim, ['result' => 'success']);
 
         $this->assertTrue($completed);
 
@@ -168,9 +170,10 @@ class InMemoryStorageTest extends TestCase
     public function testMarkFailedSetsStatusAndError(): void
     {
         $id = $this->storage->createJob('test.job', []);
-        $this->storage->claimJob($id, 'worker-1');
+        $claim = $this->storage->claimById($id, 'worker-1');
+        $this->assertNotNull($claim);
 
-        $failed = $this->storage->markFailed($id, 'Something went wrong', 'stack trace here');
+        $failed = $this->storage->markFailed($claim, 'Something went wrong', 'stack trace here');
 
         $this->assertTrue($failed);
 
@@ -183,9 +186,10 @@ class InMemoryStorageTest extends TestCase
     public function testUpdateProgressSetsProgressAndMessage(): void
     {
         $id = $this->storage->createJob('test.job', []);
-        $this->storage->claimJob($id, 'worker-1');
+        $claim = $this->storage->claimById($id, 'worker-1');
+        $this->assertNotNull($claim);
 
-        $updated = $this->storage->updateProgress($id, 50, 'Halfway done');
+        $updated = $this->storage->updateProgress($claim, 50, 'Halfway done');
 
         $this->assertTrue($updated);
 
@@ -197,9 +201,10 @@ class InMemoryStorageTest extends TestCase
     public function testScheduleRetrySetsStatusToPending(): void
     {
         $id = $this->storage->createJob('test.job', []);
-        $this->storage->claimJob($id, 'worker-1');
+        $claim = $this->storage->claimById($id, 'worker-1');
+        $this->assertNotNull($claim);
 
-        $scheduled = $this->storage->scheduleRetry($id, 1, 5, 'Temporary error');
+        $scheduled = $this->storage->scheduleRetry($claim, 1, 5, 'Temporary error');
 
         $this->assertTrue($scheduled);
 
@@ -209,6 +214,7 @@ class InMemoryStorageTest extends TestCase
         $this->assertNotNull($job->availableAt);
         $this->assertEquals('Temporary error', $job->errorMessage);
         $this->assertNull($job->lockedBy);
+        $this->assertNull($job->leaseToken);
     }
 
     public function testClearRemovesAllJobs(): void
@@ -236,7 +242,7 @@ class InMemoryStorageTest extends TestCase
     public function testFindActiveByRequestIdReturnsRunningJob(): void
     {
         $id = $this->storage->createJob('test.job', [], 'default', 3, 'req-def');
-        $this->storage->claimJob($id, 'worker-1');
+        $this->storage->claimById($id, 'worker-1');
 
         $found = $this->storage->findActiveByRequestId('req-def');
 
@@ -248,8 +254,9 @@ class InMemoryStorageTest extends TestCase
     public function testFindActiveByRequestIdReturnsNullForCompletedJob(): void
     {
         $id = $this->storage->createJob('test.job', [], 'default', 3, 'req-ghi');
-        $this->storage->claimJob($id, 'worker-1');
-        $this->storage->markCompleted($id);
+        $claim = $this->storage->claimById($id, 'worker-1');
+        $this->assertNotNull($claim);
+        $this->storage->markCompleted($claim);
 
         $found = $this->storage->findActiveByRequestId('req-ghi');
 
@@ -259,8 +266,9 @@ class InMemoryStorageTest extends TestCase
     public function testFindActiveByRequestIdReturnsNullForFailedJob(): void
     {
         $id = $this->storage->createJob('test.job', [], 'default', 3, 'req-jkl');
-        $this->storage->claimJob($id, 'worker-1');
-        $this->storage->markFailed($id, 'Error');
+        $claim = $this->storage->claimById($id, 'worker-1');
+        $this->assertNotNull($claim);
+        $this->storage->markFailed($claim, 'Error');
 
         $found = $this->storage->findActiveByRequestId('req-jkl');
 
@@ -289,7 +297,7 @@ class InMemoryStorageTest extends TestCase
     {
         $id1 = $this->storage->createJob('test.job', []);
         $id2 = $this->storage->createJob('test.job', []);
-        $this->storage->claimJob($id1, 'worker-1');
+        $this->storage->claimById($id1, 'worker-1');
 
         $pendingJobs = $this->storage->list('pending');
         $runningJobs = $this->storage->list('running');
@@ -352,7 +360,7 @@ class InMemoryStorageTest extends TestCase
     {
         $id1 = $this->storage->createJob('test.job', []);
         $this->storage->createJob('test.job', []);
-        $this->storage->claimJob($id1, 'worker-1');
+        $this->storage->claimById($id1, 'worker-1');
 
         $this->assertEquals(1, $this->storage->count('pending'));
         $this->assertEquals(1, $this->storage->count('running'));

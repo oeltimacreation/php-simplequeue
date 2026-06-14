@@ -168,8 +168,9 @@ class JobDispatcherTest extends TestCase
         );
 
         // Complete the first job
-        $this->storage->claimJob($first['job_id'], 'worker-1');
-        $this->storage->markCompleted($first['job_id']);
+        $claim = $this->storage->claimById($first['job_id'], 'worker-1');
+        $this->assertNotNull($claim);
+        $this->storage->markCompleted($claim);
 
         $second = $this->dispatcher->dispatchIdempotent(
             'email.send',

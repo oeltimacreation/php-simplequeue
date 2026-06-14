@@ -54,7 +54,7 @@ class WorkerTest extends TestCase
             ->willReturn(123);
 
         $this->storage->expects($this->once())
-            ->method('claimJob')
+            ->method('claimById')
             ->willThrowException(new \RuntimeException('Database connection lost'));
 
         $this->logger->expects($this->atLeastOnce())
@@ -72,10 +72,10 @@ class WorkerTest extends TestCase
         $worker = $this->createWorkerWithDriver($driver);
         $result = $worker->processOne();
 
-        $this->assertTrue($result);
+        $this->assertFalse($result);
     }
 
-    public function testWorkerContinuesWhenStorageFindThrowsException(): void
+    public function testWorkerContinuesWhenJobAlreadyClaimedByAnotherWorker(): void
     {
         $driver = $this->createMock(QueueDriverInterface::class);
         $driver->expects($this->once())
@@ -83,26 +83,26 @@ class WorkerTest extends TestCase
             ->willReturn(456);
 
         $this->storage->expects($this->once())
-            ->method('claimJob')
-            ->willReturn(true);
-
-        $this->storage->expects($this->once())
-            ->method('find')
-            ->willThrowException(new \RuntimeException('Query failed'));
+            ->method('claimById')
+            ->willReturn(null);
 
         $this->logger->expects($this->atLeastOnce())
-            ->method('error')
+            ->method('warning')
             ->with(
-                'Failed to fetch job details',
+                'Failed to claim job, may have been claimed by another process',
                 $this->callback(function ($context) {
                     return isset($context['job_id']) && $context['job_id'] === 456;
                 })
             );
 
+        $driver->expects($this->once())
+            ->method('ack')
+            ->with('default', 456);
+
         $worker = $this->createWorkerWithDriver($driver);
         $result = $worker->processOne();
 
-        $this->assertTrue($result);
+        $this->assertFalse($result);
     }
 
     public function testWorkerCallsPromoteDelayedJobsBeforeDequeue(): void
@@ -231,15 +231,14 @@ class WorkerTest extends TestCase
             ->willReturn(789);
 
         $this->storage->expects($this->once())
-            ->method('claimJob')
+            ->method('claimById')
+            ->willReturnCallback(function ($jobId, $workerId) use ($jobData) {
+                return new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, $workerId, 'lease-token');
+            });
+
+        $this->storage->expects($this->once())
+            ->method('scheduleRetry')
             ->willReturn(true);
-
-        $this->storage->expects($this->once())
-            ->method('find')
-            ->willReturn($jobData);
-
-        $this->storage->expects($this->once())
-            ->method('scheduleRetry');
 
         $driver->expects($this->once())
             ->method('nack')
@@ -300,18 +299,17 @@ class WorkerTest extends TestCase
             ->willReturn(100);
 
         $this->storage->expects($this->once())
-            ->method('claimJob')
-            ->with(100, $this->isType('string'))
-            ->willReturn(true);
-
-        $this->storage->expects($this->once())
-            ->method('find')
-            ->with(100)
-            ->willReturn($jobData);
+            ->method('claimById')
+            ->willReturnCallback(function ($jobId, $workerId) use ($jobData) {
+                return new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, $workerId, 'lease-token');
+            });
 
         $this->storage->expects($this->once())
             ->method('markCompleted')
-            ->with(100, ['processed' => true]);
+            ->with($this->callback(function ($claim) {
+                return $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 100;
+            }), ['processed' => true])
+            ->willReturn(true);
 
         $driver->expects($this->once())
             ->method('ack')
@@ -352,16 +350,21 @@ class WorkerTest extends TestCase
             ->willReturn(200);
 
         $this->storage->expects($this->once())
-            ->method('claimJob')
-            ->willReturn(true);
-
-        $this->storage->expects($this->once())
-            ->method('find')
-            ->willReturn($jobData);
+            ->method('claimById')
+            ->willReturnCallback(function ($jobId, $workerId) use ($jobData) {
+                return new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, $workerId, 'lease-token');
+            });
 
         $this->storage->expects($this->once())
             ->method('markFailed')
-            ->with(200, $this->isType('string'), $this->anything());
+            ->with(
+                $this->callback(function ($claim) {
+                    return $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 200;
+                }),
+                $this->isType('string'),
+                $this->anything()
+            )
+            ->willReturn(true);
 
         $driver->expects($this->once())
             ->method('ack')
@@ -405,16 +408,22 @@ class WorkerTest extends TestCase
             ->willReturn(300);
 
         $this->storage->expects($this->once())
-            ->method('claimJob')
-            ->willReturn(true);
-
-        $this->storage->expects($this->once())
-            ->method('find')
-            ->willReturn($jobData);
+            ->method('claimById')
+            ->willReturnCallback(function ($jobId, $workerId) use ($jobData) {
+                return new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, $workerId, 'lease-token');
+            });
 
         $this->storage->expects($this->once())
             ->method('scheduleRetry')
-            ->with(300, 1, 2, $this->isType('string'));
+            ->with(
+                $this->callback(function ($claim) {
+                    return $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 300;
+                }),
+                1,
+                2,
+                $this->isType('string')
+            )
+            ->willReturn(true);
 
         $driver->expects($this->once())
             ->method('nack')
@@ -457,16 +466,22 @@ class WorkerTest extends TestCase
             ->willReturn(400);
 
         $this->storage->expects($this->once())
-            ->method('claimJob')
-            ->willReturn(true);
-
-        $this->storage->expects($this->once())
-            ->method('find')
-            ->willReturn($jobData);
+            ->method('claimById')
+            ->willReturnCallback(function ($jobId, $workerId) use ($jobData) {
+                return new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, $workerId, 'lease-token');
+            });
 
         $this->storage->expects($this->once())
             ->method('scheduleRetry')
-            ->with(400, 9, 300, $this->isType('string'));
+            ->with(
+                $this->callback(function ($claim) {
+                    return $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 400;
+                }),
+                9,
+                300,
+                $this->isType('string')
+            )
+            ->willReturn(true);
 
         $driver->expects($this->once())
             ->method('nack')
@@ -509,16 +524,20 @@ class WorkerTest extends TestCase
             ->willReturn(500);
 
         $this->storage->expects($this->once())
-            ->method('claimJob')
-            ->willReturn(true);
-
-        $this->storage->expects($this->once())
-            ->method('find')
-            ->willReturn($jobData);
+            ->method('claimById')
+            ->willReturnCallback(function ($jobId, $workerId) use ($jobData) {
+                return new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, $workerId, 'lease-token');
+            });
 
         $this->storage->expects($this->once())
             ->method('markCompleted')
-            ->with(500, ['done' => true]);
+            ->with(
+                $this->callback(function ($claim) {
+                    return $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 500;
+                }),
+                ['done' => true]
+            )
+            ->willReturn(true);
 
         $driver->expects($this->once())
             ->method('ack')
@@ -568,12 +587,10 @@ class WorkerTest extends TestCase
             ->willReturn(999);
 
         $this->storage->expects($this->once())
-            ->method('claimJob')
-            ->willReturn(true);
-
-        $this->storage->expects($this->once())
-            ->method('find')
-            ->willReturn($jobData);
+            ->method('claimById')
+            ->willReturnCallback(function ($jobId, $workerId) use ($jobData) {
+                return new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, $workerId, 'lease-token');
+            });
 
         $this->storage->expects($this->once())
             ->method('scheduleRetry')

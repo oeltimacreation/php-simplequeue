@@ -33,7 +33,7 @@ class CrashRecoveryTest extends TestCase
     private function simulateCrash(int $jobId): void
     {
         $this->driver->dequeue('default', 0);
-        $this->storage->claimJob($jobId, 'crashed-worker:1234');
+        $this->storage->claimById($jobId, 'crashed-worker:1234');
 
         $storageReflection = new \ReflectionClass($this->storage);
         $jobsProp = $storageReflection->getProperty('jobs');

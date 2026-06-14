@@ -90,31 +90,6 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
         return null;
     }
 
-    public function getNextPendingJobId(string $queue = 'default'): ?int
-    {
-        $now = $this->now();
-
-        foreach ($this->jobs as $id => $job) {
-            if ($job['status'] !== 'pending') {
-                continue;
-            }
-            if ($job['queue'] !== $queue) {
-                continue;
-            }
-            if ($job['available_at'] !== null && $job['available_at'] > $now) {
-                continue;
-            }
-            return $id;
-        }
-
-        return null;
-    }
-
-    public function claimJob(int $id, string $workerId): bool
-    {
-        return $this->claimById($id, $workerId) !== null;
-    }
-
     /**
      * Atomically claim the next available job in a queue.
      *
@@ -169,58 +144,73 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
         return $this->claimAvailableJob($id, $workerId, $this->now());
     }
 
-    public function markCompleted(int $id, mixed $result = null): bool
+    public function markCompleted(ClaimedJob $claim, mixed $result = null): bool
     {
-        if (!isset($this->jobs[$id])) {
+        if (!$this->ownsClaim($claim)) {
             return false;
         }
 
         $now = $this->now();
+        $id = $claim->job->id;
         $this->jobs[$id]['status'] = 'completed';
         $this->jobs[$id]['result'] = $result === null ? null : json_encode($result);
         $this->jobs[$id]['completed_at'] = $now;
+        $this->jobs[$id]['locked_by'] = null;
+        $this->jobs[$id]['locked_at'] = null;
+        $this->jobs[$id]['lease_token'] = null;
         $this->jobs[$id]['updated_at'] = $now;
 
         return true;
     }
 
-    public function markFailed(int $id, string $errorMessage, ?string $errorTrace = null): bool
+    public function markFailed(ClaimedJob $claim, string $errorMessage, ?string $errorTrace = null): bool
     {
-        if (!isset($this->jobs[$id])) {
+        if (!$this->ownsClaim($claim)) {
             return false;
         }
 
         $now = $this->now();
+        $id = $claim->job->id;
         $this->jobs[$id]['status'] = 'failed';
         $this->jobs[$id]['error_message'] = $errorMessage;
         $this->jobs[$id]['error_trace'] = $errorTrace;
         $this->jobs[$id]['completed_at'] = $now;
+        $this->jobs[$id]['locked_by'] = null;
+        $this->jobs[$id]['locked_at'] = null;
+        $this->jobs[$id]['lease_token'] = null;
         $this->jobs[$id]['updated_at'] = $now;
 
         return true;
     }
 
-    public function updateProgress(int $id, ?int $progress = null, ?string $message = null): bool
+    public function updateProgress(ClaimedJob $claim, ?int $progress = null, ?string $message = null): bool
     {
-        if (!isset($this->jobs[$id])) {
+        if (!$this->ownsClaim($claim)) {
             return false;
         }
 
+        $id = $claim->job->id;
         $this->jobs[$id]['progress'] = $progress;
         $this->jobs[$id]['progress_message'] = $message;
-        $this->jobs[$id]['updated_at'] = $this->now();
+        $this->jobs[$id]['locked_at'] = $this->now();
+        $this->jobs[$id]['updated_at'] = $this->jobs[$id]['locked_at'];
 
         return true;
     }
 
-    public function scheduleRetry(int $id, int $attempts, int $delaySeconds, ?string $errorMessage = null): bool
-    {
-        if (!isset($this->jobs[$id])) {
+    public function scheduleRetry(
+        ClaimedJob $claim,
+        int $attempts,
+        int $delaySeconds,
+        ?string $errorMessage = null
+    ): bool {
+        if (!$this->ownsClaim($claim)) {
             return false;
         }
 
         $now = $this->now();
         $availableAt = gmdate($this->dateFormat, (int) strtotime($now) + $delaySeconds);
+        $id = $claim->job->id;
 
         $this->jobs[$id]['status'] = 'pending';
         $this->jobs[$id]['attempts'] = $attempts;
@@ -229,6 +219,20 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
         $this->jobs[$id]['locked_by'] = null;
         $this->jobs[$id]['locked_at'] = null;
         $this->jobs[$id]['lease_token'] = null;
+        $this->jobs[$id]['updated_at'] = $now;
+
+        return true;
+    }
+
+    public function heartbeat(ClaimedJob $claim): bool
+    {
+        if (!$this->ownsClaim($claim)) {
+            return false;
+        }
+
+        $now = $this->now();
+        $id = $claim->job->id;
+        $this->jobs[$id]['locked_at'] = $now;
         $this->jobs[$id]['updated_at'] = $now;
 
         return true;
@@ -347,11 +351,11 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
             return null;
         }
 
-        if ($this->jobs[$id]['status'] !== 'pending') {
-            return null;
-        }
+        $job = $this->jobs[$id];
+        $isPending = $job['status'] === 'pending' && $job['available_at'] <= $now;
+        $isAlreadyLockedByMe = $job['status'] === 'running' && $job['locked_by'] === $workerId;
 
-        if ($this->jobs[$id]['available_at'] > $now) {
+        if (!$isPending && !$isAlreadyLockedByMe) {
             return null;
         }
 
@@ -369,5 +373,14 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
     private function generateLeaseToken(): string
     {
         return bin2hex(random_bytes(32));
+    }
+
+    private function ownsClaim(ClaimedJob $claim): bool
+    {
+        $id = $claim->job->id;
+
+        return isset($this->jobs[$id])
+            && $this->jobs[$id]['status'] === 'running'
+            && $this->jobs[$id]['lease_token'] === $claim->leaseToken;
     }
 }

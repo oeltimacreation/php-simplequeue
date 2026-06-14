@@ -47,61 +47,75 @@ interface JobStorageInterface
     public function findActiveByRequestId(string $requestId): ?JobData;
 
     /**
-     * Get the next pending job ID for a queue.
+     * Atomically claim the next available job in a queue.
      *
      * @param string $queue Queue name
-     * @return int|null Job ID or null if no pending jobs
+     * @param string $workerId Worker identifier
+     * @return ClaimedJob|null Claimed job or null if no job is available
      */
-    public function getNextPendingJobId(string $queue = 'default'): ?int;
+    public function claimNextAvailable(string $queue, string $workerId): ?ClaimedJob;
 
     /**
-     * Claim a job for processing by a worker.
+     * Atomically claim a specific job by ID.
      *
      * @param int $id Job identifier
      * @param string $workerId Worker identifier
-     * @return bool True if successfully claimed
+     * @return ClaimedJob|null Claimed job or null if unavailable
      */
-    public function claimJob(int $id, string $workerId): bool;
+    public function claimById(int $id, string $workerId): ?ClaimedJob;
 
     /**
      * Mark a job as completed.
      *
-     * @param int $id Job identifier
+     * @param ClaimedJob $claim Claimed job ownership token
      * @param mixed $result Result data to store
      * @return bool True if successfully updated
      */
-    public function markCompleted(int $id, mixed $result = null): bool;
+    public function markCompleted(ClaimedJob $claim, mixed $result = null): bool;
 
     /**
      * Mark a job as failed.
      *
-     * @param int $id Job identifier
+     * @param ClaimedJob $claim Claimed job ownership token
      * @param string $errorMessage Error message
      * @param string|null $errorTrace Stack trace
      * @return bool True if successfully updated
      */
-    public function markFailed(int $id, string $errorMessage, ?string $errorTrace = null): bool;
+    public function markFailed(ClaimedJob $claim, string $errorMessage, ?string $errorTrace = null): bool;
 
     /**
      * Update job progress.
      *
-     * @param int $id Job identifier
+     * @param ClaimedJob $claim Claimed job ownership token
      * @param int|null $progress Progress percentage (0-100)
      * @param string|null $message Progress message
      * @return bool True if successfully updated
      */
-    public function updateProgress(int $id, ?int $progress = null, ?string $message = null): bool;
+    public function updateProgress(ClaimedJob $claim, ?int $progress = null, ?string $message = null): bool;
 
     /**
      * Schedule a job for retry.
      *
-     * @param int $id Job identifier
+     * @param ClaimedJob $claim Claimed job ownership token
      * @param int $attempts Current attempt count
      * @param int $delaySeconds Delay before next attempt
      * @param string|null $errorMessage Error message from failed attempt
      * @return bool True if successfully updated
      */
-    public function scheduleRetry(int $id, int $attempts, int $delaySeconds, ?string $errorMessage = null): bool;
+    public function scheduleRetry(
+        ClaimedJob $claim,
+        int $attempts,
+        int $delaySeconds,
+        ?string $errorMessage = null
+    ): bool;
+
+    /**
+     * Refresh the lease for a running job.
+     *
+     * @param ClaimedJob $claim Claimed job ownership token
+     * @return bool True if the lease was refreshed
+     */
+    public function heartbeat(ClaimedJob $claim): bool;
 
     /**
      * Recover stale/stuck jobs that have been running too long.
