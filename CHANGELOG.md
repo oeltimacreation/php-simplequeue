@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added startup validation checking to `Worker` to ensure the configured `poll_timeout` is strictly less than the Predis `read_write_timeout` parameters.
 - Added explicit capability interfaces (`SupportsDelayedJobs`, `SupportsStaleRecovery`, `SupportsBatchEnqueue`, `SupportsWorkerId`, `SupportsTimeoutValidation`, `SupportsQueueReconciliation`, `QueueStatsInterface`) to formalize queue driver extension points and eliminate dynamic checks.
 - Added a `createJobs()` method to `JobStorageInterface` (and implemented in `InMemoryJobStorage` and `PdoJobStorage`) to support high-performance batch creation of multiple jobs in a single database roundtrip.
+- Added conditional unique index schema definitions and documentation to prevent duplicate active jobs under concurrency when using `JobDispatcher::dispatchIdempotent()`.
 
 ### Changed
 
