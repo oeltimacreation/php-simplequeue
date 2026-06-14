@@ -604,4 +604,70 @@ class WorkerTest extends TestCase
 
         $this->assertTrue($result);
     }
+
+    public function testRunReturnsExitLockUnavailableOnLockFailure(): void
+    {
+        $lockFile = tempnam(sys_get_temp_dir(), 'sq_lock_');
+        $fp = fopen($lockFile, 'c');
+        flock($fp, LOCK_EX);
+
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $worker = $this->createWorkerWithDriver($driver, [
+            'lock_file' => $lockFile,
+        ]);
+
+        $exitCode = $worker->run();
+        $this->assertEquals(Worker::EXIT_LOCK_UNAVAILABLE, $exitCode);
+
+        fclose($fp);
+        unlink($lockFile);
+    }
+
+    public function testRunReturnsExitSuccessOnGracefulShutdown(): void
+    {
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $worker = $this->createWorkerWithDriver($driver);
+
+        $driver->expects($this->once())
+            ->method('dequeue')
+            ->willReturnCallback(function () use ($worker) {
+                $worker->stop();
+                return null;
+            });
+
+        $exitCode = $worker->run();
+        $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
+    }
+
+    public function testRunRetriesWithBackoffOnInfrastructureError(): void
+    {
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $worker = $this->createWorkerWithDriver($driver, [
+            'retry_base_delay' => 0,
+            'retry_max_delay' => 0,
+        ]);
+
+        $calls = 0;
+        $driver->expects($this->exactly(2))
+            ->method('dequeue')
+            ->willReturnCallback(function () use (&$calls, $worker) {
+                $calls++;
+                if ($calls === 1) {
+                    throw new \PDOException('Connection lost');
+                }
+                $worker->stop();
+                return null;
+            });
+
+        $this->logger->expects($this->atLeastOnce())
+            ->method('error')
+            ->with(
+                'Infrastructure error encountered. Backing off.',
+                $this->anything()
+            );
+
+        $exitCode = $worker->run();
+        $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
+    }
 }
+

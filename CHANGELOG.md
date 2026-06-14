@@ -14,12 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added an injectable clock abstraction for UTC wall-clock timestamps and monotonic duration measurement.
 - Added a `ClaimedJob` value object and `lease_token` schema support for fenced job ownership.
 - Added a SQL migration example for upgrading existing MySQL, PostgreSQL, and SQLite job tables to lease-based claims.
+- Added exit codes (`EXIT_SUCCESS`, `EXIT_ERROR`, `EXIT_LOCK_UNAVAILABLE`) to `Worker::run()` for better process supervision.
 
 ### Changed
 
+- **BREAKING**: `Worker::run()` now returns an integer exit code instead of `void`.
 - **BREAKING**: New job schemas require `available_at` to be non-null and include `lease_token` for fenced claim ownership.
 - **BREAKING**: `JobStorageInterface` methods (`markCompleted`, `markFailed`, `updateProgress`, `scheduleRetry`, `heartbeat`) now require a `ClaimedJob` value object instead of an integer `$id` to enforce fenced writes.
 - **BREAKING**: Removed `getNextPendingJobId` and `claimJob` from `JobStorageInterface` in favor of `claimNextAvailable` and `claimById`.
+- Rebuilt the worker execution loop to support backoff with jitter on infrastructure errors.
+- Improved graceful worker shutdown to release lock in a `finally` block and immediately release any claimed job back to the pending queue.
 - `PdoJobStorage` can now atomically claim the next available job or a specific queued job with a unique lease token.
 - `InMemoryJobStorage` now matches lease-based claim semantics for tests and local development.
 - `DatabaseQueueDriver` now delegates to the storage's atomic claim mechanism for polling, eliminating the thundering herd problem.
