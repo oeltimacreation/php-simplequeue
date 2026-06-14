@@ -33,12 +33,8 @@ final class Worker
     private const DEFAULT_POLL_TIMEOUT = 5;
     private const DEFAULT_STUCK_JOB_TTL = 600; // 10 minutes
 
-    private JobStorageInterface $storage;
-    private QueueManager $queueManager;
-    private JobRegistry $registry;
     private LoggerInterface $logger;
     private string $workerId;
-    private string $queue;
     private bool $shouldRun = true;
     private mixed $lockHandle = null;
     private ?string $lockFile;
@@ -73,18 +69,14 @@ final class Worker
      * @param array<string, mixed> $options Worker options
      */
     public function __construct(
-        JobStorageInterface $storage,
-        QueueManager $queueManager,
-        JobRegistry $registry,
+        private readonly JobStorageInterface $storage,
+        private readonly QueueManager $queueManager,
+        private readonly JobRegistry $registry,
         ?LoggerInterface $logger = null,
-        string $queue = 'default',
+        private readonly string $queue = 'default',
         array $options = []
     ) {
-        $this->storage = $storage;
-        $this->queueManager = $queueManager;
-        $this->registry = $registry;
         $this->logger = $logger ?? new NullLogger();
-        $this->queue = $queue;
         $this->workerId = $this->generateWorkerId();
 
         $driver = $this->queueManager->driver();
@@ -93,7 +85,9 @@ final class Worker
         }
 
         // Configuration options
-        $this->lockFile = $options['lock_file'] ?? '/tmp/simplequeue-worker.lock';
+        $this->lockFile = array_key_exists('lock_file', $options)
+            ? $options['lock_file']
+            : sprintf('/tmp/simplequeue-worker-%s.lock', preg_replace('/[^a-zA-Z0-9_-]/', '', $queue));
         $this->pollTimeout = (int) ($options['poll_timeout'] ?? self::DEFAULT_POLL_TIMEOUT);
         $this->stuckJobTtl = (int) ($options['stuck_job_ttl'] ?? self::DEFAULT_STUCK_JOB_TTL);
         $this->retryBaseDelay = (int) ($options['retry_base_delay'] ?? 2);

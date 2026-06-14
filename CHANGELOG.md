@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING**: `JobStorageInterface` methods (`markCompleted`, `markFailed`, `updateProgress`, `scheduleRetry`, `heartbeat`) now require a `ClaimedJob` value object instead of an integer `$id` to enforce fenced writes.
 - **BREAKING**: Removed `getNextPendingJobId` and `claimJob` from `JobStorageInterface` in favor of `claimNextAvailable` and `claimById`.
 - Progress updates now automatically issue a heartbeat to storage to keep the lease fresh for long-running jobs.
+- Scoped the default worker singleton lock file path to the specific queue name (e.g. `/tmp/simplequeue-worker-default.lock`) to prevent workers on different queues from blocking each other.
 - Improved fenced write error handling so that if job ownership is lost, the worker logs a warning and refrains from sending an acknowledgement (ACK) or negative acknowledgement (NACK) to the queue driver.
 - Rebuilt the worker execution loop to support backoff with jitter on infrastructure errors.
 - Throttled delayed job promotion and stale job recovery using monotonic timers to reduce idle database/Redis command overhead.

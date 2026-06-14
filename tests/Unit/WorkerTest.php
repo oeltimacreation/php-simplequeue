@@ -1135,5 +1135,25 @@ class WorkerTest extends TestCase
         $this->assertEquals(123, $events[1][1]['job_id']);
         $this->assertArrayHasKey('duration_ms', $events[1][1]);
     }
+
+    public function testDefaultLockFileIsQueueScoped(): void
+    {
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $queueManager = new QueueManager($driver);
+        $worker = new Worker(
+            $this->storage,
+            $queueManager,
+            $this->registry,
+            $this->logger,
+            'custom/queue-name'
+        );
+
+        $ref = new \ReflectionClass($worker);
+        $prop = $ref->getProperty('lockFile');
+        $prop->setAccessible(true);
+        $lockFile = $prop->getValue($worker);
+
+        $this->assertEquals('/tmp/simplequeue-worker-customqueue-name.lock', $lockFile);
+    }
 }
 

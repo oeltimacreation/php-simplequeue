@@ -15,13 +15,10 @@ use Oeltima\SimpleQueue\Contract\SupportsBatchEnqueue;
  */
 final class JobDispatcher
 {
-    private JobStorageInterface $storage;
-    private QueueManager $queueManager;
-
-    public function __construct(JobStorageInterface $storage, QueueManager $queueManager)
-    {
-        $this->storage = $storage;
-        $this->queueManager = $queueManager;
+    public function __construct(
+        private readonly JobStorageInterface $storage,
+        private readonly QueueManager $queueManager
+    ) {
     }
 
     /**
