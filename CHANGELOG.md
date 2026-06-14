@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added explicit capability interfaces (`SupportsDelayedJobs`, `SupportsStaleRecovery`, `SupportsBatchEnqueue`, `SupportsWorkerId`, `SupportsTimeoutValidation`, `SupportsQueueReconciliation`, `QueueStatsInterface`) to formalize queue driver extension points and eliminate dynamic checks.
 - Added a `createJobs()` method to `JobStorageInterface` (and implemented in `InMemoryJobStorage` and `PdoJobStorage`) to support high-performance batch creation of multiple jobs in a single database roundtrip.
 - Added conditional unique index schema definitions and documentation to prevent duplicate active jobs under concurrency when using `JobDispatcher::dispatchIdempotent()`.
+- Added optional observability listener hooks to `Worker` for tracking lifecycle events (`claimed`, `completed`, `failed`, `retried`, `lost_ownership`, `infra_error`, `backoff`) with runtime execution metrics such as `duration_ms` and `acquire_latency_ms`.
 
 ### Changed
 

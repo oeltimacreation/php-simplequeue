@@ -61,6 +61,9 @@ final class Worker
     private float $lastPromoteTime = 0.0;
     private float $lastRecoveryTime = 0.0;
 
+    /** @var (callable(string, array<string, mixed>): void)|null */
+    private $eventListener = null;
+
     /**
      * @param JobStorageInterface $storage Job storage implementation
      * @param QueueManager $queueManager Queue manager instance
@@ -108,6 +111,40 @@ final class Worker
 
         if ($driver instanceof SupportsTimeoutValidation) {
             $driver->validateTimeout($this->pollTimeout);
+        }
+
+        if (isset($options['event_listener']) && is_callable($options['event_listener'])) {
+            $this->eventListener = $options['event_listener'];
+        }
+    }
+
+    /**
+     * Set a listener for worker lifecycle events.
+     *
+     * @param callable(string, array<string, mixed>): void $listener
+     */
+    public function setEventListener(callable $listener): void
+    {
+        $this->eventListener = $listener;
+    }
+
+    /**
+     * Emit an event to the registered event listener.
+     *
+     * @param string $event Event name
+     * @param array<string, mixed> $data Event data
+     */
+    private function emit(string $event, array $data): void
+    {
+        if ($this->eventListener !== null) {
+            try {
+                ($this->eventListener)($event, $data);
+            } catch (\Throwable $listenerError) {
+                $this->logger->error('Worker event listener threw an exception', [
+                    'event' => $event,
+                    'error' => $listenerError->getMessage()
+                ]);
+            }
         }
     }
 
@@ -199,6 +236,16 @@ final class Worker
                             'consecutive_errors' => $consecutiveErrors,
                         ]);
 
+                        $this->emit('infra_error', [
+                            'error' => $e->getMessage(),
+                            'exception' => $e,
+                        ]);
+
+                        $this->emit('backoff', [
+                            'error' => $e->getMessage(),
+                            'backoff_seconds' => $totalDelaySeconds,
+                        ]);
+
                         $this->sleep($totalDelaySeconds);
                     } else {
                         $this->logger->error('Worker loop encountered an unexpected error', [
@@ -269,6 +316,7 @@ final class Worker
 
     private function claimNextJob(int $timeoutSeconds): ?ClaimedJob
     {
+        $startTime = $this->clock->monotonic();
         $driver = $this->queueManager->driver();
         $jobId = null;
 
@@ -312,6 +360,13 @@ final class Worker
             }
             return null;
         }
+
+        $latency = ($this->clock->monotonic() - $startTime) * 1000.0;
+        $this->emit('claimed', [
+            'job_id' => $claim->job->id,
+            'type' => $claim->job->type,
+            'acquire_latency_ms' => $latency,
+        ]);
 
         return $claim;
     }
@@ -408,17 +463,28 @@ final class Worker
 
         try {
             $completed = $this->executeJob($claim);
-            $duration = round($this->clock->monotonic() - $startTime, 3);
+            $durationMs = ($this->clock->monotonic() - $startTime) * 1000.0;
 
             if (!$completed) {
                 $this->logger->warning('Lost job ownership before completion ack', ['job_id' => $job->id]);
+                $this->emit('lost_ownership', [
+                    'job_id' => $job->id,
+                    'type' => $job->type,
+                    'context' => 'complete',
+                ]);
                 return;
             }
 
             $this->logger->info('Job completed', [
                 'job_id' => $job->id,
                 'type' => $job->type,
-                'duration_seconds' => $duration,
+                'duration_seconds' => round($durationMs / 1000.0, 3),
+            ]);
+
+            $this->emit('completed', [
+                'job_id' => $job->id,
+                'type' => $job->type,
+                'duration_ms' => $durationMs,
             ]);
 
             try {
@@ -430,8 +496,8 @@ final class Worker
                 ]);
             }
         } catch (\Throwable $e) {
-            $duration = round($this->clock->monotonic() - $startTime, 3);
-            $this->handleJobFailure($claim, $e, $driver, $duration);
+            $durationMs = ($this->clock->monotonic() - $startTime) * 1000.0;
+            $this->handleJobFailure($claim, $e, $driver, $durationMs);
         } finally {
             $this->processedJobsCount++;
         }
@@ -461,7 +527,7 @@ final class Worker
         ClaimedJob $claim,
         \Throwable $e,
         QueueDriverInterface $driver,
-        float $duration
+        float $durationMs
     ): void {
         $job = $claim->job;
         $attempts = $job->attempts + 1;
@@ -471,7 +537,7 @@ final class Worker
             'type' => $job->type,
             'attempts' => $attempts,
             'max_attempts' => $job->maxAttempts,
-            'duration_seconds' => $duration,
+            'duration_seconds' => round($durationMs / 1000.0, 3),
             'error' => $e->getMessage(),
         ]);
 
@@ -480,13 +546,37 @@ final class Worker
                 $delay = $this->calculateRetryDelay($attempts);
                 if ($this->scheduleRetry($claim, $attempts, $delay, $e)) {
                     $driver->nack($this->queue, $job->id, $delay);
+                    $this->emit('retried', [
+                        'job_id' => $job->id,
+                        'type' => $job->type,
+                        'duration_ms' => $durationMs,
+                        'attempts' => $attempts,
+                        'error' => $e->getMessage(),
+                    ]);
+                } else {
+                    $this->emit('lost_ownership', [
+                        'job_id' => $job->id,
+                        'type' => $job->type,
+                        'context' => 'retry',
+                    ]);
                 }
             } else {
                 $marked = $this->storage->markFailed($claim, $e->getMessage(), $this->truncateTrace($e));
                 if ($marked) {
                     $driver->ack($this->queue, $job->id);
+                    $this->emit('failed', [
+                        'job_id' => $job->id,
+                        'type' => $job->type,
+                        'duration_ms' => $durationMs,
+                        'error' => $e->getMessage(),
+                    ]);
                 } else {
                     $this->logger->warning('Lost job ownership before marking failed', ['job_id' => $job->id]);
+                    $this->emit('lost_ownership', [
+                        'job_id' => $job->id,
+                        'type' => $job->type,
+                        'context' => 'fail',
+                    ]);
                 }
             }
         } catch (\Throwable $storageError) {

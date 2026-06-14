@@ -1080,5 +1080,60 @@ class WorkerTest extends TestCase
         $method->setAccessible(true);
         $method->invoke($worker);
     }
+
+    public function testWorkerEventListenerEmitsEvents(): void
+    {
+        $handler = new class implements JobHandlerInterface {
+            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
+            {
+                return ['ok' => true];
+            }
+        };
+        $this->registry->register('test.job', get_class($handler));
+
+        $jobData = new JobData(
+            id: 123,
+            queue: 'default',
+            type: 'test.job',
+            status: 'running',
+            payload: [],
+            attempts: 0,
+            maxAttempts: 3,
+            createdAt: date('Y-m-d H:i:s'),
+            updatedAt: date('Y-m-d H:i:s')
+        );
+
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $driver->expects($this->once())
+            ->method('dequeue')
+            ->willReturn(123);
+
+        $this->storage->expects($this->once())
+            ->method('claimById')
+            ->willReturn(new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, 'worker-1', 'token-123'));
+
+        $this->storage->expects($this->once())
+            ->method('markCompleted')
+            ->willReturn(true);
+
+        $events = [];
+        $listener = function (string $event, array $data) use (&$events): void {
+            $events[] = [$event, $data];
+        };
+
+        $worker = $this->createWorkerWithDriver($driver, [
+            'event_listener' => $listener,
+        ]);
+        $worker->processOne();
+
+        $this->assertCount(2, $events);
+        $this->assertEquals('claimed', $events[0][0]);
+        $this->assertEquals(123, $events[0][1]['job_id']);
+        $this->assertArrayHasKey('acquire_latency_ms', $events[0][1]);
+
+        $this->assertEquals('completed', $events[1][0]);
+        $this->assertEquals(123, $events[1][1]['job_id']);
+        $this->assertArrayHasKey('duration_ms', $events[1][1]);
+    }
 }
 
