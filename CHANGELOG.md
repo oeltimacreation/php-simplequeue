@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - GitHub Actions now tests the documented PHP 8.1 through 8.4 support range.
+- Worker retry delay calculation is now centralized so storage and queue retry scheduling share one computed value.
 
 ### Fixed
 

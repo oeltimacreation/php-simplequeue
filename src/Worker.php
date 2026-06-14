@@ -266,8 +266,8 @@ final class Worker
 
         try {
             if ($attempts < $job->maxAttempts) {
-                $delay = min($this->retryMaxDelay, (int) pow($this->retryBaseDelay, $attempts));
-                $this->scheduleRetry($job, $attempts, $e);
+                $delay = $this->calculateRetryDelay($attempts);
+                $this->scheduleRetry($job, $attempts, $delay, $e);
                 $driver->nack($this->queue, $job->id, $delay);
             } else {
                 $this->storage->markFailed($job->id, $e->getMessage(), $this->truncateTrace($e));
@@ -283,10 +283,8 @@ final class Worker
         }
     }
 
-    private function scheduleRetry(JobData $job, int $attempts, \Throwable $e): void
+    private function scheduleRetry(JobData $job, int $attempts, int $delay, \Throwable $e): void
     {
-        $delay = min($this->retryMaxDelay, (int) pow($this->retryBaseDelay, $attempts));
-
         $this->storage->scheduleRetry($job->id, $attempts, $delay, $e->getMessage());
 
         $this->logger->info('Job scheduled for retry', [
@@ -294,6 +292,11 @@ final class Worker
             'attempts' => $attempts,
             'delay_seconds' => $delay,
         ]);
+    }
+
+    private function calculateRetryDelay(int $attempts): int
+    {
+        return min($this->retryMaxDelay, (int) pow($this->retryBaseDelay, $attempts));
     }
 
     private function recoverStaleJobs(): void
