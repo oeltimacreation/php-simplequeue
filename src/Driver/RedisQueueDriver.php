@@ -112,16 +112,20 @@ LUA;
     public function dequeue(string $queue, int $timeoutSeconds): ?int
     {
         if ($timeoutSeconds <= 0) {
-            // Non-blocking: use RPOPLPUSH instead of BRPOPLPUSH
-            $result = $this->redis->rpoplpush(
+            // Non-blocking: use LMOVE instead of BLMOVE
+            $result = $this->redis->lmove(
                 $this->pendingKey($queue),
-                $this->processingKey($queue)
+                $this->processingKey($queue),
+                'RIGHT',
+                'LEFT'
             );
         } else {
             // Blocking with timeout
-            $result = $this->redis->brpoplpush(
+            $result = $this->redis->blmove(
                 $this->pendingKey($queue),
                 $this->processingKey($queue),
+                'RIGHT',
+                'LEFT',
                 $timeoutSeconds
             );
         }

@@ -104,34 +104,34 @@ class RedisQueueDriverTest extends TestCase
 
     public function testDequeueNonBlockingWhenTimeoutZero(): void
     {
-        $this->redis->returns['rpoplpush'] = '123';
+        $this->redis->returns['lmove'] = '123';
 
         $jobId = $this->driver->dequeue('default', 0);
 
         $this->assertEquals(123, $jobId);
         
         $callMethods = array_column($this->redis->calls, 'method');
-        $this->assertContains('rpoplpush', $callMethods, 'Should use non-blocking rpoplpush');
-        $this->assertNotContains('brpoplpush', $callMethods, 'Should not use blocking brpoplpush');
+        $this->assertContains('lmove', $callMethods, 'Should use non-blocking lmove');
+        $this->assertNotContains('blmove', $callMethods, 'Should not use blocking blmove');
         $this->assertContains('zadd', $callMethods, 'Should track in processing ZSET');
     }
 
     public function testDequeueBlockingWhenTimeoutPositive(): void
     {
-        $this->redis->returns['brpoplpush'] = '456';
+        $this->redis->returns['blmove'] = '456';
 
         $jobId = $this->driver->dequeue('default', 5);
 
         $this->assertEquals(456, $jobId);
         
         $callMethods = array_column($this->redis->calls, 'method');
-        $this->assertContains('brpoplpush', $callMethods, 'Should use blocking brpoplpush');
-        $this->assertNotContains('rpoplpush', $callMethods, 'Should not use non-blocking rpoplpush');
+        $this->assertContains('blmove', $callMethods, 'Should use blocking blmove');
+        $this->assertNotContains('lmove', $callMethods, 'Should not use non-blocking lmove');
     }
 
     public function testDequeueReturnsNullWhenEmpty(): void
     {
-        $this->redis->returns['rpoplpush'] = null;
+        $this->redis->returns['lmove'] = null;
 
         $jobId = $this->driver->dequeue('default', 0);
 
