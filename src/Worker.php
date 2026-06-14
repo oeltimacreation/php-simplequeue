@@ -123,6 +123,7 @@ final class Worker
 
             // Run initial recovery and promotion immediately
             $this->recoverStaleJobs();
+            $this->reconcileDbAndRedis();
             $this->lastRecoveryTime = $this->clock->monotonic();
 
             $this->promoteDelayedJobs();
@@ -366,6 +367,7 @@ final class Worker
         // Recover stale jobs
         if ($now - $this->lastRecoveryTime >= $this->recoveryInterval) {
             $this->recoverStaleJobs();
+            $this->reconcileDbAndRedis();
             $this->lastRecoveryTime = $now;
         }
     }
@@ -525,6 +527,80 @@ final class Worker
                 'Recovered stale jobs',
                 ['count' => $recovered, 'ttl_seconds' => $this->stuckJobTtl]
             );
+        }
+    }
+
+    /**
+     * Reconcile jobs between the database (source of truth) and Redis.
+     *
+     * Resolves dual-write inconsistencies where a job was committed to DB but enqueuing to Redis failed.
+     */
+    private function reconcileDbAndRedis(): void
+    {
+        $driver = $this->queueManager->driver();
+        if (!method_exists($driver, 'getPendingIds') || !method_exists($driver, 'getDelayedIds')) {
+            return;
+        }
+
+        $storage = $this->storage;
+        // Import capability interface if available, or check list method
+        if (!method_exists($storage, 'list')) {
+            return;
+        }
+
+        try {
+            $this->logger->info('Running DB-Redis reconciliation sweep');
+
+            // 1. Get all pending jobs from DB for this queue
+            $dbJobs = $storage->list('pending', $this->queue, 1000);
+            if (empty($dbJobs)) {
+                return;
+            }
+
+            // 2. Get pending and delayed IDs from Redis
+            $redisPending = array_flip($driver->getPendingIds($this->queue));
+            $redisDelayed = array_flip($driver->getDelayedIds($this->queue));
+
+            $now = time();
+            $reconciledCount = 0;
+
+            foreach ($dbJobs as $job) {
+                $jobId = $job->id;
+                $availableAt = strtotime($job->availableAt);
+
+                if ($availableAt <= $now) {
+                    // Immediate job: should be in Redis pending list or delayed ZSET (awaiting promotion)
+                    if (!isset($redisPending[$jobId]) && !isset($redisDelayed[$jobId])) {
+                        $this->logger->warning('Reconciling pending job missing from Redis pending queue', [
+                            'job_id' => $jobId,
+                            'queue' => $this->queue,
+                        ]);
+                        $driver->enqueue($this->queue, $jobId);
+                        $reconciledCount++;
+                    }
+                } else {
+                    // Delayed job: should be in Redis delayed ZSET
+                    if (!isset($redisDelayed[$jobId])) {
+                        $this->logger->warning('Reconciling delayed job missing from Redis delayed queue', [
+                            'job_id' => $jobId,
+                            'queue' => $this->queue,
+                            'delay_seconds' => $availableAt - $now,
+                        ]);
+                        $delaySeconds = max(0, $availableAt - $now);
+                        $driver->nack($this->queue, $jobId, $delaySeconds);
+                        $reconciledCount++;
+                    }
+                }
+            }
+
+            if ($reconciledCount > 0) {
+                $this->logger->info('DB-Redis reconciliation completed', ['reconciled_count' => $reconciledCount]);
+            }
+        } catch (\Throwable $e) {
+            $this->logger->error('Failed to run DB-Redis reconciliation sweep', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
         }
     }
 

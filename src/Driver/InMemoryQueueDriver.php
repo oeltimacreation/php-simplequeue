@@ -186,6 +186,28 @@ final class InMemoryQueueDriver implements QueueDriverInterface
     }
 
     /**
+     * Get all pending job IDs in the queue.
+     *
+     * @param string $queue Queue name
+     * @return int[] Pending job IDs
+     */
+    public function getPendingIds(string $queue): array
+    {
+        return $this->pending[$queue] ?? [];
+    }
+
+    /**
+     * Get all delayed job IDs in the queue.
+     *
+     * @param string $queue Queue name
+     * @return int[] Delayed job IDs
+     */
+    public function getDelayedIds(string $queue): array
+    {
+        return isset($this->delayed[$queue]) ? array_keys($this->delayed[$queue]) : [];
+    }
+
+    /**
      * Clear all queues.
      */
     public function clear(): void

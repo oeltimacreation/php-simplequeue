@@ -230,7 +230,6 @@ LUA;
 
     /**
      * Enqueue multiple job IDs efficiently using Redis pipeline.
-     *
      * @param string $queue Queue name
      * @param int[] $jobIds Array of job identifiers
      */
@@ -243,6 +242,30 @@ LUA;
         $key = $this->pendingKey($queue);
         $stringJobIds = array_map(fn($id) => (string) $id, $jobIds);
         $this->redis->lpush($key, $stringJobIds);
+    }
+
+    /**
+     * Get all pending job IDs in the queue.
+     *
+     * @param string $queue Queue name
+     * @return int[] Pending job IDs
+     */
+    public function getPendingIds(string $queue): array
+    {
+        $results = $this->redis->lrange($this->pendingKey($queue), 0, -1);
+        return array_map('intval', $results ?: []);
+    }
+
+    /**
+     * Get all delayed job IDs in the queue.
+     *
+     * @param string $queue Queue name
+     * @return int[] Delayed job IDs
+     */
+    public function getDelayedIds(string $queue): array
+    {
+        $results = $this->redis->zrange($this->delayedKey($queue), 0, -1);
+        return array_map('intval', $results ?: []);
     }
 
     private function pendingKey(string $queue): string
