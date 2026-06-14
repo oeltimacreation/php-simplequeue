@@ -6,6 +6,7 @@ namespace Oeltima\SimpleQueue;
 
 use Oeltima\SimpleQueue\Contract\JobData;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
+use Oeltima\SimpleQueue\Contract\SupportsBatchEnqueue;
 
 /**
  * Service for dispatching jobs to the queue.
@@ -14,13 +15,10 @@ use Oeltima\SimpleQueue\Contract\JobStorageInterface;
  */
 final class JobDispatcher
 {
-    private JobStorageInterface $storage;
-    private QueueManager $queueManager;
-
-    public function __construct(JobStorageInterface $storage, QueueManager $queueManager)
-    {
-        $this->storage = $storage;
-        $this->queueManager = $queueManager;
+    public function __construct(
+        private readonly JobStorageInterface $storage,
+        private readonly QueueManager $queueManager
+    ) {
     }
 
     /**
@@ -89,13 +87,20 @@ final class JobDispatcher
         string $queue = 'default',
         int $maxAttempts = 3
     ): array {
-        $jobIds = [];
+        $jobs = [];
         foreach ($payloads as $payload) {
-            $jobIds[] = $this->storage->createJob($type, $payload, $queue, $maxAttempts);
+            $jobs[] = [
+                'type' => $type,
+                'payload' => $payload,
+                'queue' => $queue,
+                'maxAttempts' => $maxAttempts,
+            ];
         }
 
+        $jobIds = $this->storage->createJobs($jobs);
+
         $driver = $this->queueManager->driver();
-        if ($driver instanceof \Oeltima\SimpleQueue\Driver\RedisQueueDriver) {
+        if ($driver instanceof SupportsBatchEnqueue) {
             $driver->enqueueBatch($queue, $jobIds);
         } else {
             foreach ($jobIds as $jobId) {
@@ -131,5 +136,16 @@ final class JobDispatcher
     public function getStorage(): JobStorageInterface
     {
         return $this->storage;
+    }
+
+    /**
+     * Cancel a pending job.
+     *
+     * @param int $jobId Job identifier
+     * @return bool True if the job was successfully cancelled
+     */
+    public function cancelJob(int $jobId): bool
+    {
+        return $this->storage->cancel($jobId);
     }
 }

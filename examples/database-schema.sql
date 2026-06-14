@@ -24,6 +24,10 @@ CREATE TABLE IF NOT EXISTS background_jobs (
     error_message TEXT DEFAULT NULL,
     error_trace TEXT DEFAULT NULL,
     request_id VARCHAR(255) DEFAULT NULL,
+    -- Generated virtual column to enforce unique active request_id (idempotency)
+    active_request_id VARCHAR(255) GENERATED ALWAYS AS (
+        CASE WHEN status IN ('pending', 'running') THEN request_id ELSE NULL END
+    ) VIRTUAL,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL,
     
@@ -33,7 +37,8 @@ CREATE TABLE IF NOT EXISTS background_jobs (
     INDEX idx_locked_at (locked_at),
     INDEX idx_lease_token (lease_token),
     INDEX idx_type (type),
-    INDEX idx_request_id (request_id)
+    INDEX idx_request_id (request_id),
+    UNIQUE KEY uq_active_request_id (active_request_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- PostgreSQL Schema
@@ -68,6 +73,7 @@ CREATE TABLE IF NOT EXISTS background_jobs (
 -- CREATE INDEX idx_lease_token ON background_jobs (lease_token);
 -- CREATE INDEX idx_type ON background_jobs (type);
 -- CREATE INDEX idx_request_id ON background_jobs (request_id);
+-- CREATE UNIQUE INDEX uq_active_request_id ON background_jobs (request_id) WHERE status IN ('pending', 'running');
 
 -- SQLite Schema
 -- CREATE TABLE IF NOT EXISTS background_jobs (
@@ -99,3 +105,4 @@ CREATE TABLE IF NOT EXISTS background_jobs (
 -- CREATE INDEX idx_status_available ON background_jobs (status, available_at);
 -- CREATE INDEX idx_locked_at ON background_jobs (locked_at);
 -- CREATE INDEX idx_lease_token ON background_jobs (lease_token);
+-- CREATE UNIQUE INDEX uq_active_request_id ON background_jobs (request_id) WHERE status IN ('pending', 'running');

@@ -19,11 +19,9 @@ use Predis\ClientInterface;
  */
 final class QueueManager
 {
-    private QueueDriverInterface $driver;
-
-    public function __construct(QueueDriverInterface $driver)
-    {
-        $this->driver = $driver;
+    public function __construct(
+        private readonly QueueDriverInterface $driver
+    ) {
     }
 
     /**

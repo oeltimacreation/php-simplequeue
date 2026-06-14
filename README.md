@@ -191,7 +191,9 @@ stdout_logfile=/var/log/queue-worker.log
 
 ## Database Schema
 
-Create the jobs table:
+Create the jobs table. For details on MySQL, PostgreSQL, and SQLite, see [database-schema.sql](file:///home/nerdv2/work/Oeltimacreation/php-simplequeue/examples/database-schema.sql).
+
+### MySQL / MariaDB Schema
 
 ```sql
 CREATE TABLE background_jobs (
@@ -205,22 +207,46 @@ CREATE TABLE background_jobs (
     progress INT UNSIGNED DEFAULT NULL,
     progress_message VARCHAR(255) DEFAULT NULL,
     result JSON DEFAULT NULL,
-    available_at DATETIME DEFAULT NULL,
+    available_at DATETIME NOT NULL,
     started_at DATETIME DEFAULT NULL,
     completed_at DATETIME DEFAULT NULL,
     locked_by VARCHAR(255) DEFAULT NULL,
     locked_at DATETIME DEFAULT NULL,
+    lease_token VARCHAR(64) DEFAULT NULL,
     error_message TEXT DEFAULT NULL,
     error_trace TEXT DEFAULT NULL,
     request_id VARCHAR(255) DEFAULT NULL,
+    -- Generated virtual column to enforce unique active request_id (idempotency)
+    active_request_id VARCHAR(255) GENERATED ALWAYS AS (
+        CASE WHEN status IN ('pending', 'running') THEN request_id ELSE NULL END
+    ) VIRTUAL,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL,
     
     INDEX idx_queue_status (queue, status),
+    INDEX idx_claim_ready (queue, status, available_at, id),
     INDEX idx_status_available (status, available_at),
-    INDEX idx_locked_at (locked_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    INDEX idx_locked_at (locked_at),
+    INDEX idx_lease_token (lease_token),
+    INDEX idx_type (type),
+    INDEX idx_request_id (request_id),
+    UNIQUE KEY uq_active_request_id (active_request_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
+
+### Idempotent Dispatch & Unique Constraints
+
+To prevent race conditions where concurrent calls to `JobDispatcher::dispatchIdempotent()` create duplicate jobs, you should add a conditional unique constraint on the `request_id` column:
+
+- **MySQL 5.7+ / MariaDB**: Add a virtual generated column mapping active jobs (pending/running) to the `request_id` and define a unique key on it (included in the schema above).
+- **PostgreSQL**: Define a partial unique index:
+  ```sql
+  CREATE UNIQUE INDEX uq_active_request_id ON background_jobs (request_id) WHERE status IN ('pending', 'running');
+  ```
+- **SQLite**: Define a partial unique index:
+  ```sql
+  CREATE UNIQUE INDEX uq_active_request_id ON background_jobs (request_id) WHERE status IN ('pending', 'running');
+  ```
 
 ## Configuration
 

@@ -28,6 +28,29 @@ class InMemoryStorageTest extends TestCase
         $this->assertEquals(3, $id3);
     }
 
+    public function testCreateJobsBatch(): void
+    {
+        $jobs = [
+            ['type' => 'test.job1', 'payload' => ['a' => 1], 'queue' => 'default', 'maxAttempts' => 3],
+            ['type' => 'test.job2', 'payload' => ['b' => 2], 'queue' => 'default', 'maxAttempts' => 5],
+        ];
+
+        $ids = $this->storage->createJobs($jobs);
+        $this->assertCount(2, $ids);
+
+        $job1 = $this->storage->find($ids[0]);
+        $this->assertNotNull($job1);
+        $this->assertEquals('test.job1', $job1->type);
+        $this->assertEquals(['a' => 1], $job1->payload);
+        $this->assertEquals(3, $job1->maxAttempts);
+
+        $job2 = $this->storage->find($ids[1]);
+        $this->assertNotNull($job2);
+        $this->assertEquals('test.job2', $job2->type);
+        $this->assertEquals(['b' => 2], $job2->payload);
+        $this->assertEquals(5, $job2->maxAttempts);
+    }
+
     public function testFindReturnsJobData(): void
     {
         $id = $this->storage->createJob('test.job', ['key' => 'value']);
@@ -438,5 +461,37 @@ class InMemoryStorageTest extends TestCase
         $this->assertSame('Job timed out / worker crashed (stale recovery)', $job->errorMessage);
         $this->assertNull($job->lockedBy);
         $this->assertNull($job->leaseToken);
+    }
+
+    public function testCancelPendingJob(): void
+    {
+        $id = $this->storage->createJob('test.job', []);
+
+        $result = $this->storage->cancel($id);
+
+        $this->assertTrue($result);
+        $job = $this->storage->find($id);
+        $this->assertNotNull($job);
+        $this->assertEquals('cancelled', $job->status);
+    }
+
+    public function testCancelNonPendingJobFails(): void
+    {
+        $id = $this->storage->createJob('test.job', []);
+        $claim = $this->storage->claimById($id, 'worker-1');
+        $this->assertNotNull($claim);
+
+        $result = $this->storage->cancel($id);
+
+        $this->assertFalse($result);
+        $job = $this->storage->find($id);
+        $this->assertNotNull($job);
+        $this->assertEquals('running', $job->status);
+    }
+
+    public function testCancelNonExistentJobFails(): void
+    {
+        $result = $this->storage->cancel(9999);
+        $this->assertFalse($result);
     }
 }

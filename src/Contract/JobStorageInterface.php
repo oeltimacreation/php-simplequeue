@@ -31,6 +31,14 @@ interface JobStorageInterface
     ): int;
 
     /**
+     * Batch create multiple job records in a single operation.
+     *
+     * @param array<int, array<string, mixed>> $jobs Array of job definitions
+     * @return int[] Array of created job IDs
+     */
+    public function createJobs(array $jobs): array;
+
+    /**
      * Get job details by ID.
      *
      * @param int $id Job identifier
@@ -124,4 +132,14 @@ interface JobStorageInterface
      * @return int Number of jobs recovered
      */
     public function recoverStaleJobs(int $ttlSeconds): int;
+
+    /**
+     * Cancel a pending job.
+     *
+     * Only jobs in 'pending' status can be cancelled.
+     *
+     * @param int $id Job identifier
+     * @return bool True if the job was successfully cancelled
+     */
+    public function cancel(int $id): bool;
 }

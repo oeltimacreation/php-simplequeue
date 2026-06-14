@@ -8,12 +8,18 @@ use Oeltima\SimpleQueue\Contract\JobData;
 use Oeltima\SimpleQueue\Contract\JobHandlerInterface;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
+use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
+use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
+use Oeltima\SimpleQueue\Contract\SupportsQueueReconciliation;
 use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
 use Oeltima\SimpleQueue\JobRegistry;
 use Oeltima\SimpleQueue\QueueManager;
 use Oeltima\SimpleQueue\Worker;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
+
+interface WorkerTestDelayedQueueDriver extends QueueDriverInterface, SupportsDelayedJobs {}
+interface WorkerTestReconciliationQueueDriver extends QueueDriverInterface, SupportsQueueReconciliation {}
 
 class WorkerTest extends TestCase
 {
@@ -107,7 +113,7 @@ class WorkerTest extends TestCase
 
     public function testWorkerCallsPromoteDelayedJobsBeforeDequeue(): void
     {
-        $driverWithPromote = new class implements QueueDriverInterface {
+        $driverWithPromote = new class implements QueueDriverInterface, SupportsDelayedJobs {
             public bool $promoteCalled = false;
             public bool $dequeueCalled = false;
             public ?string $promoteCalledBefore = null;
@@ -136,7 +142,7 @@ class WorkerTest extends TestCase
             {
             }
 
-            public function promoteDelayedJobs(string $queue): int
+            public function promoteDelayedJobs(string $queue, int $limit = 100): int
             {
                 $this->promoteCalled = true;
                 return 0;
@@ -155,7 +161,7 @@ class WorkerTest extends TestCase
     {
         // This test verifies the RedisQueueDriver has the recoverStaleProcessing method
         // which the Worker will call during recoverStaleJobs()
-        $driverWithRecover = new class implements QueueDriverInterface {
+        $driverWithRecover = new class implements QueueDriverInterface, SupportsStaleRecovery {
             public bool $recoverCalled = false;
             public int $recoverTtl = 0;
             public string $recoverQueue = '';
@@ -182,7 +188,7 @@ class WorkerTest extends TestCase
             {
             }
 
-            public function recoverStaleProcessing(string $queue, int $ttlSeconds): int
+            public function recoverStaleProcessing(string $queue, int $ttlSeconds, int $limit = 100): int
             {
                 $this->recoverCalled = true;
                 $this->recoverTtl = $ttlSeconds;
@@ -765,10 +771,7 @@ class WorkerTest extends TestCase
 
     public function testThrottledMaintenanceIsCalled(): void
     {
-        $driver = $this->getMockBuilder(QueueDriverInterface::class)
-            ->onlyMethods(['isAvailable', 'enqueue', 'dequeue', 'ack', 'nack'])
-            ->addMethods(['promoteDelayedJobs'])
-            ->getMock();
+        $driver = $this->createMock(WorkerTestDelayedQueueDriver::class);
 
         $clock = $this->createMock(\Oeltima\SimpleQueue\Contract\ClockInterface::class);
 
@@ -1024,10 +1027,7 @@ class WorkerTest extends TestCase
 
     public function testReconcileDbAndRedis(): void
     {
-        $driver = $this->getMockBuilder(QueueDriverInterface::class)
-            ->onlyMethods(['isAvailable', 'enqueue', 'dequeue', 'ack', 'nack'])
-            ->addMethods(['getPendingIds', 'getDelayedIds'])
-            ->getMock();
+        $driver = $this->createMock(WorkerTestReconciliationQueueDriver::class);
 
         // 1. Storage has a pending job and a delayed job
         $storage = new \Oeltima\SimpleQueue\Storage\InMemoryJobStorage();
@@ -1079,6 +1079,81 @@ class WorkerTest extends TestCase
         $method = new \ReflectionMethod($worker, 'reconcileDbAndRedis');
         $method->setAccessible(true);
         $method->invoke($worker);
+    }
+
+    public function testWorkerEventListenerEmitsEvents(): void
+    {
+        $handler = new class implements JobHandlerInterface {
+            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
+            {
+                return ['ok' => true];
+            }
+        };
+        $this->registry->register('test.job', get_class($handler));
+
+        $jobData = new JobData(
+            id: 123,
+            queue: 'default',
+            type: 'test.job',
+            status: 'running',
+            payload: [],
+            attempts: 0,
+            maxAttempts: 3,
+            createdAt: date('Y-m-d H:i:s'),
+            updatedAt: date('Y-m-d H:i:s')
+        );
+
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $driver->expects($this->once())
+            ->method('dequeue')
+            ->willReturn(123);
+
+        $this->storage->expects($this->once())
+            ->method('claimById')
+            ->willReturn(new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, 'worker-1', 'token-123'));
+
+        $this->storage->expects($this->once())
+            ->method('markCompleted')
+            ->willReturn(true);
+
+        $events = [];
+        $listener = function (string $event, array $data) use (&$events): void {
+            $events[] = [$event, $data];
+        };
+
+        $worker = $this->createWorkerWithDriver($driver, [
+            'event_listener' => $listener,
+        ]);
+        $worker->processOne();
+
+        $this->assertCount(2, $events);
+        $this->assertEquals('claimed', $events[0][0]);
+        $this->assertEquals(123, $events[0][1]['job_id']);
+        $this->assertArrayHasKey('acquire_latency_ms', $events[0][1]);
+
+        $this->assertEquals('completed', $events[1][0]);
+        $this->assertEquals(123, $events[1][1]['job_id']);
+        $this->assertArrayHasKey('duration_ms', $events[1][1]);
+    }
+
+    public function testDefaultLockFileIsQueueScoped(): void
+    {
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $queueManager = new QueueManager($driver);
+        $worker = new Worker(
+            $this->storage,
+            $queueManager,
+            $this->registry,
+            $this->logger,
+            'custom/queue-name'
+        );
+
+        $ref = new \ReflectionClass($worker);
+        $prop = $ref->getProperty('lockFile');
+        $prop->setAccessible(true);
+        $lockFile = $prop->getValue($worker);
+
+        $this->assertEquals('/tmp/simplequeue-worker-customqueue-name.lock', $lockFile);
     }
 }
 

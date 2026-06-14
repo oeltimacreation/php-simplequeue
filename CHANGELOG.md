@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added attempts incrementing and poison job handling during stale job recovery to prevent infinite retry loops.
 - Added `getPendingIds()` and `getDelayedIds()` methods to both `RedisQueueDriver` and `InMemoryQueueDriver` to expose enqueued job identifiers for reconciliation.
 - Added startup validation checking to `Worker` to ensure the configured `poll_timeout` is strictly less than the Predis `read_write_timeout` parameters.
+- Added explicit capability interfaces (`SupportsDelayedJobs`, `SupportsStaleRecovery`, `SupportsBatchEnqueue`, `SupportsWorkerId`, `SupportsTimeoutValidation`, `SupportsQueueReconciliation`, `QueueStatsInterface`) to formalize queue driver extension points and eliminate dynamic checks.
+- Added a `createJobs()` method to `JobStorageInterface` (and implemented in `InMemoryJobStorage` and `PdoJobStorage`) to support high-performance batch creation of multiple jobs in a single database roundtrip.
+- Added conditional unique index schema definitions and documentation to prevent duplicate active jobs under concurrency when using `JobDispatcher::dispatchIdempotent()`.
+- Added optional observability listener hooks to `Worker` for tracking lifecycle events (`claimed`, `completed`, `failed`, `retried`, `lost_ownership`, `infra_error`, `backoff`) with runtime execution metrics such as `duration_ms` and `acquire_latency_ms`.
+- Added a `cancel` method to `JobStorageInterface` (implemented in `InMemoryJobStorage` and `PdoJobStorage`) and exposed via `JobDispatcher::cancelJob()` to allow cancelling pending jobs.
 
 ### Changed
 
@@ -26,7 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING**: New job schemas require `available_at` to be non-null and include `lease_token` for fenced claim ownership.
 - **BREAKING**: `JobStorageInterface` methods (`markCompleted`, `markFailed`, `updateProgress`, `scheduleRetry`, `heartbeat`) now require a `ClaimedJob` value object instead of an integer `$id` to enforce fenced writes.
 - **BREAKING**: Removed `getNextPendingJobId` and `claimJob` from `JobStorageInterface` in favor of `claimNextAvailable` and `claimById`.
+- Refactored `QueueManager`, `JobDispatcher`, and `Worker` constructors to use PHP 8.1 constructor property promotion.
 - Progress updates now automatically issue a heartbeat to storage to keep the lease fresh for long-running jobs.
+- Scoped the default worker singleton lock file path to the specific queue name (e.g. `/tmp/simplequeue-worker-default.lock`) to prevent workers on different queues from blocking each other.
 - Improved fenced write error handling so that if job ownership is lost, the worker logs a warning and refrains from sending an acknowledgement (ACK) or negative acknowledgement (NACK) to the queue driver.
 - Rebuilt the worker execution loop to support backoff with jitter on infrastructure errors.
 - Throttled delayed job promotion and stale job recovery using monotonic timers to reduce idle database/Redis command overhead.

@@ -6,6 +6,7 @@ namespace Oeltima\SimpleQueue\Driver;
 
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
+use Oeltima\SimpleQueue\Contract\SupportsWorkerId;
 
 /**
  * Database polling queue driver.
@@ -15,7 +16,7 @@ use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
  *
  * Note: This driver has higher latency than Redis due to polling.
  */
-final class DatabaseQueueDriver implements QueueDriverInterface
+final class DatabaseQueueDriver implements QueueDriverInterface, SupportsWorkerId
 {
     private const ERR_INVALID_JOB_ID = 'jobId must be a positive integer';
 
