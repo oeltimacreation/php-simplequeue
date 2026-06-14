@@ -5,6 +5,11 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Driver;
 
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
+use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
+use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
+use Oeltima\SimpleQueue\Contract\SupportsBatchEnqueue;
+use Oeltima\SimpleQueue\Contract\SupportsQueueReconciliation;
+use Oeltima\SimpleQueue\Contract\QueueStatsInterface;
 
 /**
  * In-memory queue driver for testing purposes.
@@ -12,7 +17,13 @@ use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
  * This driver stores jobs in memory and is useful for unit testing.
  * Jobs are lost when the process terminates.
  */
-final class InMemoryQueueDriver implements QueueDriverInterface
+final class InMemoryQueueDriver implements
+    QueueDriverInterface,
+    SupportsDelayedJobs,
+    SupportsStaleRecovery,
+    SupportsBatchEnqueue,
+    SupportsQueueReconciliation,
+    QueueStatsInterface
 {
     /** @var array<string, int[]> */
     private array $pending = [];
@@ -216,5 +227,59 @@ final class InMemoryQueueDriver implements QueueDriverInterface
         $this->processing = [];
         $this->processingStartedAt = [];
         $this->delayed = [];
+    }
+
+    /**
+     * Enqueue multiple job IDs efficiently.
+     *
+     * @param string $queue Queue name
+     * @param int[] $jobIds Array of job identifiers
+     */
+    public function enqueueBatch(string $queue, array $jobIds): void
+    {
+        if ($jobIds === []) {
+            return;
+        }
+
+        if (!isset($this->pending[$queue])) {
+            $this->pending[$queue] = [];
+        }
+
+        foreach ($jobIds as $jobId) {
+            array_unshift($this->pending[$queue], $jobId);
+        }
+    }
+
+    /**
+     * Get the count of pending jobs in a queue.
+     *
+     * @param string $queue Queue name
+     * @return int Number of pending jobs
+     */
+    public function getPendingCount(string $queue): int
+    {
+        return isset($this->pending[$queue]) ? count($this->pending[$queue]) : 0;
+    }
+
+    /**
+     * Get the count of jobs currently being processed.
+     *
+     * @param string $queue Queue name
+     * @return int Number of processing jobs
+     */
+    public function getProcessingCount(string $queue): int
+    {
+        return isset($this->processing[$queue]) ? count($this->processing[$queue]) : 0;
+    }
+
+    /**
+     * Get the count of delayed jobs waiting for retry.
+     *
+     * @param string $queue Queue name
+     * @return int Number of delayed jobs
+     */
+    public function getDelayedCount(string $queue): int
+    {
+        return isset($this->delayed[$queue]) ? count($this->delayed[$queue]) : 0;
     }
 }

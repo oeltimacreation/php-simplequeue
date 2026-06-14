@@ -8,6 +8,12 @@ use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\ClaimedJob;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
+use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
+use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
+use Oeltima\SimpleQueue\Contract\SupportsWorkerId;
+use Oeltima\SimpleQueue\Contract\SupportsTimeoutValidation;
+use Oeltima\SimpleQueue\Contract\SupportsQueueReconciliation;
+use Oeltima\SimpleQueue\Contract\JobStorageAdminInterface;
 use Oeltima\SimpleQueue\Exception\HandlerNotFoundException;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -79,7 +85,7 @@ final class Worker
         $this->workerId = $this->generateWorkerId();
 
         $driver = $this->queueManager->driver();
-        if (method_exists($driver, 'setWorkerId')) {
+        if ($driver instanceof SupportsWorkerId) {
             $driver->setWorkerId($this->workerId);
         }
 
@@ -100,7 +106,7 @@ final class Worker
         $this->promoteInterval = (float) ($options['promote_interval'] ?? 5.0);
         $this->recoveryInterval = (float) ($options['recovery_interval'] ?? 60.0);
 
-        if (method_exists($driver, 'validateTimeout')) {
+        if ($driver instanceof SupportsTimeoutValidation) {
             $driver->validateTimeout($this->pollTimeout);
         }
     }
@@ -227,7 +233,7 @@ final class Worker
         $driver = $this->queueManager->driver();
 
         // Promote any delayed jobs that are now due
-        if (method_exists($driver, 'promoteDelayedJobs')) {
+        if ($driver instanceof SupportsDelayedJobs) {
             $driver->promoteDelayedJobs($this->queue);
         }
 
@@ -379,7 +385,7 @@ final class Worker
     private function promoteDelayedJobs(): void
     {
         $driver = $this->queueManager->driver();
-        if (method_exists($driver, 'promoteDelayedJobs')) {
+        if ($driver instanceof SupportsDelayedJobs) {
             try {
                 $driver->promoteDelayedJobs($this->queue);
             } catch (\Throwable $e) {
@@ -521,7 +527,7 @@ final class Worker
 
         // Also recover from driver if supported
         $driver = $this->queueManager->driver();
-        if (method_exists($driver, 'recoverStaleProcessing')) {
+        if ($driver instanceof SupportsStaleRecovery) {
             $driverRecovered = $driver->recoverStaleProcessing($this->queue, $this->stuckJobTtl);
             $recovered += $driverRecovered;
         }
@@ -542,13 +548,12 @@ final class Worker
     private function reconcileDbAndRedis(): void
     {
         $driver = $this->queueManager->driver();
-        if (!method_exists($driver, 'getPendingIds') || !method_exists($driver, 'getDelayedIds')) {
+        if (!($driver instanceof SupportsQueueReconciliation)) {
             return;
         }
 
         $storage = $this->storage;
-        // Import capability interface if available, or check list method
-        if (!method_exists($storage, 'list')) {
+        if (!($storage instanceof JobStorageAdminInterface)) {
             return;
         }
 
@@ -570,7 +575,7 @@ final class Worker
 
             foreach ($dbJobs as $job) {
                 $jobId = $job->id;
-                $availableAt = strtotime($job->availableAt);
+                $availableAt = strtotime($job->availableAt ?? 'now') ?: time();
 
                 if ($availableAt <= $now) {
                     // Immediate job: should be in Redis pending list or delayed ZSET (awaiting promotion)

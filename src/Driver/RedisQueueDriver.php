@@ -5,6 +5,12 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Driver;
 
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
+use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
+use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
+use Oeltima\SimpleQueue\Contract\SupportsBatchEnqueue;
+use Oeltima\SimpleQueue\Contract\SupportsTimeoutValidation;
+use Oeltima\SimpleQueue\Contract\SupportsQueueReconciliation;
+use Oeltima\SimpleQueue\Contract\QueueStatsInterface;
 use Predis\ClientInterface;
 
 /**
@@ -13,7 +19,14 @@ use Predis\ClientInterface;
  * This driver uses Redis lists with BRPOPLPUSH for reliable
  * queue processing with at-least-once delivery guarantees.
  */
-final class RedisQueueDriver implements QueueDriverInterface
+final class RedisQueueDriver implements
+    QueueDriverInterface,
+    SupportsDelayedJobs,
+    SupportsStaleRecovery,
+    SupportsBatchEnqueue,
+    SupportsTimeoutValidation,
+    SupportsQueueReconciliation,
+    QueueStatsInterface
 {
     private const PROMOTE_DELAYED_LUA = <<<'LUA'
 local delayedKey = KEYS[1]

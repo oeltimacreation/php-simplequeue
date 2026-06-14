@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added attempts incrementing and poison job handling during stale job recovery to prevent infinite retry loops.
 - Added `getPendingIds()` and `getDelayedIds()` methods to both `RedisQueueDriver` and `InMemoryQueueDriver` to expose enqueued job identifiers for reconciliation.
 - Added startup validation checking to `Worker` to ensure the configured `poll_timeout` is strictly less than the Predis `read_write_timeout` parameters.
+- Added explicit capability interfaces (`SupportsDelayedJobs`, `SupportsStaleRecovery`, `SupportsBatchEnqueue`, `SupportsWorkerId`, `SupportsTimeoutValidation`, `SupportsQueueReconciliation`, `QueueStatsInterface`) to formalize queue driver extension points and eliminate dynamic checks.
 
 ### Changed
 

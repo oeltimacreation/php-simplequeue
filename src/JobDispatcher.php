@@ -6,6 +6,7 @@ namespace Oeltima\SimpleQueue;
 
 use Oeltima\SimpleQueue\Contract\JobData;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
+use Oeltima\SimpleQueue\Contract\SupportsBatchEnqueue;
 
 /**
  * Service for dispatching jobs to the queue.
@@ -95,7 +96,7 @@ final class JobDispatcher
         }
 
         $driver = $this->queueManager->driver();
-        if ($driver instanceof \Oeltima\SimpleQueue\Driver\RedisQueueDriver) {
+        if ($driver instanceof SupportsBatchEnqueue) {
             $driver->enqueueBatch($queue, $jobIds);
         } else {
             foreach ($jobIds as $jobId) {
