@@ -606,7 +606,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
             WHERE id = :id
             AND (
                 (status = 'pending' AND available_at <= :now)
-                OR (status = 'running' AND locked_by = :worker_id)
+                OR (status = 'running' AND locked_by = :worker_id_where)
             )
             RETURNING *";
 
@@ -614,6 +614,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         $stmt->execute([
             'id' => $id,
             'worker_id' => $workerId,
+            'worker_id_where' => $workerId,
             'locked_at' => $now,
             'started_at' => $now,
             'lease_token' => $leaseToken,
@@ -727,13 +728,14 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
                 WHERE id = :id
                 AND (
                     (status = 'pending' AND available_at <= :now)
-                    OR (status = 'running' AND locked_by = :worker_id)
+                    OR (status = 'running' AND locked_by = :worker_id_where)
                 )";
 
             $update = $this->prepare($pdo, $updateSql);
             $update->execute([
                 'id' => $id,
                 'worker_id' => $workerId,
+                'worker_id_where' => $workerId,
                 'locked_at' => $now,
                 'started_at' => $now,
                 'lease_token' => $leaseToken,
@@ -754,7 +756,11 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
             return $this->claimFromStatement($find, $workerId, $leaseToken);
         } catch (\Throwable $e) {
             if ($began && $pdo->inTransaction()) {
-                $pdo->rollBack();
+                try {
+                    $pdo->rollBack();
+                } catch (\Throwable $_) {
+                    // Suppress rollback error to avoid masking the original exception
+                }
             }
 
             throw $e;
