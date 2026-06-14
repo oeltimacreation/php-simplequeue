@@ -12,9 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI now runs PHPStan and PHPCS quality gates, with a new `composer check` aggregate for tests, static analysis, and style checks.
 - Added repository hygiene files: `.editorconfig`, `SECURITY.md`, issue templates, and a pull request template.
 - Added an injectable clock abstraction for UTC wall-clock timestamps and monotonic duration measurement.
+- Added a `ClaimedJob` value object and `lease_token` schema support for fenced job ownership.
+- Added a SQL migration example for upgrading existing MySQL, PostgreSQL, and SQLite job tables to lease-based claims.
 
 ### Changed
 
+- **BREAKING**: New job schemas require `available_at` to be non-null and include `lease_token` for fenced claim ownership.
+- **BREAKING**: `JobStorageInterface` methods (`markCompleted`, `markFailed`, `updateProgress`, `scheduleRetry`, `heartbeat`) now require a `ClaimedJob` value object instead of an integer `$id` to enforce fenced writes.
+- **BREAKING**: Removed `getNextPendingJobId` and `claimJob` from `JobStorageInterface` in favor of `claimNextAvailable` and `claimById`.
+- `PdoJobStorage` can now atomically claim the next available job or a specific queued job with a unique lease token.
+- `InMemoryJobStorage` now matches lease-based claim semantics for tests and local development.
+- `DatabaseQueueDriver` now delegates to the storage's atomic claim mechanism for polling, eliminating the thundering herd problem.
 - GitHub Actions now tests the documented PHP 8.1 through 8.4 support range.
 - Worker retry delay calculation is now centralized so storage and queue retry scheduling share one computed value.
 

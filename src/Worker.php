@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue;
 
 use Oeltima\SimpleQueue\Contract\ClockInterface;
-use Oeltima\SimpleQueue\Contract\JobData;
+use Oeltima\SimpleQueue\Contract\ClaimedJob;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Exception\HandlerNotFoundException;
@@ -62,6 +62,11 @@ final class Worker
         $this->queue = $queue;
         $this->workerId = $this->generateWorkerId();
 
+        $driver = $this->queueManager->driver();
+        if (method_exists($driver, 'setWorkerId')) {
+            $driver->setWorkerId($this->workerId);
+        }
+
         // Configuration options
         $this->lockFile = $options['lock_file'] ?? '/tmp/simplequeue-worker.lock';
         $this->pollTimeout = (int) ($options['poll_timeout'] ?? self::DEFAULT_POLL_TIMEOUT);
@@ -115,13 +120,13 @@ final class Worker
             $driver->promoteDelayedJobs($this->queue);
         }
 
-        $jobId = $driver->dequeue($this->queue, 0);
+        $claim = $this->claimNextJob($driver, 0);
 
-        if ($jobId === null) {
+        if ($claim === null) {
             return false;
         }
 
-        $this->processJob($jobId, $driver);
+        $this->processClaimedJob($claim, $driver);
         return true;
     }
 
@@ -150,29 +155,35 @@ final class Worker
             $driver->promoteDelayedJobs($this->queue);
         }
 
-        $jobId = $driver->dequeue($this->queue, $this->pollTimeout);
+        $claim = $this->claimNextJob($driver, $this->pollTimeout);
 
-        if ($jobId === null) {
+        if ($claim === null) {
             return;
         }
 
-        $this->processJob($jobId, $driver);
+        $this->processClaimedJob($claim, $driver);
     }
 
-    private function processJob(int $jobId, QueueDriverInterface $driver): void
+    private function claimNextJob(QueueDriverInterface $driver, int $timeoutSeconds): ?ClaimedJob
     {
+        $jobId = $driver->dequeue($this->queue, $timeoutSeconds);
+
+        if ($jobId === null) {
+            return null;
+        }
+
         try {
-            $claimed = $this->storage->claimJob($jobId, $this->workerId);
+            $claim = $this->storage->claimById($jobId, $this->workerId);
         } catch (\Throwable $e) {
             $this->logger->error('Failed to claim job from storage', [
                 'job_id' => $jobId,
                 'error' => $e->getMessage(),
             ]);
             // Don't ack - let another worker try or let it recover as stale
-            return;
+            return null;
         }
 
-        if (!$claimed) {
+        if ($claim === null) {
             $this->logger->warning(
                 'Failed to claim job, may have been claimed by another process',
                 ['job_id' => $jobId]
@@ -182,31 +193,18 @@ final class Worker
             } catch (\Throwable $e) {
                 $this->logger->error('Failed to ack unclaimed job', ['job_id' => $jobId, 'error' => $e->getMessage()]);
             }
-            return;
+            return null;
         }
 
-        try {
-            $job = $this->storage->find($jobId);
-        } catch (\Throwable $e) {
-            $this->logger->error('Failed to fetch job details', [
-                'job_id' => $jobId,
-                'error' => $e->getMessage(),
-            ]);
-            return;
-        }
+        return $claim;
+    }
 
-        if ($job === null) {
-            $this->logger->error('Job not found after claiming', ['job_id' => $jobId]);
-            try {
-                $driver->ack($this->queue, $jobId);
-            } catch (\Throwable $e) {
-                $this->logger->error('Failed to ack missing job', ['job_id' => $jobId, 'error' => $e->getMessage()]);
-            }
-            return;
-        }
+    private function processClaimedJob(ClaimedJob $claim, QueueDriverInterface $driver): void
+    {
+        $job = $claim->job;
 
         $this->logger->info('Processing job', [
-            'job_id' => $jobId,
+            'job_id' => $job->id,
             'type' => $job->type,
             'attempts' => $job->attempts + 1,
         ]);
@@ -214,45 +212,60 @@ final class Worker
         $startTime = $this->clock->monotonic();
 
         try {
-            $this->executeJob($job);
+            $completed = $this->executeJob($claim);
             $duration = round($this->clock->monotonic() - $startTime, 3);
 
+            if (!$completed) {
+                $this->logger->warning('Lost job ownership before completion ack', ['job_id' => $job->id]);
+                return;
+            }
+
             $this->logger->info('Job completed', [
-                'job_id' => $jobId,
+                'job_id' => $job->id,
                 'type' => $job->type,
                 'duration_seconds' => $duration,
             ]);
 
             try {
-                $driver->ack($this->queue, $jobId);
+                $driver->ack($this->queue, $job->id);
             } catch (\Throwable $e) {
-                $this->logger->error('Failed to ack completed job', ['job_id' => $jobId, 'error' => $e->getMessage()]);
+                $this->logger->error('Failed to ack completed job', [
+                    'job_id' => $job->id,
+                    'error' => $e->getMessage(),
+                ]);
             }
         } catch (\Throwable $e) {
             $duration = round($this->clock->monotonic() - $startTime, 3);
-            $this->handleJobFailure($job, $e, $driver, $duration);
+            $this->handleJobFailure($claim, $e, $driver, $duration);
         }
     }
 
-    private function executeJob(JobData $job): void
+    private function executeJob(ClaimedJob $claim): bool
     {
+        $job = $claim->job;
+
         if (!$this->registry->has($job->type)) {
             throw HandlerNotFoundException::forType($job->type);
         }
 
         $handler = $this->registry->get($job->type);
 
-        $progressCallback = function (int $percent, ?string $message = null) use ($job): void {
-            $this->storage->updateProgress($job->id, $percent, $message);
+        $progressCallback = function (int $percent, ?string $message = null) use ($claim): void {
+            $this->storage->updateProgress($claim, $percent, $message);
         };
 
         $result = $handler->handle($job->id, $job->payload, $progressCallback);
 
-        $this->storage->markCompleted($job->id, $result);
+        return $this->storage->markCompleted($claim, $result);
     }
 
-    private function handleJobFailure(JobData $job, \Throwable $e, QueueDriverInterface $driver, float $duration): void
-    {
+    private function handleJobFailure(
+        ClaimedJob $claim,
+        \Throwable $e,
+        QueueDriverInterface $driver,
+        float $duration
+    ): void {
+        $job = $claim->job;
         $attempts = $job->attempts + 1;
 
         $this->logger->error('Job failed', [
@@ -267,11 +280,13 @@ final class Worker
         try {
             if ($attempts < $job->maxAttempts) {
                 $delay = $this->calculateRetryDelay($attempts);
-                $this->scheduleRetry($job, $attempts, $delay, $e);
-                $driver->nack($this->queue, $job->id, $delay);
+                if ($this->scheduleRetry($claim, $attempts, $delay, $e)) {
+                    $driver->nack($this->queue, $job->id, $delay);
+                }
             } else {
-                $this->storage->markFailed($job->id, $e->getMessage(), $this->truncateTrace($e));
-                $driver->ack($this->queue, $job->id);
+                if ($this->storage->markFailed($claim, $e->getMessage(), $this->truncateTrace($e))) {
+                    $driver->ack($this->queue, $job->id);
+                }
             }
         } catch (\Throwable $storageError) {
             $this->logger->error('Failed to update job status after failure', [
@@ -283,15 +298,21 @@ final class Worker
         }
     }
 
-    private function scheduleRetry(JobData $job, int $attempts, int $delay, \Throwable $e): void
+    private function scheduleRetry(ClaimedJob $claim, int $attempts, int $delay, \Throwable $e): bool
     {
-        $this->storage->scheduleRetry($job->id, $attempts, $delay, $e->getMessage());
+        $scheduled = $this->storage->scheduleRetry($claim, $attempts, $delay, $e->getMessage());
 
-        $this->logger->info('Job scheduled for retry', [
-            'job_id' => $job->id,
-            'attempts' => $attempts,
-            'delay_seconds' => $delay,
-        ]);
+        if ($scheduled) {
+            $this->logger->info('Job scheduled for retry', [
+                'job_id' => $claim->job->id,
+                'attempts' => $attempts,
+                'delay_seconds' => $delay,
+            ]);
+        } else {
+            $this->logger->warning('Lost job ownership before retry scheduling', ['job_id' => $claim->job->id]);
+        }
+
+        return $scheduled;
     }
 
     private function calculateRetryDelay(int $attempts): int

@@ -21,6 +21,7 @@ final class DatabaseQueueDriver implements QueueDriverInterface
 
     private JobStorageInterface $storage;
     private int $pollIntervalMs;
+    private string $workerId;
 
     /**
      * @param JobStorageInterface $storage Job storage implementation
@@ -30,6 +31,17 @@ final class DatabaseQueueDriver implements QueueDriverInterface
     {
         $this->storage = $storage;
         $this->pollIntervalMs = max(50, $pollIntervalMs);
+        $this->workerId = bin2hex(random_bytes(16)); // Default fallback worker ID
+    }
+
+    /**
+     * Set the worker ID for atomic claim delegation.
+     *
+     * @param string $workerId
+     */
+    public function setWorkerId(string $workerId): void
+    {
+        $this->workerId = $workerId;
     }
 
     public function isAvailable(): bool
@@ -50,9 +62,9 @@ final class DatabaseQueueDriver implements QueueDriverInterface
         $deadline = time() + max(0, $timeoutSeconds);
 
         do {
-            $jobId = $this->storage->getNextPendingJobId($queue);
-            if (!empty($jobId)) {
-                return $jobId;
+            $claim = $this->storage->claimNextAvailable($queue, $this->workerId);
+            if ($claim !== null) {
+                return $claim->job->id;
             }
 
             if (time() >= $deadline) {
