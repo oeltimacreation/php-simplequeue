@@ -99,6 +99,10 @@ final class Worker
 
         $this->promoteInterval = (float) ($options['promote_interval'] ?? 5.0);
         $this->recoveryInterval = (float) ($options['recovery_interval'] ?? 60.0);
+
+        if (method_exists($driver, 'validateTimeout')) {
+            $driver->validateTimeout($this->pollTimeout);
+        }
     }
 
     /**

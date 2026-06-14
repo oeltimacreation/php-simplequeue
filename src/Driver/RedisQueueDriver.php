@@ -70,6 +70,40 @@ LUA;
         }
     }
 
+    /**
+     * Validate that the poll timeout is safe relative to the Redis read/write timeout.
+     *
+     * @param int $pollTimeout Seconds the worker will block waiting for a job
+     * @throws \InvalidArgumentException If the timeout configuration is unsafe
+     */
+    public function validateTimeout(int $pollTimeout): void
+    {
+        try {
+            $connection = $this->redis->getConnection();
+
+            if (method_exists($connection, 'getParameters')) {
+                $parameters = $connection->getParameters();
+                if (isset($parameters->read_write_timeout)) {
+                    $rwTimeout = $parameters->read_write_timeout;
+                    if ($rwTimeout > 0) {
+                        if ($pollTimeout >= $rwTimeout) {
+                            throw new \InvalidArgumentException(sprintf(
+                                'Unsafe timeout configuration: poll_timeout (%ds) must be strictly less than ' .
+                                'Predis read_write_timeout (%ds) to prevent connection dropped errors.',
+                                $pollTimeout,
+                                $rwTimeout
+                            ));
+                        }
+                    }
+                }
+            }
+        } catch (\InvalidArgumentException $e) {
+            throw $e;
+        } catch (\Throwable) {
+            // Fallback for custom/mock connections
+        }
+    }
+
     public function enqueue(string $queue, int $jobId): void
     {
         $this->redis->lpush($this->pendingKey($queue), [(string) $jobId]);

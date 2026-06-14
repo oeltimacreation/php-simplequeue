@@ -42,9 +42,11 @@ class MockRedisClient implements ClientInterface
     {
     }
 
+    public $connection = null;
+
     public function getConnection()
     {
-        return null;
+        return $this->connection;
     }
 
     public function createCommand($commandID, $arguments = [])
@@ -311,5 +313,53 @@ class RedisQueueDriverTest extends TestCase
         $lpushCall = reset($lpushCall);
 
         $this->assertEquals('test:queue:myqueue:pending', $lpushCall['args'][0]);
+    }
+
+    public function testValidateTimeoutThrowsExceptionWhenUnsafe(): void
+    {
+        $parameters = new MockRedisParameters(5);
+        $connection = new MockRedisConnection($parameters);
+        $this->redis->connection = $connection;
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Unsafe timeout configuration');
+
+        $this->driver->validateTimeout(5);
+    }
+
+    public function testValidateTimeoutAllowsSafeTimeouts(): void
+    {
+        $parameters = new MockRedisParameters(60);
+        $connection = new MockRedisConnection($parameters);
+        $this->redis->connection = $connection;
+
+        // Should not throw exception
+        $this->driver->validateTimeout(5);
+        $this->assertTrue(true);
+    }
+}
+
+class MockRedisConnection
+{
+    public $parameters;
+
+    public function __construct($parameters = null)
+    {
+        $this->parameters = $parameters;
+    }
+
+    public function getParameters()
+    {
+        return $this->parameters;
+    }
+}
+
+class MockRedisParameters
+{
+    public $read_write_timeout;
+
+    public function __construct($read_write_timeout)
+    {
+        $this->read_write_timeout = $read_write_timeout;
     }
 }
