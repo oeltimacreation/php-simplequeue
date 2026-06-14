@@ -713,7 +713,11 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
 
             $row = $select->fetch(PDO::FETCH_ASSOC);
             if ($row === false || empty($row['id'])) {
-                $pdo->commit();
+                if ($driver === 'sqlite') {
+                    $pdo->exec('COMMIT');
+                } else {
+                    $pdo->commit();
+                }
                 return null;
             }
 
@@ -744,22 +748,38 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
             ]);
 
             if ($update->rowCount() === 0) {
-                $pdo->commit();
+                if ($driver === 'sqlite') {
+                    $pdo->exec('COMMIT');
+                } else {
+                    $pdo->commit();
+                }
                 return null;
             }
 
             $find = $this->prepare($pdo, "SELECT * FROM {$this->table} WHERE id = :id");
             $find->execute(['id' => $id]);
 
-            $pdo->commit();
+            if ($driver === 'sqlite') {
+                $pdo->exec('COMMIT');
+            } else {
+                $pdo->commit();
+            }
 
             return $this->claimFromStatement($find, $workerId, $leaseToken);
         } catch (\Throwable $e) {
-            if ($began && $pdo->inTransaction()) {
-                try {
-                    $pdo->rollBack();
-                } catch (\Throwable $_) {
-                    // Suppress rollback error to avoid masking the original exception
+            if ($began) {
+                if ($driver === 'sqlite') {
+                    try {
+                        $pdo->exec('ROLLBACK');
+                    } catch (\Throwable $_) {
+                        // Suppress rollback error
+                    }
+                } elseif ($pdo->inTransaction()) {
+                    try {
+                        $pdo->rollBack();
+                    } catch (\Throwable $_) {
+                        // Suppress rollback error to avoid masking the original exception
+                    }
                 }
             }
 
