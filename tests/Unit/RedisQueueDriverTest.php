@@ -179,55 +179,49 @@ class RedisQueueDriverTest extends TestCase
         $this->assertContains('lpush', $pipelineMethods, 'Should immediately re-enqueue');
     }
 
-    public function testPromoteDelayedJobsMovesJobsToPending(): void
+    public function testPromoteDelayedJobsEvaluatesLuaScript(): void
     {
-        $this->redis->returns['zrangebyscore'] = ['100', '101', '102'];
+        $this->redis->returns['eval'] = 3;
 
-        $count = $this->driver->promoteDelayedJobs('default');
+        $count = $this->driver->promoteDelayedJobs('default', 50);
 
         $this->assertEquals(3, $count);
-        $this->assertNotNull($this->redis->pipeline);
-        $this->assertTrue($this->redis->pipeline->executed);
-        
-        $pipelineMethods = array_column($this->redis->pipeline->calls, 'method');
-        $this->assertCount(3, array_filter($pipelineMethods, fn($m) => $m === 'lpush'));
-        $this->assertContains('zremrangebyscore', $pipelineMethods);
+
+        $evalCall = array_filter(
+            $this->redis->calls,
+            fn($c) => $c['method'] === 'eval'
+        );
+        $this->assertCount(1, $evalCall);
+
+        $call = reset($evalCall);
+        $this->assertStringContainsString('ZRANGEBYSCORE', $call['args'][0]);
+        $this->assertEquals(2, $call['args'][1]); // numKeys
+        $this->assertEquals('test:queue:default:delayed', $call['args'][2]);
+        $this->assertEquals('test:queue:default:pending', $call['args'][3]);
+        $this->assertEquals('50', $call['args'][5]);
     }
 
-    public function testPromoteDelayedJobsReturnsZeroWhenNoDueJobs(): void
+    public function testRecoverStaleProcessingEvaluatesLuaScript(): void
     {
-        $this->redis->returns['zrangebyscore'] = [];
+        $this->redis->returns['eval'] = 2;
 
-        $count = $this->driver->promoteDelayedJobs('default');
-
-        $this->assertEquals(0, $count);
-        $this->assertNull($this->redis->pipeline, 'Pipeline should not be created when no jobs');
-    }
-
-    public function testRecoverStaleProcessingMovesStaleJobsBack(): void
-    {
-        $this->redis->returns['zrangebyscore'] = ['200', '201'];
-
-        $count = $this->driver->recoverStaleProcessing('default', 600);
+        $count = $this->driver->recoverStaleProcessing('default', 600, 75);
 
         $this->assertEquals(2, $count);
-        $this->assertNotNull($this->redis->pipeline);
-        $this->assertTrue($this->redis->pipeline->executed);
 
-        $pipelineMethods = array_column($this->redis->pipeline->calls, 'method');
-        $this->assertCount(2, array_filter($pipelineMethods, fn($m) => $m === 'lrem'));
-        $this->assertCount(2, array_filter($pipelineMethods, fn($m) => $m === 'lpush'));
-        $this->assertContains('zremrangebyscore', $pipelineMethods);
-    }
+        $evalCall = array_filter(
+            $this->redis->calls,
+            fn($c) => $c['method'] === 'eval'
+        );
+        $this->assertCount(1, $evalCall);
 
-    public function testRecoverStaleProcessingReturnsZeroWhenNoStaleJobs(): void
-    {
-        $this->redis->returns['zrangebyscore'] = [];
-
-        $count = $this->driver->recoverStaleProcessing('default', 600);
-
-        $this->assertEquals(0, $count);
-        $this->assertNull($this->redis->pipeline);
+        $call = reset($evalCall);
+        $this->assertStringContainsString('ZRANGEBYSCORE', $call['args'][0]);
+        $this->assertEquals(3, $call['args'][1]); // numKeys
+        $this->assertEquals('test:queue:default:processing_z', $call['args'][2]);
+        $this->assertEquals('test:queue:default:processing', $call['args'][3]);
+        $this->assertEquals('test:queue:default:pending', $call['args'][4]);
+        $this->assertEquals('75', $call['args'][6]);
     }
 
     public function testClearRemovesAllKeys(): void

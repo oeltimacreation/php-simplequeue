@@ -91,7 +91,7 @@ final class InMemoryQueueDriver implements QueueDriverInterface
      * @param string $queue Queue name
      * @return int Number of jobs promoted
      */
-    public function promoteDelayedJobs(string $queue): int
+    public function promoteDelayedJobs(string $queue, int $limit = 100): int
     {
         if (!isset($this->delayed[$queue]) || empty($this->delayed[$queue])) {
             return 0;
@@ -101,6 +101,9 @@ final class InMemoryQueueDriver implements QueueDriverInterface
         $promoted = 0;
 
         foreach ($this->delayed[$queue] as $jobId => $availableAt) {
+            if ($promoted >= $limit) {
+                break;
+            }
             if ($availableAt <= $now) {
                 $this->enqueue($queue, $jobId);
                 unset($this->delayed[$queue][$jobId]);
@@ -116,9 +119,10 @@ final class InMemoryQueueDriver implements QueueDriverInterface
      *
      * @param string $queue Queue name
      * @param int $ttlSeconds Time threshold
+     * @param int $limit Maximum number of jobs to recover
      * @return int Number of jobs recovered
      */
-    public function recoverStaleProcessing(string $queue, int $ttlSeconds): int
+    public function recoverStaleProcessing(string $queue, int $ttlSeconds, int $limit = 100): int
     {
         if (!isset($this->processingStartedAt[$queue]) || empty($this->processingStartedAt[$queue])) {
             return 0;
@@ -128,6 +132,9 @@ final class InMemoryQueueDriver implements QueueDriverInterface
         $recovered = 0;
 
         foreach ($this->processingStartedAt[$queue] as $jobId => $startedAt) {
+            if ($recovered >= $limit) {
+                break;
+            }
             if ($startedAt <= $staleThreshold) {
                 if (isset($this->processing[$queue])) {
                     $key = array_search($jobId, $this->processing[$queue], true);

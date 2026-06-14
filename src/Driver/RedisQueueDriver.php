@@ -15,6 +15,38 @@ use Predis\ClientInterface;
  */
 final class RedisQueueDriver implements QueueDriverInterface
 {
+    private const PROMOTE_DELAYED_LUA = <<<'LUA'
+local delayedKey = KEYS[1]
+local pendingKey = KEYS[2]
+local now = tonumber(ARGV[1])
+local limit = tonumber(ARGV[2])
+
+local dueJobs = redis.call('ZRANGEBYSCORE', delayedKey, '-inf', now, 'LIMIT', 0, limit)
+if #dueJobs > 0 then
+    redis.call('LPUSH', pendingKey, unpack(dueJobs))
+    redis.call('ZREM', delayedKey, unpack(dueJobs))
+end
+return #dueJobs
+LUA;
+
+    private const RECOVER_STALE_LUA = <<<'LUA'
+local processingZKey = KEYS[1]
+local processingKey = KEYS[2]
+local pendingKey = KEYS[3]
+local staleThreshold = tonumber(ARGV[1])
+local limit = tonumber(ARGV[2])
+
+local staleJobs = redis.call('ZRANGEBYSCORE', processingZKey, '-inf', staleThreshold, 'LIMIT', 0, limit)
+if #staleJobs > 0 then
+    for _, jobId in ipairs(staleJobs) do
+        redis.call('LREM', processingKey, 1, jobId)
+    end
+    redis.call('LPUSH', pendingKey, unpack(staleJobs))
+    redis.call('ZREM', processingZKey, unpack(staleJobs))
+end
+return #staleJobs
+LUA;
+
     private ClientInterface $redis;
     private string $prefix;
 
@@ -104,26 +136,23 @@ final class RedisQueueDriver implements QueueDriverInterface
      * Promote delayed jobs that are now due to the pending queue.
      *
      * @param string $queue Queue name
+     * @param int $limit Maximum number of jobs to promote
      * @return int Number of jobs promoted
      */
-    public function promoteDelayedJobs(string $queue): int
+    public function promoteDelayedJobs(string $queue, int $limit = 100): int
     {
         $now = time();
-        $dueJobs = $this->redis->zrangebyscore($this->delayedKey($queue), '-inf', (string) $now);
 
-        if (empty($dueJobs)) {
-            return 0;
-        }
+        $result = $this->redis->eval(
+            self::PROMOTE_DELAYED_LUA,
+            2,
+            $this->delayedKey($queue),
+            $this->pendingKey($queue),
+            (string) $now,
+            (string) $limit
+        );
 
-        /** @var \Predis\Pipeline\Pipeline $pipe */
-        $pipe = $this->redis->pipeline();
-        foreach ($dueJobs as $jobId) {
-            $pipe->lpush($this->pendingKey($queue), [(string) $jobId]);
-        }
-        $pipe->zremrangebyscore($this->delayedKey($queue), '-inf', (string) $now);
-        $pipe->execute();
-
-        return count($dueJobs);
+        return (int) $result;
     }
 
     /**
@@ -131,31 +160,24 @@ final class RedisQueueDriver implements QueueDriverInterface
      *
      * @param string $queue Queue name
      * @param int $ttlSeconds Time threshold - jobs processing longer than this are considered stale
+     * @param int $limit Maximum number of jobs to recover
      * @return int Number of jobs recovered
      */
-    public function recoverStaleProcessing(string $queue, int $ttlSeconds): int
+    public function recoverStaleProcessing(string $queue, int $ttlSeconds, int $limit = 100): int
     {
         $staleThreshold = time() - $ttlSeconds;
-        $staleJobs = $this->redis->zrangebyscore(
+
+        $result = $this->redis->eval(
+            self::RECOVER_STALE_LUA,
+            3,
             $this->processingZKey($queue),
-            '-inf',
-            (string) $staleThreshold
+            $this->processingKey($queue),
+            $this->pendingKey($queue),
+            (string) $staleThreshold,
+            (string) $limit
         );
 
-        if (empty($staleJobs)) {
-            return 0;
-        }
-
-        /** @var \Predis\Pipeline\Pipeline $pipe */
-        $pipe = $this->redis->pipeline();
-        foreach ($staleJobs as $jobId) {
-            $pipe->lrem($this->processingKey($queue), 1, (string) $jobId);
-            $pipe->lpush($this->pendingKey($queue), [(string) $jobId]);
-        }
-        $pipe->zremrangebyscore($this->processingZKey($queue), '-inf', (string) $staleThreshold);
-        $pipe->execute();
-
-        return count($staleJobs);
+        return (int) $result;
     }
 
     /**
