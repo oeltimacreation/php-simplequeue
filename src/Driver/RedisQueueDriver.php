@@ -74,24 +74,30 @@ final class RedisQueueDriver implements QueueDriverInterface
 
     public function ack(string $queue, int $jobId): void
     {
-        $this->redis->lrem($this->processingKey($queue), 1, (string) $jobId);
-        $this->redis->zrem($this->processingZKey($queue), (string) $jobId);
+        /** @var \Predis\Pipeline\Pipeline $pipe */
+        $pipe = $this->redis->pipeline();
+        $pipe->lrem($this->processingKey($queue), 1, (string) $jobId);
+        $pipe->zrem($this->processingZKey($queue), (string) $jobId);
+        $pipe->execute();
     }
 
     public function nack(string $queue, int $jobId, int $delaySeconds = 0): void
     {
+        /** @var \Predis\Pipeline\Pipeline $pipe */
+        $pipe = $this->redis->pipeline();
         // Remove from processing lists
-        $this->redis->lrem($this->processingKey($queue), 1, (string) $jobId);
-        $this->redis->zrem($this->processingZKey($queue), (string) $jobId);
+        $pipe->lrem($this->processingKey($queue), 1, (string) $jobId);
+        $pipe->zrem($this->processingZKey($queue), (string) $jobId);
 
         if ($delaySeconds > 0) {
             // Add to delayed ZSET with future timestamp
             $availableAt = time() + $delaySeconds;
-            $this->redis->zadd($this->delayedKey($queue), [$jobId => $availableAt]);
+            $pipe->zadd($this->delayedKey($queue), [$jobId => $availableAt]);
         } else {
             // Immediate re-enqueue
-            $this->enqueue($queue, $jobId);
+            $pipe->lpush($this->pendingKey($queue), [(string) $jobId]);
         }
+        $pipe->execute();
     }
 
     /**
@@ -213,12 +219,8 @@ final class RedisQueueDriver implements QueueDriverInterface
         }
 
         $key = $this->pendingKey($queue);
-        /** @var \Predis\Pipeline\Pipeline $pipe */
-        $pipe = $this->redis->pipeline();
-        foreach ($jobIds as $jobId) {
-            $pipe->lpush($key, [(string) $jobId]);
-        }
-        $pipe->execute();
+        $stringJobIds = array_map(fn($id) => (string) $id, $jobIds);
+        $this->redis->lpush($key, $stringJobIds);
     }
 
     private function pendingKey(string $queue): string

@@ -140,22 +140,28 @@ class RedisQueueDriverTest extends TestCase
     {
         $this->driver->ack('default', 123);
 
-        $callMethods = array_column($this->redis->calls, 'method');
-        $this->assertContains('lrem', $callMethods, 'Should remove from processing list');
-        $this->assertContains('zrem', $callMethods, 'Should remove from processing ZSET');
+        $this->assertNotNull($this->redis->pipeline);
+        $this->assertTrue($this->redis->pipeline->executed);
+
+        $pipelineMethods = array_column($this->redis->pipeline->calls, 'method');
+        $this->assertContains('lrem', $pipelineMethods, 'Should remove from processing list');
+        $this->assertContains('zrem', $pipelineMethods, 'Should remove from processing ZSET');
     }
 
     public function testNackWithDelayAddsToDelayedZset(): void
     {
         $this->driver->nack('default', 123, 60);
 
-        $callMethods = array_column($this->redis->calls, 'method');
-        $this->assertContains('lrem', $callMethods);
-        $this->assertContains('zrem', $callMethods);
-        $this->assertContains('zadd', $callMethods, 'Should add to delayed ZSET');
-        $this->assertNotContains('lpush', $callMethods, 'Should not immediately re-enqueue');
+        $this->assertNotNull($this->redis->pipeline);
+        $this->assertTrue($this->redis->pipeline->executed);
 
-        $zaddCall = array_filter($this->redis->calls, fn($c) => $c['method'] === 'zadd');
+        $pipelineMethods = array_column($this->redis->pipeline->calls, 'method');
+        $this->assertContains('lrem', $pipelineMethods);
+        $this->assertContains('zrem', $pipelineMethods);
+        $this->assertContains('zadd', $pipelineMethods, 'Should add to delayed ZSET');
+        $this->assertNotContains('lpush', $pipelineMethods, 'Should not immediately re-enqueue');
+
+        $zaddCall = array_filter($this->redis->pipeline->calls, fn($c) => $c['method'] === 'zadd');
         $zaddCall = reset($zaddCall);
         $this->assertStringContainsString('delayed', $zaddCall['args'][0]);
     }
@@ -164,10 +170,13 @@ class RedisQueueDriverTest extends TestCase
     {
         $this->driver->nack('default', 123, 0);
 
-        $callMethods = array_column($this->redis->calls, 'method');
-        $this->assertContains('lrem', $callMethods);
-        $this->assertContains('zrem', $callMethods);
-        $this->assertContains('lpush', $callMethods, 'Should immediately re-enqueue');
+        $this->assertNotNull($this->redis->pipeline);
+        $this->assertTrue($this->redis->pipeline->executed);
+
+        $pipelineMethods = array_column($this->redis->pipeline->calls, 'method');
+        $this->assertContains('lrem', $pipelineMethods);
+        $this->assertContains('zrem', $pipelineMethods);
+        $this->assertContains('lpush', $pipelineMethods, 'Should immediately re-enqueue');
     }
 
     public function testPromoteDelayedJobsMovesJobsToPending(): void
@@ -246,29 +255,30 @@ class RedisQueueDriverTest extends TestCase
         $this->assertEquals(5, $count);
     }
 
-    public function testEnqueueBatchUsesPipeline(): void
+    public function testEnqueueBatchUsesSingleLpush(): void
     {
         $this->driver->enqueueBatch('default', [1, 2, 3]);
 
-        $this->assertNotNull($this->redis->pipeline);
-        $this->assertTrue($this->redis->pipeline->executed);
-
         $lpushCalls = array_filter(
-            $this->redis->pipeline->calls,
+            $this->redis->calls,
             fn($c) => $c['method'] === 'lpush'
         );
-        $this->assertCount(3, $lpushCalls);
+        $this->assertCount(1, $lpushCalls);
 
-        foreach ($lpushCalls as $call) {
-            $this->assertEquals('test:queue:default:pending', $call['args'][0]);
-        }
+        $call = reset($lpushCalls);
+        $this->assertEquals('test:queue:default:pending', $call['args'][0]);
+        $this->assertEquals(['1', '2', '3'], $call['args'][1]);
     }
 
     public function testEnqueueBatchEmptyArrayDoesNothing(): void
     {
         $this->driver->enqueueBatch('default', []);
 
-        $this->assertNull($this->redis->pipeline);
+        $lpushCalls = array_filter(
+            $this->redis->calls,
+            fn($c) => $c['method'] === 'lpush'
+        );
+        $this->assertCount(0, $lpushCalls);
     }
 
     public function testGetPendingCount(): void
