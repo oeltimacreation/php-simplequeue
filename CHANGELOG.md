@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- CI now runs PHPStan and PHPCS quality gates, with a new `composer check` aggregate for tests, static analysis, and style checks.
+
 ### Fixed
 
 - `composer test` now runs without coverage collection so missing coverage drivers do not fail the default test command.
