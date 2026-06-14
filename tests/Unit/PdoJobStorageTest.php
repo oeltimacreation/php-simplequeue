@@ -465,4 +465,45 @@ class PdoJobStorageTest extends TestCase
         $this->assertEquals(['b' => 2], $job2->payload);
         $this->assertEquals(5, $job2->maxAttempts);
     }
+
+    public function testCancelPendingJob(): void
+    {
+        $pdo = $this->createSqlitePdo();
+        $storage = new PdoJobStorage($pdo);
+
+        $id = $storage->createJob('test.job', []);
+
+        $result = $storage->cancel($id);
+
+        $this->assertTrue($result);
+        $job = $storage->find($id);
+        $this->assertNotNull($job);
+        $this->assertEquals('cancelled', $job->status);
+    }
+
+    public function testCancelNonPendingJobFails(): void
+    {
+        $pdo = $this->createSqlitePdo();
+        $storage = new PdoJobStorage($pdo);
+
+        $id = $storage->createJob('test.job', []);
+        $claim = $storage->claimById($id, 'worker-1');
+        $this->assertNotNull($claim);
+
+        $result = $storage->cancel($id);
+
+        $this->assertFalse($result);
+        $job = $storage->find($id);
+        $this->assertNotNull($job);
+        $this->assertEquals('running', $job->status);
+    }
+
+    public function testCancelNonExistentJobFails(): void
+    {
+        $pdo = $this->createSqlitePdo();
+        $storage = new PdoJobStorage($pdo);
+
+        $result = $storage->cancel(9999);
+        $this->assertFalse($result);
+    }
 }

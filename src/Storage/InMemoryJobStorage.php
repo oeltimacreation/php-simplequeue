@@ -363,6 +363,23 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
         $this->nextId = 1;
     }
 
+    public function cancel(int $id): bool
+    {
+        if (!isset($this->jobs[$id])) {
+            return false;
+        }
+
+        if ($this->jobs[$id]['status'] !== 'pending') {
+            return false;
+        }
+
+        $now = $this->now();
+        $this->jobs[$id]['status'] = 'cancelled';
+        $this->jobs[$id]['updated_at'] = $now;
+
+        return true;
+    }
+
     private function now(): string
     {
         return $this->clock->now();

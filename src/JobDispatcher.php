@@ -137,4 +137,15 @@ final class JobDispatcher
     {
         return $this->storage;
     }
+
+    /**
+     * Cancel a pending job.
+     *
+     * @param int $jobId Job identifier
+     * @return bool True if the job was successfully cancelled
+     */
+    public function cancelJob(int $jobId): bool
+    {
+        return $this->storage->cancel($jobId);
+    }
 }

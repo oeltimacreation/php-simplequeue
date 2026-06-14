@@ -132,4 +132,14 @@ interface JobStorageInterface
      * @return int Number of jobs recovered
      */
     public function recoverStaleJobs(int $ttlSeconds): int;
+
+    /**
+     * Cancel a pending job.
+     *
+     * Only jobs in 'pending' status can be cancelled.
+     *
+     * @param int $id Job identifier
+     * @return bool True if the job was successfully cancelled
+     */
+    public function cancel(int $id): bool;
 }

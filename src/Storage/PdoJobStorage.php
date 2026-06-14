@@ -529,6 +529,21 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         return $countFailed + $countPending;
     }
 
+    public function cancel(int $id): bool
+    {
+        $now = $this->now();
+        $sql = "UPDATE {$this->table}
+            SET status = 'cancelled', updated_at = :updated_at
+            WHERE id = :id AND status = 'pending'";
+
+        $stmt = $this->execute($sql, [
+            'id' => $id,
+            'updated_at' => $now,
+        ]);
+
+        return $stmt->rowCount() > 0;
+    }
+
     /**
      * Get jobs by status.
      *

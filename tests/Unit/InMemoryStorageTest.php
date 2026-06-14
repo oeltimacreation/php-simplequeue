@@ -462,4 +462,36 @@ class InMemoryStorageTest extends TestCase
         $this->assertNull($job->lockedBy);
         $this->assertNull($job->leaseToken);
     }
+
+    public function testCancelPendingJob(): void
+    {
+        $id = $this->storage->createJob('test.job', []);
+
+        $result = $this->storage->cancel($id);
+
+        $this->assertTrue($result);
+        $job = $this->storage->find($id);
+        $this->assertNotNull($job);
+        $this->assertEquals('cancelled', $job->status);
+    }
+
+    public function testCancelNonPendingJobFails(): void
+    {
+        $id = $this->storage->createJob('test.job', []);
+        $claim = $this->storage->claimById($id, 'worker-1');
+        $this->assertNotNull($claim);
+
+        $result = $this->storage->cancel($id);
+
+        $this->assertFalse($result);
+        $job = $this->storage->find($id);
+        $this->assertNotNull($job);
+        $this->assertEquals('running', $job->status);
+    }
+
+    public function testCancelNonExistentJobFails(): void
+    {
+        $result = $this->storage->cancel(9999);
+        $this->assertFalse($result);
+    }
 }

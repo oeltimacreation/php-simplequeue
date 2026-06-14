@@ -219,4 +219,15 @@ class JobDispatcherTest extends TestCase
 
         $this->assertEquals($pendingBefore, $pendingAfter);
     }
+
+    public function testCancelJobDelegatesToStorage(): void
+    {
+        $jobId = $this->dispatcher->dispatch('email.send', []);
+
+        $result = $this->dispatcher->cancelJob($jobId);
+
+        $this->assertTrue($result);
+        $status = $this->dispatcher->getStatus($jobId);
+        $this->assertEquals('cancelled', $status->status);
+    }
 }
