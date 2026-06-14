@@ -40,6 +40,7 @@ class PdoJobStorageTest extends TestCase
                 completed_at TEXT,
                 locked_by TEXT,
                 locked_at TEXT,
+                lease_token TEXT,
                 error_message TEXT,
                 error_trace TEXT,
                 request_id TEXT,

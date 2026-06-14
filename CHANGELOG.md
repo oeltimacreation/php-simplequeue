@@ -12,9 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI now runs PHPStan and PHPCS quality gates, with a new `composer check` aggregate for tests, static analysis, and style checks.
 - Added repository hygiene files: `.editorconfig`, `SECURITY.md`, issue templates, and a pull request template.
 - Added an injectable clock abstraction for UTC wall-clock timestamps and monotonic duration measurement.
+- Added a `ClaimedJob` value object and `lease_token` schema support for fenced job ownership.
+- Added a SQL migration example for upgrading existing MySQL, PostgreSQL, and SQLite job tables to lease-based claims.
 
 ### Changed
 
+- **BREAKING**: New job schemas require `available_at` to be non-null and include `lease_token` for fenced claim ownership.
 - GitHub Actions now tests the documented PHP 8.1 through 8.4 support range.
 - Worker retry delay calculation is now centralized so storage and queue retry scheduling share one computed value.
 

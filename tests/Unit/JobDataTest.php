@@ -30,4 +30,16 @@ class JobDataTest extends TestCase
 
         $this->assertSame([], $job->payload);
     }
+
+    public function testFromRawMapsLeaseToken(): void
+    {
+        $job = JobData::fromRaw([
+            'id' => 1,
+            'type' => 'test.job',
+            'lease_token' => 'lease-abc',
+        ]);
+
+        $this->assertSame('lease-abc', $job->leaseToken);
+        $this->assertSame('lease-abc', $job->toArray()['lease_token']);
+    }
 }
