@@ -109,9 +109,10 @@ final class RedisQueueDriver implements QueueDriverInterface
             return 0;
         }
 
+        /** @var \Predis\Pipeline\Pipeline $pipe */
         $pipe = $this->redis->pipeline();
         foreach ($dueJobs as $jobId) {
-            $pipe->lpush($this->pendingKey($queue), (string) $jobId);
+            $pipe->lpush($this->pendingKey($queue), [(string) $jobId]);
         }
         $pipe->zremrangebyscore($this->delayedKey($queue), '-inf', (string) $now);
         $pipe->execute();
@@ -139,10 +140,11 @@ final class RedisQueueDriver implements QueueDriverInterface
             return 0;
         }
 
+        /** @var \Predis\Pipeline\Pipeline $pipe */
         $pipe = $this->redis->pipeline();
         foreach ($staleJobs as $jobId) {
             $pipe->lrem($this->processingKey($queue), 1, (string) $jobId);
-            $pipe->lpush($this->pendingKey($queue), (string) $jobId);
+            $pipe->lpush($this->pendingKey($queue), [(string) $jobId]);
         }
         $pipe->zremrangebyscore($this->processingZKey($queue), '-inf', (string) $staleThreshold);
         $pipe->execute();
@@ -211,6 +213,7 @@ final class RedisQueueDriver implements QueueDriverInterface
         }
 
         $key = $this->pendingKey($queue);
+        /** @var \Predis\Pipeline\Pipeline $pipe */
         $pipe = $this->redis->pipeline();
         foreach ($jobIds as $jobId) {
             $pipe->lpush($key, [(string) $jobId]);
