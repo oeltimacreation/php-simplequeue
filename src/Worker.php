@@ -470,8 +470,11 @@ final class Worker
                     $driver->nack($this->queue, $job->id, $delay);
                 }
             } else {
-                if ($this->storage->markFailed($claim, $e->getMessage(), $this->truncateTrace($e))) {
+                $marked = $this->storage->markFailed($claim, $e->getMessage(), $this->truncateTrace($e));
+                if ($marked) {
                     $driver->ack($this->queue, $job->id);
+                } else {
+                    $this->logger->warning('Lost job ownership before marking failed', ['job_id' => $job->id]);
                 }
             }
         } catch (\Throwable $storageError) {
