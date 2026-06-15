@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Upgraded `phpstan/phpstan` to `^2.2.2`.
 - **BREAKING**: Bumped Predis requirement to `^3.0` and dropped support for Predis 2.x.
 - Adjusted `phpstan.neon` settings for PHPStan 2.x compatibility, including setting `treatPhpDocTypesAsCertain: false`.
+- Verified that the complete build and quality check suite (`composer check`) passes cleanly under the upgraded platform/toolchain floor.
 
 ### Fixed
 
