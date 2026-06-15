@@ -6,6 +6,7 @@ namespace Oeltima\SimpleQueue\Tests\Integration;
 
 use Oeltima\SimpleQueue\Driver\RedisQueueDriver;
 use Oeltima\SimpleQueue\Storage\PdoJobStorage;
+use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Tests\DbHelper;
 use PDO;
 use PHPUnit\Framework\TestCase;
@@ -158,7 +159,7 @@ final class RealServicesTest extends TestCase
 
         $job = $storage->find($jobId);
         $this->assertNotNull($job);
-        $this->assertSame('pending', $job->status);
+        $this->assertSame(JobStatus::Pending, $job->status);
         $this->assertSame(['foo' => 'bar'], $job->payload);
 
         // Test Claim
@@ -177,7 +178,7 @@ final class RealServicesTest extends TestCase
         $this->assertTrue($storage->markCompleted($claim, ['res' => 'ok']));
 
         $job = $storage->find($jobId);
-        $this->assertSame('completed', $job->status);
+        $this->assertSame(JobStatus::Completed, $job->status);
         $this->assertSame(['res' => 'ok'], $job->result);
 
         $pdo->exec("DROP TABLE IF EXISTS {$tableName}");
