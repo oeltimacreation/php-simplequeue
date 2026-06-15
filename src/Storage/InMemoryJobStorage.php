@@ -7,6 +7,7 @@ namespace Oeltima\SimpleQueue\Storage;
 use Oeltima\SimpleQueue\Contract\ClaimedJob;
 use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\JobData;
+use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Contract\JobStorageAdminInterface;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\SystemClock;
@@ -287,10 +288,10 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
         return $count;
     }
 
-    public function list(?string $status = null, ?string $queue = null, int $limit = 100, int $offset = 0): array
+    public function list(?JobStatus $status = null, ?string $queue = null, int $limit = 100, int $offset = 0): array
     {
         $filtered = array_filter($this->jobs, function (array $job) use ($status, $queue): bool {
-            if ($status !== null && $job['status'] !== $status) {
+            if ($status !== null && $job['status'] !== $status->value) {
                 return false;
             }
             if ($queue !== null && $job['queue'] !== $queue) {
@@ -305,12 +306,12 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
         return array_values(array_map(fn($job) => JobData::fromRaw($job), $filtered));
     }
 
-    public function count(?string $status = null, ?string $queue = null): int
+    public function count(?JobStatus $status = null, ?string $queue = null): int
     {
         $count = 0;
 
         foreach ($this->jobs as $job) {
-            if ($status !== null && $job['status'] !== $status) {
+            if ($status !== null && $job['status'] !== $status->value) {
                 continue;
             }
             if ($queue !== null && $job['queue'] !== $queue) {

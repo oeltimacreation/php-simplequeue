@@ -15,7 +15,7 @@ final class JobData
         public readonly int $id,
         public readonly string $queue,
         public readonly string $type,
-        public readonly string $status,
+        public readonly JobStatus $status,
         /** @var array<string, mixed> */
         public readonly array $payload,
         public readonly int $attempts,
@@ -65,11 +65,14 @@ final class JobData
             }
         }
 
+        $statusRaw = $data['status'] ?? 'pending';
+        $status = $statusRaw instanceof JobStatus ? $statusRaw : JobStatus::from($statusRaw);
+
         return new self(
             id: (int) ($data['id'] ?? 0),
             queue: (string) ($data['queue'] ?? 'default'),
             type: (string) ($data['type'] ?? ''),
-            status: (string) ($data['status'] ?? 'pending'),
+            status: $status,
             payload: $payload,
             attempts: (int) ($data['attempts'] ?? 0),
             maxAttempts: (int) ($data['max_attempts'] ?? 3),
@@ -95,7 +98,7 @@ final class JobData
      */
     public function isFinished(): bool
     {
-        return in_array($this->status, ['completed', 'failed', 'cancelled'], true);
+        return $this->status->isTerminal();
     }
 
     /**
@@ -117,7 +120,7 @@ final class JobData
             'id' => $this->id,
             'queue' => $this->queue,
             'type' => $this->type,
-            'status' => $this->status,
+            'status' => $this->status->value,
             'payload' => $this->payload,
             'attempts' => $this->attempts,
             'max_attempts' => $this->maxAttempts,
@@ -138,3 +141,4 @@ final class JobData
         ];
     }
 }
+
