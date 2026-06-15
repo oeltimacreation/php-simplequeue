@@ -45,7 +45,7 @@ final class DatabaseQueueDriver implements QueueDriverInterface, SupportsWorkerI
         $this->workerId = $workerId;
     }
 
-    public function isAvailable(): bool
+    public function isAvailable(): true
     {
         return true;
     }
