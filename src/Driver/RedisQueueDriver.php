@@ -67,7 +67,7 @@ LUA;
      * @param ClientInterface $redis Predis client instance
      * @param string $prefix Key prefix for all queue keys
      */
-    public function __construct(ClientInterface $redis, string $prefix = 'simplequeue')
+    public function __construct(#[\SensitiveParameter] ClientInterface $redis, string $prefix = 'simplequeue')
     {
         $this->redis = $redis;
         $this->prefix = $prefix;

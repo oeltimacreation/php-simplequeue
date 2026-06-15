@@ -39,7 +39,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
      * @param ClockInterface|null $clock Clock implementation
      */
     public function __construct(
-        PDO|callable $connection,
+        #[\SensitiveParameter] PDO|callable $connection,
         string $table = 'background_jobs',
         private readonly ?ClockInterface $clock = null
     ) {
