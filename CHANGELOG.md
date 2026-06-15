@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING**: Bumped Predis requirement to `^3.0` and dropped support for Predis 2.x.
 - Adjusted `phpstan.neon` settings for PHPStan 2.x compatibility, including setting `treatPhpDocTypesAsCertain: false`.
 - Verified that the complete build and quality check suite (`composer check`) passes cleanly under the upgraded platform/toolchain floor.
+- Audited the codebase and test suite for compatibility with PHP 8.2 through 8.5, confirming zero deprecation warnings and full compatibility.
+- Updated the CI test matrix to run against PHP 8.2, 8.3, 8.4, and 8.5, and bumped the quality gate PHP version to 8.5.
 
 ### Fixed
 
