@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed library version to `1.4.0`.
 - Locked `phpunit/phpunit` to `^11.0` and dropped support for PHPUnit 10.x.
 - Replaced `squizlabs/php_codesniffer` with `phpcsstandards/php_codesniffer: ^4.0`.
+- Upgraded `phpstan/phpstan` to `^2.2.2`.
 
 ### Fixed
 
