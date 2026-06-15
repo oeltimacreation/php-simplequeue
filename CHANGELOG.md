@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `JobStatus` string-backed enum to represent job statuses.
+
 ### Changed
 
 - **BREAKING**: Bumped minimum supported PHP version to `8.2` (supporting PHP 8.2 through 8.5).
