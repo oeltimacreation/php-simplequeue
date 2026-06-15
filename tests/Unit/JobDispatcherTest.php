@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue\Tests\Unit;
 
+use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
 use Oeltima\SimpleQueue\JobDispatcher;
 use Oeltima\SimpleQueue\QueueManager;
@@ -34,7 +35,7 @@ class JobDispatcherTest extends TestCase
         $job = $this->storage->find($jobId);
         $this->assertNotNull($job);
         $this->assertEquals('email.send', $job->type);
-        $this->assertEquals('pending', $job->status);
+        $this->assertSame(JobStatus::Pending, $job->status);
         $this->assertEquals(['to' => 'test@example.com'], $job->payload);
     }
 
@@ -228,6 +229,6 @@ class JobDispatcherTest extends TestCase
 
         $this->assertTrue($result);
         $status = $this->dispatcher->getStatus($jobId);
-        $this->assertEquals('cancelled', $status->status);
+        $this->assertSame(JobStatus::Cancelled, $status->status);
     }
 }

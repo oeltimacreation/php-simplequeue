@@ -6,6 +6,7 @@ namespace Oeltima\SimpleQueue\Tests\Unit;
 
 use Oeltima\SimpleQueue\Driver\DatabaseQueueDriver;
 use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
+use Oeltima\SimpleQueue\Contract\JobStatus;
 use PHPUnit\Framework\TestCase;
 
 final class DatabaseQueueDriverTest extends TestCase
@@ -110,7 +111,7 @@ final class DatabaseQueueDriverTest extends TestCase
                     id: 123,
                     queue: 'default',
                     type: 'test',
-                    status: 'running',
+                    status: JobStatus::Running,
                     payload: ['foo' => 'bar'],
                     attempts: 0,
                     maxAttempts: 3,

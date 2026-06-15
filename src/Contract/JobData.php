@@ -141,4 +141,3 @@ final readonly class JobData
         ];
     }
 }
-

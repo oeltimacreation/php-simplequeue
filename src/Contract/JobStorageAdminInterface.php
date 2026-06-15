@@ -34,4 +34,3 @@ interface JobStorageAdminInterface
      */
     public function pruneCompleted(int $days = 7): int;
 }
-
