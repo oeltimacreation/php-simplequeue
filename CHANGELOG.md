@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Locked `phpunit/phpunit` to `^11.0` and dropped support for PHPUnit 10.x.
 - Replaced `squizlabs/php_codesniffer` with `phpcsstandards/php_codesniffer: ^4.0`.
 - Upgraded `phpstan/phpstan` to `^2.2.2`.
+- **BREAKING**: Bumped Predis requirement to `^3.0` and dropped support for Predis 2.x.
+- Adjusted `phpstan.neon` settings for PHPStan 2.x compatibility, including setting `treatPhpDocTypesAsCertain: false`.
 
 ### Fixed
 
