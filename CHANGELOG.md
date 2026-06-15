@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING**: Bumped minimum supported PHP version to `8.2` (supporting PHP 8.2 through 8.5).
+- Changed library version to `1.4.0`.
+
 ### Fixed
 
 ## [1.3.0] - 2026-06-14
