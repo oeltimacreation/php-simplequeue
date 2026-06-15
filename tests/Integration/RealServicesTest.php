@@ -53,6 +53,58 @@ final class RealServicesTest extends TestCase
         $driver->clear('default');
     }
 
+    public function testRealValkeyDriver(): void
+    {
+        $valkeyHost = getenv('VALKEY_HOST');
+        if (!$valkeyHost) {
+            $this->markTestSkipped('VALKEY_HOST is not set. Skipping real Valkey integration test.');
+        }
+
+        $valkeyPort = getenv('VALKEY_PORT') ?: '6379';
+        $client = new Client([
+            'scheme' => 'tcp',
+            'host' => $valkeyHost,
+            'port' => (int) $valkeyPort,
+        ]);
+
+        try {
+            $client->connect();
+        } catch (\Exception $e) {
+            $this->markTestSkipped('Could not connect to Valkey: ' . $e->getMessage());
+        }
+
+        $driver = new RedisQueueDriver($client, 'integration-test-valkey');
+        $driver->clear('default');
+
+        // Test Enqueue
+        $driver->enqueue('default', 42);
+        $this->assertSame(1, $driver->getPendingCount('default'));
+
+        // Test Dequeue
+        $jobId = $driver->dequeue('default', 0);
+        $this->assertSame(42, $jobId);
+        $this->assertSame(0, $driver->getPendingCount('default'));
+        $this->assertSame(1, $driver->getProcessingCount('default'));
+
+        // Test Ack
+        $driver->ack('default', 42);
+        $this->assertSame(0, $driver->getProcessingCount('default'));
+
+        // Test blocking dequeue (valkey-specific or shared validation)
+        $driver->enqueue('default', 99);
+        $jobId = $driver->dequeue('default', 1);
+        $this->assertSame(99, $jobId);
+        $driver->ack('default', 99);
+
+        // Test Lua promotion/recovery
+        $driver->nack('default', 101, 1);
+        $this->assertSame(1, $driver->getDelayedCount('default'));
+        sleep(2);
+        $this->assertSame(1, $driver->promoteDelayedJobs('default'));
+        $this->assertSame(1, $driver->getPendingCount('default'));
+        $driver->clear('default');
+    }
+
     public function testRealMySqlStorage(): void
     {
         $dsn = getenv('MYSQL_DSN');

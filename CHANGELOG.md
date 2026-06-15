@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added `JobStatus` string-backed enum to represent job statuses.
+- Added first-class Valkey 8.0 support and integration testing.
 
 ### Changed
 
