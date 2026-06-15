@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Documented minimum Redis 7.0 and Valkey 8.0 requirements and verified compatibility of LMOVE/BLMOVE and Lua maintenance scripts.
 - Updated test assertions and list/count filters in unit/integration tests to use the `JobStatus` enum.
 - Applied standalone `true` return types to driver `isAvailable` methods.
 - Annotated DB and Redis connection parameters with `#[\SensitiveParameter]` to prevent credential leakage in stack traces.

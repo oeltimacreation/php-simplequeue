@@ -16,8 +16,9 @@ use Predis\ClientInterface;
 /**
  * Redis-based queue driver using list operations.
  *
- * This driver uses Redis lists with BRPOPLPUSH for reliable
- * queue processing with at-least-once delivery guarantees.
+ * This driver uses Redis lists with LMOVE and BLMOVE (introduced in Redis 6.2)
+ * for reliable queue processing with at-least-once delivery guarantees.
+ * Requires Redis >= 7.0 or Valkey >= 8.0.
  */
 final class RedisQueueDriver implements
     QueueDriverInterface,
