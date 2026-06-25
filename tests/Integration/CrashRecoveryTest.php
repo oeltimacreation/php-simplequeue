@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Tests\Integration;
 
 use Oeltima\SimpleQueue\Contract\JobHandlerInterface;
+use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
 use Oeltima\SimpleQueue\JobDispatcher;
 use Oeltima\SimpleQueue\JobRegistry;
@@ -75,7 +76,7 @@ class CrashRecoveryTest extends TestCase
         $this->simulateCrash($jobId);
 
         $job = $this->storage->find($jobId);
-        $this->assertSame('running', $job->status);
+        $this->assertSame(JobStatus::Running, $job->status);
 
         $worker = new Worker(
             $this->storage,
@@ -89,13 +90,13 @@ class CrashRecoveryTest extends TestCase
         $this->invokeRecoverStaleJobs($worker);
 
         $job = $this->storage->find($jobId);
-        $this->assertSame('pending', $job->status);
+        $this->assertSame(JobStatus::Pending, $job->status);
 
         $processed = $worker->processOne();
         $this->assertTrue($processed);
 
         $job = $this->storage->find($jobId);
-        $this->assertSame('completed', $job->status);
+        $this->assertSame(JobStatus::Completed, $job->status);
         $this->assertSame(['recovered' => true], $job->result);
     }
 
@@ -121,7 +122,7 @@ class CrashRecoveryTest extends TestCase
 
         foreach ($jobIds as $jobId) {
             $job = $this->storage->find($jobId);
-            $this->assertSame('running', $job->status);
+            $this->assertSame(JobStatus::Running, $job->status);
         }
 
         $worker = new Worker(
@@ -137,7 +138,7 @@ class CrashRecoveryTest extends TestCase
 
         foreach ($jobIds as $jobId) {
             $job = $this->storage->find($jobId);
-            $this->assertSame('pending', $job->status);
+            $this->assertSame(JobStatus::Pending, $job->status);
         }
 
         for ($i = 0; $i < 3; $i++) {
@@ -146,7 +147,7 @@ class CrashRecoveryTest extends TestCase
 
         foreach ($jobIds as $jobId) {
             $job = $this->storage->find($jobId);
-            $this->assertSame('completed', $job->status);
+            $this->assertSame(JobStatus::Completed, $job->status);
         }
     }
 }

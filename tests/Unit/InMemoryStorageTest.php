@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Tests\Unit;
 
 use Oeltima\SimpleQueue\Contract\ClockInterface;
+use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
 use PHPUnit\Framework\TestCase;
 
@@ -60,7 +61,7 @@ class InMemoryStorageTest extends TestCase
         $this->assertNotNull($job);
         $this->assertEquals($id, $job->id);
         $this->assertEquals('test.job', $job->type);
-        $this->assertEquals('pending', $job->status);
+        $this->assertSame(JobStatus::Pending, $job->status);
         $this->assertEquals(['key' => 'value'], $job->payload);
     }
 
@@ -125,7 +126,7 @@ class InMemoryStorageTest extends TestCase
         $this->assertNotNull($claim);
 
         $job = $this->storage->find($id);
-        $this->assertEquals('running', $job->status);
+        $this->assertSame(JobStatus::Running, $job->status);
         $this->assertEquals('worker-1', $job->lockedBy);
         $this->assertNotNull($job->lockedAt);
         $this->assertNotNull($job->startedAt);
@@ -154,7 +155,7 @@ class InMemoryStorageTest extends TestCase
         $this->assertSame('worker-1', $claim->workerId);
         $this->assertNotEmpty($claim->leaseToken);
         $this->assertSame($claim->leaseToken, $claim->job->leaseToken);
-        $this->assertSame('running', $claim->job->status);
+        $this->assertSame(JobStatus::Running, $claim->job->status);
     }
 
     public function testClaimNextAvailableSkipsOtherQueues(): void
@@ -185,7 +186,7 @@ class InMemoryStorageTest extends TestCase
         $this->assertTrue($completed);
 
         $job = $this->storage->find($id);
-        $this->assertEquals('completed', $job->status);
+        $this->assertSame(JobStatus::Completed, $job->status);
         $this->assertEquals(['result' => 'success'], $job->result);
         $this->assertNotNull($job->completedAt);
     }
@@ -201,7 +202,7 @@ class InMemoryStorageTest extends TestCase
         $this->assertTrue($failed);
 
         $job = $this->storage->find($id);
-        $this->assertEquals('failed', $job->status);
+        $this->assertSame(JobStatus::Failed, $job->status);
         $this->assertEquals('Something went wrong', $job->errorMessage);
         $this->assertEquals('stack trace here', $job->errorTrace);
     }
@@ -232,7 +233,7 @@ class InMemoryStorageTest extends TestCase
         $this->assertTrue($scheduled);
 
         $job = $this->storage->find($id);
-        $this->assertEquals('pending', $job->status);
+        $this->assertSame(JobStatus::Pending, $job->status);
         $this->assertEquals(1, $job->attempts);
         $this->assertNotNull($job->availableAt);
         $this->assertEquals('Temporary error', $job->errorMessage);
@@ -271,7 +272,7 @@ class InMemoryStorageTest extends TestCase
 
         $this->assertNotNull($found);
         $this->assertEquals($id, $found->id);
-        $this->assertEquals('running', $found->status);
+        $this->assertSame(JobStatus::Running, $found->status);
     }
 
     public function testFindActiveByRequestIdReturnsNullForCompletedJob(): void
@@ -322,8 +323,8 @@ class InMemoryStorageTest extends TestCase
         $id2 = $this->storage->createJob('test.job', []);
         $this->storage->claimById($id1, 'worker-1');
 
-        $pendingJobs = $this->storage->list('pending');
-        $runningJobs = $this->storage->list('running');
+        $pendingJobs = $this->storage->list(JobStatus::Pending);
+        $runningJobs = $this->storage->list(JobStatus::Running);
 
         $this->assertCount(1, $pendingJobs);
         $this->assertCount(1, $runningJobs);
@@ -385,9 +386,9 @@ class InMemoryStorageTest extends TestCase
         $this->storage->createJob('test.job', []);
         $this->storage->claimById($id1, 'worker-1');
 
-        $this->assertEquals(1, $this->storage->count('pending'));
-        $this->assertEquals(1, $this->storage->count('running'));
-        $this->assertEquals(0, $this->storage->count('completed'));
+        $this->assertEquals(1, $this->storage->count(JobStatus::Pending));
+        $this->assertEquals(1, $this->storage->count(JobStatus::Running));
+        $this->assertEquals(0, $this->storage->count(JobStatus::Completed));
     }
 
     public function testCountFiltersByQueue(): void
@@ -429,7 +430,7 @@ class InMemoryStorageTest extends TestCase
         $this->assertSame(1, $recovered);
 
         $job = $storage->find($id);
-        $this->assertSame('pending', $job->status);
+        $this->assertSame(JobStatus::Pending, $job->status);
         $this->assertSame(1, $job->attempts);
         $this->assertNull($job->lockedBy);
         $this->assertNull($job->leaseToken);
@@ -457,7 +458,7 @@ class InMemoryStorageTest extends TestCase
         $this->assertSame(1, $recovered);
 
         $job = $storage->find($id);
-        $this->assertSame('failed', $job->status);
+        $this->assertSame(JobStatus::Failed, $job->status);
         $this->assertSame('Job timed out / worker crashed (stale recovery)', $job->errorMessage);
         $this->assertNull($job->lockedBy);
         $this->assertNull($job->leaseToken);
@@ -472,7 +473,7 @@ class InMemoryStorageTest extends TestCase
         $this->assertTrue($result);
         $job = $this->storage->find($id);
         $this->assertNotNull($job);
-        $this->assertEquals('cancelled', $job->status);
+        $this->assertSame(JobStatus::Cancelled, $job->status);
     }
 
     public function testCancelNonPendingJobFails(): void
@@ -486,7 +487,7 @@ class InMemoryStorageTest extends TestCase
         $this->assertFalse($result);
         $job = $this->storage->find($id);
         $this->assertNotNull($job);
-        $this->assertEquals('running', $job->status);
+        $this->assertSame(JobStatus::Running, $job->status);
     }
 
     public function testCancelNonExistentJobFails(): void

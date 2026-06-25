@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Tests\Integration;
 
 use Oeltima\SimpleQueue\Contract\ClockInterface;
+use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
 use Oeltima\SimpleQueue\Storage\PdoJobStorage;
 use Oeltima\SimpleQueue\SystemClock;
@@ -141,7 +142,7 @@ final class ConcurrencyTest extends TestCase
             $this->assertSame(1, $recovered, "$name: recover 1 failed");
 
             $job = $storage->find($id);
-            $this->assertSame('pending', $job->status, "$name: job should be pending");
+            $this->assertSame(JobStatus::Pending, $job->status, "$name: job should be pending");
             $this->assertSame(1, $job->attempts, "$name: attempts should be 1");
 
             // Attempt 2: claim & crash again
@@ -153,7 +154,7 @@ final class ConcurrencyTest extends TestCase
             $this->assertSame(1, $recovered, "$name: recover 2 failed");
 
             $job = $storage->find($id);
-            $this->assertSame('pending', $job->status, "$name: job should be pending");
+            $this->assertSame(JobStatus::Pending, $job->status, "$name: job should be pending");
             $this->assertSame(2, $job->attempts, "$name: attempts should be 2");
 
             // Attempt 3: claim & crash again. Attempts (3) matches max_attempts (3), should fail
@@ -165,7 +166,7 @@ final class ConcurrencyTest extends TestCase
             $this->assertSame(1, $recovered, "$name: recover 3 failed");
 
             $job = $storage->find($id);
-            $this->assertSame('failed', $job->status, "$name: job should be failed");
+            $this->assertSame(JobStatus::Failed, $job->status, "$name: job should be failed");
             $this->assertStringContainsString('stale recovery', $job->errorMessage, "$name: error message should match");
         }
     }

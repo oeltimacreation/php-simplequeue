@@ -16,8 +16,9 @@ use Predis\ClientInterface;
 /**
  * Redis-based queue driver using list operations.
  *
- * This driver uses Redis lists with BRPOPLPUSH for reliable
- * queue processing with at-least-once delivery guarantees.
+ * This driver uses Redis lists with LMOVE and BLMOVE (introduced in Redis 6.2)
+ * for reliable queue processing with at-least-once delivery guarantees.
+ * Requires Redis >= 7.0 or Valkey >= 8.0.
  */
 final class RedisQueueDriver implements
     QueueDriverInterface,
@@ -67,7 +68,7 @@ LUA;
      * @param ClientInterface $redis Predis client instance
      * @param string $prefix Key prefix for all queue keys
      */
-    public function __construct(ClientInterface $redis, string $prefix = 'simplequeue')
+    public function __construct(#[\SensitiveParameter] ClientInterface $redis, string $prefix = 'simplequeue')
     {
         $this->redis = $redis;
         $this->prefix = $prefix;

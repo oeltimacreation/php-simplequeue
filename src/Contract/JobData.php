@@ -9,31 +9,31 @@ namespace Oeltima\SimpleQueue\Contract;
  *
  * This class encapsulates all data associated with a queued job.
  */
-final class JobData
+final readonly class JobData
 {
     public function __construct(
-        public readonly int $id,
-        public readonly string $queue,
-        public readonly string $type,
-        public readonly string $status,
+        public int $id,
+        public string $queue,
+        public string $type,
+        public JobStatus $status,
         /** @var array<string, mixed> */
-        public readonly array $payload,
-        public readonly int $attempts,
-        public readonly int $maxAttempts,
-        public readonly ?string $availableAt = null,
-        public readonly ?string $startedAt = null,
-        public readonly ?string $completedAt = null,
-        public readonly ?string $lockedBy = null,
-        public readonly ?string $lockedAt = null,
-        public readonly ?string $leaseToken = null,
-        public readonly ?string $errorMessage = null,
-        public readonly ?string $errorTrace = null,
-        public readonly ?int $progress = null,
-        public readonly ?string $progressMessage = null,
-        public readonly mixed $result = null,
-        public readonly ?string $requestId = null,
-        public readonly ?string $createdAt = null,
-        public readonly ?string $updatedAt = null,
+        public array $payload,
+        public int $attempts,
+        public int $maxAttempts,
+        public ?string $availableAt = null,
+        public ?string $startedAt = null,
+        public ?string $completedAt = null,
+        public ?string $lockedBy = null,
+        public ?string $lockedAt = null,
+        public ?string $leaseToken = null,
+        public ?string $errorMessage = null,
+        public ?string $errorTrace = null,
+        public ?int $progress = null,
+        public ?string $progressMessage = null,
+        public mixed $result = null,
+        public ?string $requestId = null,
+        public ?string $createdAt = null,
+        public ?string $updatedAt = null,
     ) {
     }
 
@@ -65,11 +65,14 @@ final class JobData
             }
         }
 
+        $statusRaw = $data['status'] ?? 'pending';
+        $status = $statusRaw instanceof JobStatus ? $statusRaw : JobStatus::from($statusRaw);
+
         return new self(
             id: (int) ($data['id'] ?? 0),
             queue: (string) ($data['queue'] ?? 'default'),
             type: (string) ($data['type'] ?? ''),
-            status: (string) ($data['status'] ?? 'pending'),
+            status: $status,
             payload: $payload,
             attempts: (int) ($data['attempts'] ?? 0),
             maxAttempts: (int) ($data['max_attempts'] ?? 3),
@@ -95,7 +98,7 @@ final class JobData
      */
     public function isFinished(): bool
     {
-        return in_array($this->status, ['completed', 'failed', 'cancelled'], true);
+        return $this->status->isTerminal();
     }
 
     /**
@@ -117,7 +120,7 @@ final class JobData
             'id' => $this->id,
             'queue' => $this->queue,
             'type' => $this->type,
-            'status' => $this->status,
+            'status' => $this->status->value,
             'payload' => $this->payload,
             'attempts' => $this->attempts,
             'max_attempts' => $this->maxAttempts,

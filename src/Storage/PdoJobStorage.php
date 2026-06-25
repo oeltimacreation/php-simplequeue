@@ -7,6 +7,7 @@ namespace Oeltima\SimpleQueue\Storage;
 use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\ClaimedJob;
 use Oeltima\SimpleQueue\Contract\JobData;
+use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Contract\JobStorageAdminInterface;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\SystemClock;
@@ -38,7 +39,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
      * @param ClockInterface|null $clock Clock implementation
      */
     public function __construct(
-        PDO|callable $connection,
+        #[\SensitiveParameter] PDO|callable $connection,
         string $table = 'background_jobs',
         private readonly ?ClockInterface $clock = null
     ) {
@@ -575,20 +576,20 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
     /**
      * Get jobs by status.
      *
-     * @param string|null $status Filter by status (null for all)
+     * @param JobStatus|null $status Filter by status (null for all)
      * @param string|null $queue Filter by queue (null for all)
      * @param int $limit Maximum number of jobs to return
      * @param int $offset Offset for pagination
      * @return JobData[]
      */
-    public function list(?string $status = null, ?string $queue = null, int $limit = 100, int $offset = 0): array
+    public function list(?JobStatus $status = null, ?string $queue = null, int $limit = 100, int $offset = 0): array
     {
         $sql = "SELECT * FROM {$this->table} WHERE 1=1";
         $params = [];
 
         if ($status !== null) {
             $sql .= " AND status = :status";
-            $params['status'] = $status;
+            $params['status'] = $status->value;
         }
 
         if ($queue !== null) {
@@ -627,18 +628,18 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
     /**
      * Count jobs by status.
      *
-     * @param string|null $status Filter by status (null for all)
+     * @param JobStatus|null $status Filter by status (null for all)
      * @param string|null $queue Filter by queue (null for all)
      * @return int
      */
-    public function count(?string $status = null, ?string $queue = null): int
+    public function count(?JobStatus $status = null, ?string $queue = null): int
     {
         $sql = "SELECT COUNT(*) as cnt FROM {$this->table} WHERE 1=1";
         $params = [];
 
         if ($status !== null) {
             $sql .= " AND status = :status";
-            $params['status'] = $status;
+            $params['status'] = $status->value;
         }
 
         if ($queue !== null) {

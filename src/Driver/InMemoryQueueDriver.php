@@ -37,7 +37,7 @@ final class InMemoryQueueDriver implements
     /** @var array<string, array<int, int>> Queue -> [jobId => availableAt timestamp] */
     private array $delayed = [];
 
-    public function isAvailable(): bool
+    public function isAvailable(): true
     {
         return true;
     }

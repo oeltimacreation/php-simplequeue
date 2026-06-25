@@ -65,7 +65,7 @@ final class QueueManager
      */
     public static function create(
         string $driverName = 'auto',
-        ?ClientInterface $redis = null,
+        #[\SensitiveParameter] ?ClientInterface $redis = null,
         ?JobStorageInterface $storage = null,
         string $redisPrefix = 'simplequeue',
         int $pollIntervalMs = 250
@@ -114,7 +114,7 @@ final class QueueManager
      * @param string $prefix Prefix for Redis keys
      * @return self
      */
-    public static function redis(ClientInterface $redis, string $prefix = 'simplequeue'): self
+    public static function redis(#[\SensitiveParameter] ClientInterface $redis, string $prefix = 'simplequeue'): self
     {
         return new self(new RedisQueueDriver($redis, $prefix));
     }

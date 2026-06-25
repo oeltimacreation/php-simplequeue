@@ -6,6 +6,7 @@ namespace Oeltima\SimpleQueue\Tests\Integration;
 
 use Oeltima\SimpleQueue\Driver\RedisQueueDriver;
 use Oeltima\SimpleQueue\Storage\PdoJobStorage;
+use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Tests\DbHelper;
 use PDO;
 use PHPUnit\Framework\TestCase;
@@ -50,6 +51,58 @@ final class RealServicesTest extends TestCase
         $driver->ack('default', 42);
         $this->assertSame(0, $driver->getProcessingCount('default'));
 
+        $driver->clear('default');
+    }
+
+    public function testRealValkeyDriver(): void
+    {
+        $valkeyHost = getenv('VALKEY_HOST');
+        if (!$valkeyHost) {
+            $this->markTestSkipped('VALKEY_HOST is not set. Skipping real Valkey integration test.');
+        }
+
+        $valkeyPort = getenv('VALKEY_PORT') ?: '6379';
+        $client = new Client([
+            'scheme' => 'tcp',
+            'host' => $valkeyHost,
+            'port' => (int) $valkeyPort,
+        ]);
+
+        try {
+            $client->connect();
+        } catch (\Exception $e) {
+            $this->markTestSkipped('Could not connect to Valkey: ' . $e->getMessage());
+        }
+
+        $driver = new RedisQueueDriver($client, 'integration-test-valkey');
+        $driver->clear('default');
+
+        // Test Enqueue
+        $driver->enqueue('default', 42);
+        $this->assertSame(1, $driver->getPendingCount('default'));
+
+        // Test Dequeue
+        $jobId = $driver->dequeue('default', 0);
+        $this->assertSame(42, $jobId);
+        $this->assertSame(0, $driver->getPendingCount('default'));
+        $this->assertSame(1, $driver->getProcessingCount('default'));
+
+        // Test Ack
+        $driver->ack('default', 42);
+        $this->assertSame(0, $driver->getProcessingCount('default'));
+
+        // Test blocking dequeue (valkey-specific or shared validation)
+        $driver->enqueue('default', 99);
+        $jobId = $driver->dequeue('default', 1);
+        $this->assertSame(99, $jobId);
+        $driver->ack('default', 99);
+
+        // Test Lua promotion/recovery
+        $driver->nack('default', 101, 1);
+        $this->assertSame(1, $driver->getDelayedCount('default'));
+        sleep(2);
+        $this->assertSame(1, $driver->promoteDelayedJobs('default'));
+        $this->assertSame(1, $driver->getPendingCount('default'));
         $driver->clear('default');
     }
 
@@ -106,7 +159,7 @@ final class RealServicesTest extends TestCase
 
         $job = $storage->find($jobId);
         $this->assertNotNull($job);
-        $this->assertSame('pending', $job->status);
+        $this->assertSame(JobStatus::Pending, $job->status);
         $this->assertSame(['foo' => 'bar'], $job->payload);
 
         // Test Claim
@@ -125,7 +178,7 @@ final class RealServicesTest extends TestCase
         $this->assertTrue($storage->markCompleted($claim, ['res' => 'ok']));
 
         $job = $storage->find($jobId);
-        $this->assertSame('completed', $job->status);
+        $this->assertSame(JobStatus::Completed, $job->status);
         $this->assertSame(['res' => 'ok'], $job->result);
 
         $pdo->exec("DROP TABLE IF EXISTS {$tableName}");

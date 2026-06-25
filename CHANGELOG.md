@@ -9,7 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `JobStatus` string-backed enum to represent job statuses.
+- Added first-class Valkey 8.0 support and integration testing.
+
 ### Changed
+
+- Documented minimum Redis 7.0 and Valkey 8.0 requirements and verified compatibility of LMOVE/BLMOVE and Lua maintenance scripts.
+- Re-validated and verified Predis 3 connection parameter handling (`read_write_timeout`) in the poll timeout validation path.
+- Updated test assertions and list/count filters in unit/integration tests to use the `JobStatus` enum.
+- Applied standalone `true` return types to driver `isAvailable` methods.
+- Annotated DB and Redis connection parameters with `#[\SensitiveParameter]` to prevent credential leakage in stack traces.
+- Converted `JobData` and `ClaimedJob` to `final readonly` classes.
+- Wired `JobStatus` enum through `JobData`, `Worker`, and storage filters.
+- **BREAKING**: Bumped minimum supported PHP version to `8.2` (supporting PHP 8.2 through 8.5).
+- Changed library version to `1.4.0`.
+- Locked `phpunit/phpunit` to `^11.0` and dropped support for PHPUnit 10.x.
+- Replaced `squizlabs/php_codesniffer` with `phpcsstandards/php_codesniffer: ^4.0`.
+- Upgraded `phpstan/phpstan` to `^2.2.2`.
+- **BREAKING**: Bumped Predis requirement to `^3.0` and dropped support for Predis 2.x.
+- Adjusted `phpstan.neon` settings for PHPStan 2.x compatibility, including setting `treatPhpDocTypesAsCertain: false`.
+- Verified that the complete build and quality check suite (`composer check`) passes cleanly under the upgraded platform/toolchain floor.
+- Audited the codebase and test suite for compatibility with PHP 8.2 through 8.5, confirming zero deprecation warnings and full compatibility.
+- Updated the CI test matrix to run against PHP 8.2, 8.3, 8.4, and 8.5, and bumped the quality gate PHP version to 8.5.
 
 ### Fixed
 

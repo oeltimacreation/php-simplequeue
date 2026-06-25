@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Tests\Unit;
 
 use Oeltima\SimpleQueue\Contract\ClockInterface;
+use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Storage\PdoJobStorage;
 use PDO;
 use PDOStatement;
@@ -251,7 +252,7 @@ class PdoJobStorageTest extends TestCase
         $this->assertNotNull($claim);
 
         $job = $storage->find($id);
-        $this->assertEquals('running', $job->status);
+        $this->assertSame(JobStatus::Running, $job->status);
         $this->assertEquals('worker-1', $job->lockedBy);
         $this->assertNotNull($job->leaseToken);
 
@@ -289,7 +290,7 @@ class PdoJobStorageTest extends TestCase
         $this->assertEquals('worker-1', $claim->workerId);
         $this->assertNotEmpty($claim->leaseToken);
         $this->assertEquals($claim->leaseToken, $claim->job->leaseToken);
-        $this->assertEquals('running', $claim->job->status);
+        $this->assertSame(JobStatus::Running, $claim->job->status);
 
         $this->assertNull($storage->claimNextAvailable('default', 'worker-2'));
     }
@@ -335,7 +336,7 @@ class PdoJobStorageTest extends TestCase
         $storage->markCompleted($claim, $result);
 
         $job = $storage->find($id);
-        $this->assertEquals('completed', $job->status);
+        $this->assertSame(JobStatus::Completed, $job->status);
         $this->assertEquals($result, $job->result);
     }
 
@@ -367,7 +368,7 @@ class PdoJobStorageTest extends TestCase
         $storage->scheduleRetry($claim, 1, 60, 'Temporary failure');
 
         $job = $storage->find($id);
-        $this->assertEquals('pending', $job->status);
+        $this->assertSame(JobStatus::Pending, $job->status);
         $this->assertEquals(1, $job->attempts);
         $this->assertNull($job->lockedBy);
         $this->assertNotNull($job->availableAt);
@@ -388,7 +389,7 @@ class PdoJobStorageTest extends TestCase
         $this->assertSame(1, $recovered);
 
         $job = $storage->find($id);
-        $this->assertSame('pending', $job->status);
+        $this->assertSame(JobStatus::Pending, $job->status);
         $this->assertSame(1, $job->attempts);
         $this->assertNull($job->lockedBy);
         $this->assertNull($job->leaseToken);
@@ -409,7 +410,7 @@ class PdoJobStorageTest extends TestCase
         $this->assertSame(1, $recovered);
 
         $job = $storage->find($id);
-        $this->assertSame('failed', $job->status);
+        $this->assertSame(JobStatus::Failed, $job->status);
         $this->assertSame('Job timed out / worker crashed (stale recovery)', $job->errorMessage);
         $this->assertNull($job->lockedBy);
         $this->assertNull($job->leaseToken);
@@ -454,7 +455,7 @@ class PdoJobStorageTest extends TestCase
         $this->assertTrue($result);
         $job = $storage->find($id);
         $this->assertNotNull($job);
-        $this->assertEquals('cancelled', $job->status);
+        $this->assertSame(JobStatus::Cancelled, $job->status);
     }
 
     public function testCancelNonPendingJobFails(): void
@@ -471,7 +472,7 @@ class PdoJobStorageTest extends TestCase
         $this->assertFalse($result);
         $job = $storage->find($id);
         $this->assertNotNull($job);
-        $this->assertEquals('running', $job->status);
+        $this->assertSame(JobStatus::Running, $job->status);
     }
 
     public function testCancelNonExistentJobFails(): void

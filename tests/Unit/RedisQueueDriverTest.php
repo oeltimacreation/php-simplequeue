@@ -337,6 +337,30 @@ class RedisQueueDriverTest extends TestCase
         $this->driver->validateTimeout(5);
         $this->assertTrue(true);
     }
+
+    public function testRealPredisTimeoutValidationThrowsOnUnsafe(): void
+    {
+        $redisClient = new \Predis\Client([
+            'read_write_timeout' => 5,
+        ]);
+        $driver = new RedisQueueDriver($redisClient, 'test');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Unsafe timeout configuration');
+
+        $driver->validateTimeout(5);
+    }
+
+    public function testRealPredisTimeoutValidationPassesOnSafe(): void
+    {
+        $redisClient = new \Predis\Client([
+            'read_write_timeout' => 60,
+        ]);
+        $driver = new RedisQueueDriver($redisClient, 'test');
+
+        $driver->validateTimeout(5);
+        $this->assertTrue(true);
+    }
 }
 
 class MockRedisConnection

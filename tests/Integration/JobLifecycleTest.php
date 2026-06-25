@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Tests\Integration;
 
 use Oeltima\SimpleQueue\Contract\JobHandlerInterface;
+use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
 use Oeltima\SimpleQueue\JobDispatcher;
 use Oeltima\SimpleQueue\JobRegistry;
@@ -54,7 +55,7 @@ class JobLifecycleTest extends TestCase
 
         $job = $this->storage->find($jobId);
         $this->assertNotNull($job);
-        $this->assertSame('pending', $job->status);
+        $this->assertSame(JobStatus::Pending, $job->status);
 
         $pending = $this->driver->getPending('default');
         $this->assertContains($jobId, $pending);
@@ -64,7 +65,7 @@ class JobLifecycleTest extends TestCase
 
         $job = $this->storage->find($jobId);
         $this->assertNotNull($job);
-        $this->assertSame('completed', $job->status);
+        $this->assertSame(JobStatus::Completed, $job->status);
         $this->assertSame(['result' => 'success'], $job->result);
 
         $this->assertEmpty($this->driver->getPending('default'));
@@ -92,7 +93,7 @@ class JobLifecycleTest extends TestCase
 
         $job = $this->storage->find($jobId);
         $this->assertNotNull($job);
-        $this->assertSame('completed', $job->status);
+        $this->assertSame(JobStatus::Completed, $job->status);
         $this->assertSame(['processed' => true], $job->result);
     }
 
@@ -134,14 +135,14 @@ class JobLifecycleTest extends TestCase
 
         $job = $this->storage->find($jobId);
         $this->assertNotNull($job);
-        $this->assertSame('pending', $job->status);
+        $this->assertSame(JobStatus::Pending, $job->status);
         $this->assertSame(1, $job->attempts);
 
         $this->worker->processOne();
 
         $job = $this->storage->find($jobId);
         $this->assertNotNull($job);
-        $this->assertSame('completed', $job->status);
+        $this->assertSame(JobStatus::Completed, $job->status);
         $this->assertSame(['retried' => true], $job->result);
         $this->assertSame(2, $handler::$callCount);
     }
@@ -168,7 +169,7 @@ class JobLifecycleTest extends TestCase
 
         foreach ($jobIds as $jobId) {
             $job = $this->storage->find($jobId);
-            $this->assertSame('pending', $job->status);
+            $this->assertSame(JobStatus::Pending, $job->status);
         }
 
         for ($i = 0; $i < 3; $i++) {
@@ -177,7 +178,7 @@ class JobLifecycleTest extends TestCase
 
         foreach ($jobIds as $jobId) {
             $job = $this->storage->find($jobId);
-            $this->assertSame('completed', $job->status);
+            $this->assertSame(JobStatus::Completed, $job->status);
         }
     }
 
@@ -203,7 +204,7 @@ class JobLifecycleTest extends TestCase
         $this->worker->processOne();
 
         $job = $this->storage->find($firstJobId);
-        $this->assertSame('completed', $job->status);
+        $this->assertSame(JobStatus::Completed, $job->status);
 
         $result3 = $this->dispatcher->dispatchIdempotent('test.idempotent', ['key' => 'value2'], 'req-1');
         $this->assertTrue($result3['created']);

@@ -6,6 +6,8 @@ namespace Oeltima\SimpleQueue;
 
 use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\ClaimedJob;
+use Oeltima\SimpleQueue\Contract\JobData;
+use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
@@ -645,7 +647,7 @@ final class Worker
             $this->logger->info('Running DB-Redis reconciliation sweep');
 
             // 1. Get all pending jobs from DB for this queue
-            $dbJobs = $storage->list('pending', $this->queue, 1000);
+            $dbJobs = $storage->list(JobStatus::Pending, $this->queue, 1000);
             if (empty($dbJobs)) {
                 return;
             }
