@@ -11,9 +11,6 @@ final class DbHelper
     /**
      * Create the background_jobs schema on the given PDO connection.
      *
-     * @param PDO $pdo
-     * @param string $tableName
-     * @return void
      */
     public static function createSchema(PDO $pdo, string $tableName = 'background_jobs'): void
     {

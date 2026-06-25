@@ -8,7 +8,6 @@ use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
 use Oeltima\SimpleQueue\Storage\PdoJobStorage;
-use Oeltima\SimpleQueue\SystemClock;
 use PDO;
 use PHPUnit\Framework\TestCase;
 
@@ -58,7 +57,7 @@ final class ConcurrencyTest extends TestCase
 
         $this->dbFile = tempnam(sys_get_temp_dir(), 'sq_test_');
         $pdo = $this->createSqlitePdo($this->dbFile);
-        
+
         $storages = [
             'InMemory' => new InMemoryJobStorage($clock),
             'Pdo' => new PdoJobStorage($pdo, 'background_jobs', $clock)
@@ -136,7 +135,7 @@ final class ConcurrencyTest extends TestCase
             // Attempt 1: claim & crash (stale recovery)
             $claim1 = $storage->claimById($id, 'worker-1');
             $this->assertNotNull($claim1, "$name: claim 1 failed");
-            
+
             $clock->time += 600; // Move forward past TTL
             $recovered = $storage->recoverStaleJobs(300);
             $this->assertSame(1, $recovered, "$name: recover 1 failed");

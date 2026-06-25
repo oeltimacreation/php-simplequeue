@@ -108,8 +108,7 @@ class PdoJobStorageTest extends TestCase
 
         $factory = function () use (&$callCount, &$goodPdo): PDO {
             $callCount++;
-            $goodPdo = $this->createSqlitePdo();
-            return $goodPdo;
+            return $this->createSqlitePdo();
         };
 
         $storage = new PdoJobStorage($factory);
