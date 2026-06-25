@@ -31,6 +31,16 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
     ) {
     }
 
+    /**
+     * Create a new job record.
+     *
+     * @param string $type Job type identifier
+     * @param array<string, mixed> $payload Job payload data
+     * @param string $queue Queue name
+     * @param int $maxAttempts Maximum retry attempts
+     * @param string|null $requestId Optional request correlation ID
+     * @return int The created job ID
+     */
     public function createJob(
         string $type,
         array $payload,
@@ -68,15 +78,25 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
         return $id;
     }
 
+    /**
+     * Batch create multiple job records in a single operation.
+     *
+     * @param array<int, array<string, mixed>> $jobs Array of job definitions
+     * @return int[] Array of created job IDs
+     */
     public function createJobs(array $jobs): array
     {
         $ids = [];
         foreach ($jobs as $job) {
-            $type = $job['type'];
-            $payload = $job['payload'];
-            $queue = $job['queue'] ?? 'default';
-            $maxAttempts = $job['maxAttempts'] ?? 3;
-            $requestId = $job['requestId'] ?? null;
+            $type = is_string($job['type'] ?? null) ? $job['type'] : '';
+            $payloadRaw = $job['payload'] ?? [];
+            /** @var array<string, mixed> $payload */
+            $payload = is_array($payloadRaw) ? $payloadRaw : [];
+            $queue = isset($job['queue']) && is_string($job['queue']) ? $job['queue'] : 'default';
+            $maxAttempts = isset($job['maxAttempts']) && is_numeric($job['maxAttempts'])
+                ? (int) $job['maxAttempts']
+                : 3;
+            $requestId = isset($job['requestId']) && is_string($job['requestId']) ? $job['requestId'] : null;
             $ids[] = $this->createJob($type, $payload, $queue, $maxAttempts, $requestId);
         }
         return $ids;
@@ -144,7 +164,7 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
             return null;
         }
 
-        return $this->claimAvailableJob((int) $candidateId, $workerId, $now);
+        return $this->claimAvailableJob($candidateId, $workerId, $now);
     }
 
     /**
@@ -267,8 +287,12 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
                 continue;
             }
 
-            $nextAttempts = $job['attempts'] + 1;
-            if ($nextAttempts >= $job['max_attempts']) {
+            $attempts = isset($job['attempts']) && is_numeric($job['attempts']) ? (int) $job['attempts'] : 0;
+            $maxAttempts = isset($job['max_attempts']) && is_numeric($job['max_attempts'])
+                ? (int) $job['max_attempts']
+                : 3;
+            $nextAttempts = $attempts + 1;
+            if ($nextAttempts >= $maxAttempts) {
                 $job['status'] = 'failed';
                 $job['error_message'] = 'Job timed out / worker crashed (stale recovery)';
                 $job['completed_at'] = $now;
@@ -288,6 +312,15 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
         return $count;
     }
 
+    /**
+     * Get jobs by status.
+     *
+     * @param JobStatus|null $status Filter by status (null for all)
+     * @param string|null $queue Filter by queue (null for all)
+     * @param int $limit Maximum number of jobs to return
+     * @param int $offset Offset for pagination
+     * @return JobData[]
+     */
     public function list(?JobStatus $status = null, ?string $queue = null, int $limit = 100, int $offset = 0): array
     {
         $filtered = array_filter($this->jobs, function (array $job) use ($status, $queue): bool {

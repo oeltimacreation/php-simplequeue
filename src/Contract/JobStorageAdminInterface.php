@@ -22,7 +22,6 @@ interface JobStorageAdminInterface
      *
      * @param JobStatus|null $status Filter by status (null for all)
      * @param string|null $queue Filter by queue (null for all)
-     * @return int
      */
     public function count(?JobStatus $status = null, ?string $queue = null): int;
 

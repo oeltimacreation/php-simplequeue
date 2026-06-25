@@ -61,17 +61,14 @@ end
 return #staleJobs
 LUA;
 
-    private ClientInterface $redis;
-    private string $prefix;
-
     /**
      * @param ClientInterface $redis Predis client instance
      * @param string $prefix Key prefix for all queue keys
      */
-    public function __construct(#[\SensitiveParameter] ClientInterface $redis, string $prefix = 'simplequeue')
-    {
-        $this->redis = $redis;
-        $this->prefix = $prefix;
+    public function __construct(
+        #[\SensitiveParameter] private ClientInterface $redis,
+        private string $prefix = 'simplequeue'
+    ) {
     }
 
     public function isAvailable(): bool
@@ -95,7 +92,9 @@ LUA;
         try {
             $connection = $this->redis->getConnection();
 
+            // @phpstan-ignore-next-line
             if (method_exists($connection, 'getParameters')) {
+                // @phpstan-ignore-next-line
                 $parameters = $connection->getParameters();
                 if (isset($parameters->read_write_timeout)) {
                     $rwTimeout = $parameters->read_write_timeout;
@@ -144,7 +143,7 @@ LUA;
             );
         }
 
-        if (empty($result)) {
+        if ($result === null || $result === false || $result === '') {
             return null;
         }
 
@@ -204,7 +203,7 @@ LUA;
             (string) $limit
         );
 
-        return (int) $result;
+        return is_int($result) ? $result : (is_numeric($result) ? (int) $result : 0);
     }
 
     /**
@@ -229,7 +228,7 @@ LUA;
             (string) $limit
         );
 
-        return (int) $result;
+        return is_int($result) ? $result : (is_numeric($result) ? (int) $result : 0);
     }
 
     /**
@@ -240,7 +239,7 @@ LUA;
      */
     public function getPendingCount(string $queue): int
     {
-        return (int) $this->redis->llen($this->pendingKey($queue));
+        return $this->redis->llen($this->pendingKey($queue));
     }
 
     /**
@@ -251,7 +250,7 @@ LUA;
      */
     public function getProcessingCount(string $queue): int
     {
-        return (int) $this->redis->llen($this->processingKey($queue));
+        return $this->redis->llen($this->processingKey($queue));
     }
 
     /**
@@ -262,7 +261,7 @@ LUA;
      */
     public function getDelayedCount(string $queue): int
     {
-        return (int) $this->redis->zcard($this->delayedKey($queue));
+        return $this->redis->zcard($this->delayedKey($queue));
     }
 
     /**
@@ -305,7 +304,7 @@ LUA;
     public function getPendingIds(string $queue): array
     {
         $results = $this->redis->lrange($this->pendingKey($queue), 0, -1);
-        return array_map('intval', $results ?: []);
+        return array_map(fn(string $id) => (int) $id, $results);
     }
 
     /**
@@ -317,7 +316,7 @@ LUA;
     public function getDelayedIds(string $queue): array
     {
         $results = $this->redis->zrange($this->delayedKey($queue), 0, -1);
-        return array_map('intval', $results ?: []);
+        return array_map(fn(string $id) => (int) $id, $results);
     }
 
     private function pendingKey(string $queue): string

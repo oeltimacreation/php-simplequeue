@@ -41,7 +41,6 @@ final readonly class JobData
      * Create a JobData instance from an array or object.
      *
      * @param array<string, mixed>|object $data Raw data
-     * @return self
      */
     public static function fromRaw(array|object $data): self
     {
@@ -49,21 +48,8 @@ final readonly class JobData
             $data = (array) $data;
         }
 
-        $payload = $data['payload'] ?? '[]';
-        if (is_string($payload)) {
-            $payload = json_decode($payload, true) ?? [];
-        }
-        if (!is_array($payload)) {
-            $payload = [];
-        }
-
-        $result = $data['result'] ?? null;
-        if (is_string($result) && !empty($result)) {
-            $decoded = json_decode($result, true);
-            if (json_last_error() === JSON_ERROR_NONE) {
-                $result = $decoded;
-            }
-        }
+        $payload = self::parsePayload($data['payload'] ?? '[]');
+        $result = self::parseResult($data['result'] ?? null);
 
         $statusRaw = $data['status'] ?? 'pending';
         $status = $statusRaw instanceof JobStatus ? $statusRaw : JobStatus::from($statusRaw);
@@ -139,5 +125,35 @@ final readonly class JobData
             'created_at' => $this->createdAt,
             'updated_at' => $this->updatedAt,
         ];
+    }
+
+    /**
+     * Parse raw payload into array.
+     *
+     * @param mixed $payload Raw payload
+     * @return array<string, mixed>
+     */
+    private static function parsePayload(mixed $payload): array
+    {
+        if (is_string($payload)) {
+            $payload = json_decode($payload, true) ?? [];
+        }
+        return is_array($payload) ? $payload : [];
+    }
+
+    /**
+     * Parse raw result into mixed structure.
+     *
+     * @param mixed $result Raw result
+     */
+    private static function parseResult(mixed $result): mixed
+    {
+        if (is_string($result) && $result !== '') {
+            $decoded = json_decode($result, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                return $decoded;
+            }
+        }
+        return $result;
     }
 }

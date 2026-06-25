@@ -19,14 +19,11 @@ final class JobRegistry
     /** @var array<string, class-string<JobHandlerInterface>> */
     private array $handlers = [];
 
-    private ?ContainerInterface $container;
-
     /**
      * @param ContainerInterface|null $container Optional PSR-11 container for handler resolution
      */
-    public function __construct(?ContainerInterface $container = null)
+    public function __construct(private ?ContainerInterface $container = null)
     {
-        $this->container = $container;
     }
 
     /**

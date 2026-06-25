@@ -18,7 +18,6 @@ enum JobStatus: string
     /**
      * Check if this is a terminal status.
      *
-     * @return bool
      */
     public function isTerminal(): bool
     {
