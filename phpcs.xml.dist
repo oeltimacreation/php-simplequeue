@@ -1,0 +1,84 @@
+<?xml version="1.0"?>
+<ruleset name="PHP SimpleQueue Coding Standards">
+    <description>PSR-12 with stricter quality rules and Slevomat sniffs</description>
+
+    <arg name="colors"/>
+    <arg name="parallel" value="80"/>
+    <arg name="extensions" value="php"/>
+
+    <file>src</file>
+    <file>tests</file>
+
+    <!-- Base ruleset -->
+    <rule ref="PSR12"/>
+
+    <!-- Exclude rules for tests -->
+    <!-- Tests can define multiple classes/interfaces in a single file for mocks -->
+    <rule ref="PSR1.Classes.ClassDeclaration.MultipleClasses">
+        <exclude-pattern>tests/*</exclude-pattern>
+    </rule>
+    <!-- Tests can have side effects (e.g. bootstrapping, mock definitions) -->
+    <rule ref="PSR1.Files.SideEffects.FoundWithSymbols">
+        <exclude-pattern>tests/*</exclude-pattern>
+    </rule>
+    <!-- Tests can have long lines (assertions, mock calls, SQL strings) -->
+    <rule ref="Generic.Files.LineLength">
+        <exclude-pattern>tests/*</exclude-pattern>
+    </rule>
+
+    <!-- Line length limits -->
+    <rule ref="Generic.Files.LineLength">
+        <properties>
+            <property name="lineLimit" value="120"/>
+            <property name="absoluteLineLimit" value="180"/>
+        </properties>
+    </rule>
+
+    <!-- Code complexity / Nesting limits -->
+    <rule ref="Generic.Metrics.NestingLevel">
+        <properties>
+            <property name="nestingLevel" value="5"/>
+            <property name="absoluteNestingLevel" value="8"/>
+        </properties>
+    </rule>
+    <rule ref="Generic.Metrics.CyclomaticComplexity">
+        <properties>
+            <property name="complexity" value="25"/>
+            <property name="absoluteComplexity" value="35"/>
+        </properties>
+    </rule>
+
+    <!-- Slevomat Coding Standard Sniffs -->
+    <!-- Enforce declare(strict_types=1) -->
+    <rule ref="SlevomatCodingStandard.TypeHints.DeclareStrictTypes">
+        <properties>
+            <property name="spacesCountAroundEqualsSign" value="0"/>
+        </properties>
+    </rule>
+
+    <!-- Enforce Type Hints (exclude tests to avoid overly verbose mock definitions) -->
+    <rule ref="SlevomatCodingStandard.TypeHints.ParameterTypeHint">
+        <exclude-pattern>tests/*</exclude-pattern>
+    </rule>
+    <rule ref="SlevomatCodingStandard.TypeHints.ReturnTypeHint">
+        <exclude-pattern>tests/*</exclude-pattern>
+    </rule>
+    <rule ref="SlevomatCodingStandard.TypeHints.PropertyTypeHint">
+        <exclude-pattern>tests/*</exclude-pattern>
+    </rule>
+
+    <!-- Enforce Constructor Property Promotion -->
+    <rule ref="SlevomatCodingStandard.Classes.RequireConstructorPropertyPromotion"/>
+
+    <!-- Remove unused imports -->
+    <rule ref="SlevomatCodingStandard.Namespaces.UnusedUses"/>
+
+    <!-- Detect dead catch blocks -->
+    <rule ref="SlevomatCodingStandard.Exceptions.DeadCatch"/>
+
+    <!-- Detect useless variables -->
+    <rule ref="SlevomatCodingStandard.Variables.UselessVariable"/>
+
+    <!-- Detect useless ternaries -->
+    <rule ref="SlevomatCodingStandard.ControlStructures.UselessTernaryOperator"/>
+</ruleset>
