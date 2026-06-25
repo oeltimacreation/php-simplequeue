@@ -5,8 +5,8 @@
 ## Project Identity
 
 - **Name**: OeltimaCreation PHP SimpleQueue
-- **Version**: 1.3.0
-- **Language**: PHP 8.1+
+- **Version**: 1.4.0
+- **Language**: PHP 8.2+
 - **Type**: Framework-agnostic background job queue library
 - **License**: MIT
 - **Namespace**: `Oeltima\SimpleQueue`
@@ -17,10 +17,10 @@
 |-----------|------------|
 | Queue Drivers | Redis (Predis), Database (PDO), InMemory |
 | Storage | PDO (MySQL), InMemory |
-| Testing | PHPUnit 10/11 |
-| Static Analysis | PHPStan Level 8 |
-| Code Style | PSR-12 (PHP_CodeSniffer) |
-| CI | GitHub Actions (PHP 8.1, 8.2, 8.3, 8.4) |
+| Testing | PHPUnit 11 |
+| Static Analysis | PHPStan Level 9 (with strict-rules) |
+| Code Style | PHP_CodeSniffer 4.x with Slevomat ruleset |
+| CI | GitHub Actions (PHP 8.2, 8.3, 8.4, 8.5) |
 | PSR Compliance | PSR-3 (Logger), PSR-11 (Container), PSR-4 (Autoloading) |
 
 ## Directory Structure
@@ -79,10 +79,10 @@ composer test
 # Run with HTML coverage report
 composer test-coverage
 
-# Static analysis (PHPStan level 8)
+# Static analysis (PHPStan level 9 + strict-rules)
 composer phpstan
 
-# Code style check (PSR-12)
+# Code style check (PHPCS with Slevomat ruleset)
 composer cs-check
 
 # Auto-fix code style
@@ -329,16 +329,17 @@ Always use `InMemoryJobStorage` and `InMemoryQueueDriver` for unit tests. Reserv
 
 | Package | Purpose |
 |---------|---------|
-| `phpunit/phpunit` ^10.0\|^11.0 | Testing |
-| `phpstan/phpstan` ^1.10 | Static analysis |
-| `squizlabs/php_codesniffer` ^3.7 | Code style (PSR-12) |
+| `phpunit/phpunit` ^11.0 | Testing |
+| `phpstan/phpstan` ^2.2.2 | Static analysis (Level 9 + strict-rules) |
+| `squizlabs/php_codesniffer` ^4.0 | Code style |
+| `slevomat/coding-standard` ^8.29 | Strict coding standard sniffs |
 
 ## Notes for AI Agents
 
 - **Library, not application**: This is a reusable library — no `.env`, no framework bootstrap, no application-specific code
 - **Strict types everywhere**: Every PHP file must use `declare(strict_types=1)`
 - **Final classes**: All concrete classes should be `final` unless explicitly designed for extension
-- **PSR-12**: Follow PSR-12 coding standards strictly
+- **Coding Standards**: Follow PHP_CodeSniffer with Slevomat ruleset strictly
 - **PHPDoc required**: All public methods must have PHPDoc blocks with `@param` and `@return` tags
 - **No framework coupling**: Do not introduce dependencies on any framework (Laravel, Symfony, etc.)
 - **Predis is optional**: Redis-related code must handle `predis/predis` not being installed; PHPStan config ignores Predis errors

@@ -15,9 +15,16 @@ A lightweight, framework-agnostic background job queue system for PHP. Supports 
 
 ## Requirements
 
-- PHP 8.2 or higher
+- PHP 8.2 or higher (fully tested on PHP 8.2 through 8.5)
 - Redis >= 7.0 or Valkey >= 8.0 (optional, for Redis/Valkey driver)
 - PDO (optional, for database driver)
+
+### Platform Compatibility Matrix
+
+| Library Version | PHP Version | Redis Version | Valkey Version | Primary QA Gates |
+| :--- | :--- | :--- | :--- | :--- |
+| **1.4.x** (Current) | PHP 8.2 – 8.5 | Redis >= 7.0 | Valkey >= 8.0 | PHPStan L9 + Strict, PHPCS 4.0 + Slevomat |
+| **1.3.x** | PHP 8.1 – 8.4 | Redis >= 6.2 | N/A | PHPStan L8, PSR-12 |
 
 ## Installation
 

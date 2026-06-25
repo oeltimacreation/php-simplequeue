@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Raised PHPStan to Level 9 and integrated `phpstan-strict-rules`, `phpstan-deprecation-rules`, and `phpstan-phpunit`.
+- Configured PHPStan and PHPCS to analyze the `tests/` directory alongside `src/` to raise the overall test suite quality.
+- Replaced `squizlabs/php_codesniffer` with version 4.x and introduced a custom `phpcs.xml.dist` extending PSR-12 with selected Slevomat sniffs (strict type hints, declare strict types, constructor property promotion, unused uses, dead catch, useless variables/ternaries) and complexity/nesting metrics.
+- Hardened type safety throughout the codebase to satisfy Level 9, including refactoring `JobData::fromRaw()` to reduce cyclomatic complexity, extracting `Worker` option parsing into helper methods, and adding precise array shapes and inline type annotations.
+- Updated composer script configurations for `phpstan`, `cs-check`, and `cs-fix` to use default configuration files.
+
 - Documented minimum Redis 7.0 and Valkey 8.0 requirements and verified compatibility of LMOVE/BLMOVE and Lua maintenance scripts.
 - Re-validated and verified Predis 3 connection parameter handling (`read_write_timeout`) in the poll timeout validation path.
 - Updated test assertions and list/count filters in unit/integration tests to use the `JobStatus` enum.
