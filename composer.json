@@ -31,10 +31,16 @@
         "psr/log": "^2.0|^3.0"
     },
     "require-dev": {
+        "dealerdirect/phpcodesniffer-composer-installer": "^1.2",
+        "phpstan/extension-installer": "^1.4",
+        "phpstan/phpstan": "^2.2.2",
+        "phpstan/phpstan-deprecation-rules": "^2.0",
+        "phpstan/phpstan-phpunit": "^2.0",
+        "phpstan/phpstan-strict-rules": "^2.0",
         "phpunit/phpunit": "^11.0",
         "predis/predis": "^3.0",
-        "phpstan/phpstan": "^2.2.2",
-        "phpcsstandards/php_codesniffer": "^4.0"
+        "slevomat/coding-standard": "^8.29",
+        "squizlabs/php_codesniffer": "^4.0"
     },
     "suggest": {
         "predis/predis": "Required for Redis queue driver (^3.0)",
@@ -54,9 +60,9 @@
     "scripts": {
         "test": "phpunit --no-coverage",
         "test-coverage": "phpunit -c phpunit.coverage.xml.dist --coverage-html coverage",
-        "phpstan": "phpstan analyse src --level=8",
-        "cs-check": "phpcs --standard=PSR12 src",
-        "cs-fix": "phpcbf --standard=PSR12 src",
+        "phpstan": "phpstan analyse",
+        "cs-check": "phpcs",
+        "cs-fix": "phpcbf",
         "check": [
             "@test",
             "@phpstan",
@@ -65,7 +71,11 @@
     },
     "config": {
         "sort-packages": true,
-        "optimize-autoloader": true
+        "optimize-autoloader": true,
+        "allow-plugins": {
+            "dealerdirect/phpcodesniffer-composer-installer": true,
+            "phpstan/extension-installer": true
+        }
     },
     "minimum-stability": "stable",
     "prefer-stable": true
