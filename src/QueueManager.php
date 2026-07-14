@@ -61,7 +61,6 @@ final class QueueManager
      * @param JobStorageInterface|null $storage Job storage for DB fallback
      * @param string $redisPrefix Prefix for Redis keys
      * @param int $pollIntervalMs Polling interval in milliseconds for DB driver
-     * @return self
      */
     public static function create(
         string $driverName = 'auto',
@@ -112,7 +111,6 @@ final class QueueManager
      *
      * @param ClientInterface $redis Redis client
      * @param string $prefix Prefix for Redis keys
-     * @return self
      */
     public static function redis(#[\SensitiveParameter] ClientInterface $redis, string $prefix = 'simplequeue'): self
     {
@@ -124,7 +122,6 @@ final class QueueManager
      *
      * @param JobStorageInterface $storage Job storage implementation
      * @param int $pollIntervalMs Polling interval in milliseconds
-     * @return self
      */
     public static function database(JobStorageInterface $storage, int $pollIntervalMs = 250): self
     {

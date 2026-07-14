@@ -1,9 +1,77 @@
 parameters:
-    level: 8
+    level: 9
     paths:
         - src
-    treatPhpDocTypesAsCertain: false
+        - tests
     reportUnmatchedIgnoredErrors: false
     ignoreErrors:
         # Predis is optional dependency
         - '#Predis\\ClientInterface#'
+        
+        # Ignore dynamic calls to static PHPUnit assertions in tests
+        -
+            message: '#Dynamic call to static method PHPUnit\\Framework\\Assert::#'
+            path: tests
+            
+        # Ignore deprecated PHPUnit methods in tests
+        -
+            message: '#Call to deprecated method isType\(\) of class PHPUnit\\Framework\\Assert#'
+            path: tests
+
+        # Ignore Predis blmove/lmove return type mismatches in RedisQueueDriver
+        -
+            message: '#Strict comparison using === between string and (false|null) will always evaluate to false\.#'
+            path: src/Driver/RedisQueueDriver.php
+        -
+            message: '#Result of \|\| is always false\.#'
+            path: src/Driver/RedisQueueDriver.php
+
+        # Ignore strict level 9 type-hint and mock object warnings in test files
+        -
+            identifier: missingType.parameter
+            path: tests
+        -
+            identifier: missingType.return
+            path: tests
+        -
+            identifier: missingType.iterableValue
+            path: tests
+        -
+            identifier: assign.propertyType
+            path: tests
+        -
+            identifier: property.nonObject
+            path: tests
+        -
+            identifier: offsetAccess.nonOffsetAccessible
+            path: tests
+        -
+            identifier: argument.type
+            path: tests
+        -
+            identifier: method.alreadyNarrowedType
+            path: tests
+        -
+            identifier: function.alreadyNarrowedType
+            path: tests
+        -
+            identifier: closure.unusedUse
+            path: tests
+        -
+            identifier: return.type
+            path: tests
+        -
+            identifier: missingType.property
+            path: tests
+        -
+            identifier: cast.string
+            path: tests
+        -
+            identifier: cast.int
+            path: tests
+        -
+            identifier: booleanNot.exprNotBoolean
+            path: tests
+        -
+            identifier: ternary.shortNotAllowed
+            path: tests

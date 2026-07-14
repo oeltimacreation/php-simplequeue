@@ -99,9 +99,9 @@ final class DatabaseQueueDriverTest extends TestCase
         // Enqueue a job that will be created shortly after we start dequeueing.
         // We simulate this by having usleep/polling.
         // Since we poll every 50ms, we can spawn a job or set it up in the database.
-        // Actually, we can run a test where the job is delayed and then becomes available, 
+        // Actually, we can run a test where the job is delayed and then becomes available,
         // or just verify that the driver loops and uses claimNextAvailable multiple times.
-        
+
         // Let's mock the storage to verify it gets called multiple times.
         $mockStorage = $this->createMock(\Oeltima\SimpleQueue\Contract\JobStorageInterface::class);
         $mockStorage->expects($this->exactly(3))

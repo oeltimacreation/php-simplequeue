@@ -38,7 +38,6 @@ class CrashRecoveryTest extends TestCase
 
         $storageReflection = new \ReflectionClass($this->storage);
         $jobsProp = $storageReflection->getProperty('jobs');
-        $jobsProp->setAccessible(true);
         $jobs = $jobsProp->getValue($this->storage);
         $jobs[$jobId]['locked_at'] = date('Y-m-d H:i:s', time() - 700);
         $jobs[$jobId]['status'] = 'running';
@@ -46,7 +45,6 @@ class CrashRecoveryTest extends TestCase
 
         $driverReflection = new \ReflectionClass($this->driver);
         $prop = $driverReflection->getProperty('processingStartedAt');
-        $prop->setAccessible(true);
         $times = $prop->getValue($this->driver);
         $times['default'][$jobId] = time() - 700;
         $prop->setValue($this->driver, $times);
@@ -56,7 +54,6 @@ class CrashRecoveryTest extends TestCase
     {
         $reflection = new \ReflectionClass($worker);
         $method = $reflection->getMethod('recoverStaleJobs');
-        $method->setAccessible(true);
         $method->invoke($worker);
     }
 

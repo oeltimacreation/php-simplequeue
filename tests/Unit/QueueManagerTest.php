@@ -15,7 +15,7 @@ use PHPUnit\Framework\TestCase;
 
 class UnavailableRedisClient extends MockRedisClient
 {
-    public function __call($commandID, $arguments)
+    public function __call($commandID, $arguments): void
     {
         throw new \RuntimeException('Connection refused');
     }

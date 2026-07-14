@@ -20,7 +20,6 @@ final class DatabaseQueueDriver implements QueueDriverInterface, SupportsWorkerI
 {
     private const ERR_INVALID_JOB_ID = 'jobId must be a positive integer';
 
-    private JobStorageInterface $storage;
     private int $pollIntervalMs;
     private string $workerId;
 
@@ -28,9 +27,8 @@ final class DatabaseQueueDriver implements QueueDriverInterface, SupportsWorkerI
      * @param JobStorageInterface $storage Job storage implementation
      * @param int $pollIntervalMs Polling interval in milliseconds (default: 250ms)
      */
-    public function __construct(JobStorageInterface $storage, int $pollIntervalMs = 250)
+    public function __construct(private JobStorageInterface $storage, int $pollIntervalMs = 250)
     {
-        $this->storage = $storage;
         $this->pollIntervalMs = max(50, $pollIntervalMs);
         $this->workerId = bin2hex(random_bytes(16)); // Default fallback worker ID
     }
@@ -38,7 +36,6 @@ final class DatabaseQueueDriver implements QueueDriverInterface, SupportsWorkerI
     /**
      * Set the worker ID for atomic claim delegation.
      *
-     * @param string $workerId
      */
     public function setWorkerId(string $workerId): void
     {

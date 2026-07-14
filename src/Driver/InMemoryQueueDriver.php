@@ -52,7 +52,7 @@ final class InMemoryQueueDriver implements
 
     public function dequeue(string $queue, int $timeoutSeconds): ?int
     {
-        if (!isset($this->pending[$queue]) || empty($this->pending[$queue])) {
+        if (!isset($this->pending[$queue]) || $this->pending[$queue] === []) {
             return null;
         }
 
@@ -104,7 +104,7 @@ final class InMemoryQueueDriver implements
      */
     public function promoteDelayedJobs(string $queue, int $limit = 100): int
     {
-        if (!isset($this->delayed[$queue]) || empty($this->delayed[$queue])) {
+        if (!isset($this->delayed[$queue]) || $this->delayed[$queue] === []) {
             return 0;
         }
 
@@ -135,7 +135,7 @@ final class InMemoryQueueDriver implements
      */
     public function recoverStaleProcessing(string $queue, int $ttlSeconds, int $limit = 100): int
     {
-        if (!isset($this->processingStartedAt[$queue]) || empty($this->processingStartedAt[$queue])) {
+        if (!isset($this->processingStartedAt[$queue]) || $this->processingStartedAt[$queue] === []) {
             return 0;
         }
 

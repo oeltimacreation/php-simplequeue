@@ -12,20 +12,25 @@ use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
 use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
 use Oeltima\SimpleQueue\Contract\SupportsQueueReconciliation;
-use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
 use Oeltima\SimpleQueue\JobRegistry;
 use Oeltima\SimpleQueue\QueueManager;
 use Oeltima\SimpleQueue\Worker;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 
-interface WorkerTestDelayedQueueDriver extends QueueDriverInterface, SupportsDelayedJobs {}
-interface WorkerTestReconciliationQueueDriver extends QueueDriverInterface, SupportsQueueReconciliation {}
+interface WorkerTestDelayedQueueDriver extends QueueDriverInterface, SupportsDelayedJobs
+{
+}
+interface WorkerTestReconciliationQueueDriver extends QueueDriverInterface, SupportsQueueReconciliation
+{
+}
 
 class WorkerTest extends TestCase
 {
+    /** @var JobStorageInterface&\PHPUnit\Framework\MockObject\MockObject */
     private JobStorageInterface $storage;
     private JobRegistry $registry;
+    /** @var LoggerInterface&\PHPUnit\Framework\MockObject\MockObject */
     private LoggerInterface $logger;
 
     protected function setUp(): void
@@ -200,9 +205,9 @@ class WorkerTest extends TestCase
 
         // Test that recoverStaleProcessing can be called
         $this->assertTrue(method_exists($driverWithRecover, 'recoverStaleProcessing'));
-        
+
         $result = $driverWithRecover->recoverStaleProcessing('default', 300);
-        
+
         $this->assertEquals(2, $result);
         $this->assertTrue($driverWithRecover->recoverCalled);
         $this->assertEquals(300, $driverWithRecover->recoverTtl);
@@ -1078,7 +1083,6 @@ class WorkerTest extends TestCase
         );
 
         $method = new \ReflectionMethod($worker, 'reconcileDbAndRedis');
-        $method->setAccessible(true);
         $method->invoke($worker);
     }
 
@@ -1151,10 +1155,8 @@ class WorkerTest extends TestCase
 
         $ref = new \ReflectionClass($worker);
         $prop = $ref->getProperty('lockFile');
-        $prop->setAccessible(true);
         $lockFile = $prop->getValue($worker);
 
         $this->assertEquals('/tmp/simplequeue-worker-customqueue-name.lock', $lockFile);
     }
 }
-

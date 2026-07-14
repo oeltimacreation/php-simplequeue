@@ -11,17 +11,17 @@ use Predis\Command\CommandInterface;
 
 /**
  * Mock Redis client for testing.
- * 
+ *
  * Predis uses magic __call for Redis commands, so we need a concrete mock.
  */
 class MockRedisClient implements ClientInterface
 {
     /** @var array<string, mixed> */
     public array $calls = [];
-    
+
     /** @var array<string, mixed> */
     public array $returns = [];
-    
+
     public ?MockRedisPipeline $pipeline = null;
 
     public function getCommandFactory()
@@ -109,7 +109,7 @@ class RedisQueueDriverTest extends TestCase
         $jobId = $this->driver->dequeue('default', 0);
 
         $this->assertEquals(123, $jobId);
-        
+
         $callMethods = array_column($this->redis->calls, 'method');
         $this->assertContains('lmove', $callMethods, 'Should use non-blocking lmove');
         $this->assertNotContains('blmove', $callMethods, 'Should not use blocking blmove');
@@ -123,7 +123,7 @@ class RedisQueueDriverTest extends TestCase
         $jobId = $this->driver->dequeue('default', 5);
 
         $this->assertEquals(456, $jobId);
-        
+
         $callMethods = array_column($this->redis->calls, 'method');
         $this->assertContains('blmove', $callMethods, 'Should use blocking blmove');
         $this->assertNotContains('lmove', $callMethods, 'Should not use non-blocking lmove');
@@ -232,7 +232,7 @@ class RedisQueueDriverTest extends TestCase
 
         $delCall = array_filter($this->redis->calls, fn($c) => $c['method'] === 'del');
         $this->assertCount(1, $delCall);
-        
+
         $delCall = reset($delCall);
         $keys = $delCall['args'][0];
         $this->assertCount(4, $keys);
@@ -365,11 +365,8 @@ class RedisQueueDriverTest extends TestCase
 
 class MockRedisConnection
 {
-    public $parameters;
-
-    public function __construct($parameters = null)
+    public function __construct(public $parameters = null)
     {
-        $this->parameters = $parameters;
     }
 
     public function getParameters()
@@ -380,10 +377,7 @@ class MockRedisConnection
 
 class MockRedisParameters
 {
-    public $read_write_timeout;
-
-    public function __construct($read_write_timeout)
+    public function __construct(public $read_write_timeout)
     {
-        $this->read_write_timeout = $read_write_timeout;
     }
 }

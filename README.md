@@ -15,9 +15,16 @@ A lightweight, framework-agnostic background job queue system for PHP. Supports 
 
 ## Requirements
 
-- PHP 8.2 or higher
+- PHP 8.2 or higher (fully tested on PHP 8.2 through 8.5)
 - Redis >= 7.0 or Valkey >= 8.0 (optional, for Redis/Valkey driver)
 - PDO (optional, for database driver)
+
+### Platform Compatibility Matrix
+
+| Library Version | PHP Version | Redis Version | Valkey Version | Primary QA Gates |
+| :--- | :--- | :--- | :--- | :--- |
+| **1.4.x** (Current) | PHP 8.2 – 8.5 | Redis >= 7.0 | Valkey >= 8.0 | PHPStan L9 + Strict, PHPCS 4.0 + Slevomat |
+| **1.3.x** | PHP 8.1 – 8.4 | Redis >= 6.2 | N/A | PHPStan L8, PSR-12 |
 
 ## Installation
 
@@ -515,13 +522,68 @@ If you have written custom job storage backends, you must implement the new leas
 |----------|------|-------------|
 | `id` | int | Job ID |
 | `type` | string | Job type identifier |
-| `status` | string | pending, running, completed, failed, cancelled |
+| `status` | JobStatus | Job status enum (pending, running, completed, failed, cancelled) |
 | `payload` | array | Job data |
 | `progress` | ?int | Progress percentage (0-100) |
 | `progressMessage` | ?string | Progress status message |
 | `result` | mixed | Job result (when completed) |
 | `errorMessage` | ?string | Error message (when failed) |
 | `attempts` | int | Number of attempts made |
+
+## Migration from v1.3.x to v1.4.0
+
+v1.4.0 is a platform and toolchain modernization release:
+
+### 1. PHP Version Requirement
+
+**BREAKING**: The minimum PHP version is now **8.2**. PHP 8.1 is no longer supported.
+
+### 2. Predis Version Requirement
+
+**BREAKING**: The Predis requirement has been bumped to **^3.0**. Predis 2.x is no longer supported.
+
+### 3. JobStatus Enum
+
+Job statuses are now represented by the `Oeltima\SimpleQueue\Contract\JobStatus` backed enum instead of raw strings. If you compare statuses directly, update your code:
+
+```php
+use Oeltima\SimpleQueue\Contract\JobStatus;
+
+// Before (v1.3.x)
+if ($job->status === 'completed') { ... }
+
+// After (v1.4.0)
+if ($job->status === JobStatus::Completed) { ... }
+```
+
+### 4. Dev Toolchain Updates (for contributors)
+
+- PHPUnit locked to `^11.0` (PHPUnit 10 dropped)
+- PHPStan upgraded to `^2.2.2` at level 9 with strict-rules
+- PHPCS migrated from `squizlabs/php_codesniffer` to `phpcsstandards/php_codesniffer ^4.0` with Slevomat coding standard
+
+---
+
+## Development Toolchain
+
+| Tool | Version | Purpose |
+|------|---------|--------|
+| PHPUnit | ^11.0 | Testing framework |
+| PHPStan | ^2.2.2 (Level 9 + strict-rules) | Static analysis |
+| PHPCS | phpcsstandards/php_codesniffer ^4.0 | Code style (PSR-12 + Slevomat) |
+| Predis | ^3.0 (dev) | Redis/Valkey integration testing |
+
+```bash
+# Run all quality checks
+composer check
+
+# Individual commands
+composer test          # PHPUnit (no coverage)
+composer phpstan       # PHPStan level 9 + strict-rules
+composer cs-check      # PHPCS with custom ruleset
+composer cs-fix        # Auto-fix code style
+composer test-coverage # PHPUnit with HTML coverage report
+```
 
 ## Contributing
 

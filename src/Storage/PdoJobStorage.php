@@ -30,7 +30,6 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
     /** @var callable(): PDO|null Factory function to create PDO connection */
     protected $connectionFactory = null;
 
-    protected string $table;
     protected string $dateFormat = 'Y-m-d H:i:s';
 
     /**
@@ -40,7 +39,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
      */
     public function __construct(
         #[\SensitiveParameter] PDO|callable $connection,
-        string $table = 'background_jobs',
+        protected string $table = 'background_jobs',
         private readonly ?ClockInterface $clock = null
     ) {
         if ($connection instanceof PDO) {
@@ -48,7 +47,6 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         } else {
             $this->connectionFactory = $connection;
         }
-        $this->table = $table;
     }
 
     /**
@@ -161,6 +159,16 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         return $pdo;
     }
 
+    /**
+     * Create a new job record.
+     *
+     * @param string $type Job type identifier
+     * @param array<string, mixed> $payload Job payload data
+     * @param string $queue Queue name
+     * @param int $maxAttempts Maximum retry attempts
+     * @param string|null $requestId Optional request correlation ID
+     * @return int The created job ID
+     */
     public function createJob(
         string $type,
         array $payload,
@@ -203,16 +211,23 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         );
     }
 
+    /**
+     * Batch create multiple job records in a single operation.
+     *
+     * @param array<int, array<string, mixed>> $jobs Array of job definitions
+     * @return int[] Array of created job IDs
+     */
     public function createJobs(array $jobs): array
     {
-        if (empty($jobs)) {
+        if ($jobs === []) {
             return [];
         }
 
         $now = $this->now();
 
         return $this->withReconnect(function (PDO $pdo) use ($jobs, $now): array {
-            $driver = (string) $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driverAttr = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = is_string($driverAttr) ? $driverAttr : '';
 
             $columns = [
                 'queue', 'type', 'status', 'payload', 'attempts', 'max_attempts',
@@ -276,10 +291,11 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         $stmt = $this->execute($sql, ['id' => $id]);
 
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        if ($row === false) {
+        if ($row === false || !is_array($row)) {
             return null;
         }
 
+        /** @var array<string, mixed> $row */
         return JobData::fromRaw($row);
     }
 
@@ -293,10 +309,11 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         $stmt = $this->execute($sql, ['request_id' => $requestId]);
 
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        if ($row === false) {
+        if ($row === false || !is_array($row)) {
             return null;
         }
 
+        /** @var array<string, mixed> $row */
         return JobData::fromRaw($row);
     }
 
@@ -313,7 +330,8 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         $leaseToken = $this->generateLeaseToken();
 
         return $this->withReconnect(function (PDO $pdo) use ($queue, $workerId, $leaseToken, $now): ?ClaimedJob {
-            $driver = (string) $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driverAttr = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = is_string($driverAttr) ? $driverAttr : '';
 
             if ($driver === 'pgsql') {
                 return $this->claimNextAvailableWithReturning($pdo, $queue, $workerId, $leaseToken, $now);
@@ -336,7 +354,8 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         $leaseToken = $this->generateLeaseToken();
 
         return $this->withReconnect(function (PDO $pdo) use ($id, $workerId, $leaseToken, $now): ?ClaimedJob {
-            $driver = (string) $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driverAttr = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = is_string($driverAttr) ? $driverAttr : '';
 
             if ($driver === 'pgsql') {
                 return $this->claimByIdWithReturning($pdo, $id, $workerId, $leaseToken, $now);
@@ -619,7 +638,10 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
 
         $jobs = [];
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-            $jobs[] = JobData::fromRaw($row);
+            if (is_array($row)) {
+                /** @var array<string, mixed> $row */
+                $jobs[] = JobData::fromRaw($row);
+            }
         }
 
         return $jobs;
@@ -630,7 +652,6 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
      *
      * @param JobStatus|null $status Filter by status (null for all)
      * @param string|null $queue Filter by queue (null for all)
-     * @return int
      */
     public function count(?JobStatus $status = null, ?string $queue = null): int
     {
@@ -650,7 +671,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         $stmt = $this->execute($sql, $params);
 
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        return (int) ($row['cnt'] ?? 0);
+        return is_array($row) && isset($row['cnt']) && is_numeric($row['cnt']) ? (int) $row['cnt'] : 0;
     }
 
     /**
@@ -847,7 +868,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
             $select->execute($selectParams);
 
             $row = $select->fetch(PDO::FETCH_ASSOC);
-            if ($row === false || empty($row['id'])) {
+            if (!is_array($row)) {
                 if ($driver === 'sqlite') {
                     $pdo->exec('COMMIT');
                 } else {
@@ -856,7 +877,16 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
                 return null;
             }
 
-            $id = (int) $row['id'];
+            $rowId = $row['id'] ?? 0;
+            $id = is_int($rowId) ? $rowId : (is_numeric($rowId) ? (int) $rowId : 0);
+            if ($id === 0) {
+                if ($driver === 'sqlite') {
+                    $pdo->exec('COMMIT');
+                } else {
+                    $pdo->commit();
+                }
+                return null;
+            }
             $updateSql = "UPDATE {$this->table}
                 SET status = 'running',
                     locked_by = :worker_id,
@@ -925,10 +955,11 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
     private function claimFromStatement(PDOStatement $stmt, string $workerId, string $leaseToken): ?ClaimedJob
     {
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        if ($row === false) {
+        if (!is_array($row)) {
             return null;
         }
 
+        /** @var array<string, mixed> $row */
         return new ClaimedJob(JobData::fromRaw($row), $workerId, $leaseToken);
     }
 

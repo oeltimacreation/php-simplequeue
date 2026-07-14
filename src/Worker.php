@@ -6,7 +6,6 @@ namespace Oeltima\SimpleQueue;
 
 use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\ClaimedJob;
-use Oeltima\SimpleQueue\Contract\JobData;
 use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
@@ -38,7 +37,8 @@ final class Worker
     private LoggerInterface $logger;
     private string $workerId;
     private bool $shouldRun = true;
-    private mixed $lockHandle = null;
+    /** @var resource|null */
+    private $lockHandle = null;
     private ?string $lockFile;
 
     private int $pollTimeout;
@@ -87,23 +87,26 @@ final class Worker
         }
 
         // Configuration options
-        $this->lockFile = array_key_exists('lock_file', $options)
-            ? $options['lock_file']
-            : sprintf('/tmp/simplequeue-worker-%s.lock', preg_replace('/[^a-zA-Z0-9_-]/', '', $queue));
-        $this->pollTimeout = (int) ($options['poll_timeout'] ?? self::DEFAULT_POLL_TIMEOUT);
-        $this->stuckJobTtl = (int) ($options['stuck_job_ttl'] ?? self::DEFAULT_STUCK_JOB_TTL);
-        $this->retryBaseDelay = (int) ($options['retry_base_delay'] ?? 2);
-        $this->retryMaxDelay = (int) ($options['retry_max_delay'] ?? 300);
+        $lockFileOpt = $options['lock_file'] ?? null;
+        if (array_key_exists('lock_file', $options)) {
+            $this->lockFile = is_string($lockFileOpt) ? $lockFileOpt : null;
+        } else {
+            $this->lockFile = sprintf('/tmp/simplequeue-worker-%s.lock', preg_replace('/[^a-zA-Z0-9_-]/', '', $queue));
+        }
+        $this->pollTimeout = $this->getOptionInt($options, 'poll_timeout', self::DEFAULT_POLL_TIMEOUT);
+        $this->stuckJobTtl = $this->getOptionInt($options, 'stuck_job_ttl', self::DEFAULT_STUCK_JOB_TTL);
+        $this->retryBaseDelay = $this->getOptionInt($options, 'retry_base_delay', 2);
+        $this->retryMaxDelay = $this->getOptionInt($options, 'retry_max_delay', 300);
         $clock = $options['clock'] ?? null;
         $this->clock = $clock instanceof ClockInterface ? $clock : new SystemClock();
 
-        $this->maxJobs = (int) ($options['max_jobs'] ?? 0);
-        $this->maxTime = (int) ($options['max_time'] ?? 0);
-        $this->memoryLimit = (int) ($options['memory_limit'] ?? 0);
-        $this->stopWhenEmpty = (bool) ($options['stop_when_empty'] ?? false);
+        $this->maxJobs = $this->getOptionInt($options, 'max_jobs', 0);
+        $this->maxTime = $this->getOptionInt($options, 'max_time', 0);
+        $this->memoryLimit = $this->getOptionInt($options, 'memory_limit', 0);
+        $this->stopWhenEmpty = $this->getOptionBool($options, 'stop_when_empty', false);
 
-        $this->promoteInterval = (float) ($options['promote_interval'] ?? 5.0);
-        $this->recoveryInterval = (float) ($options['recovery_interval'] ?? 60.0);
+        $this->promoteInterval = $this->getOptionFloat($options, 'promote_interval', 5.0);
+        $this->recoveryInterval = $this->getOptionFloat($options, 'recovery_interval', 60.0);
 
         if ($driver instanceof SupportsTimeoutValidation) {
             $driver->validateTimeout($this->pollTimeout);
@@ -648,7 +651,7 @@ final class Worker
 
             // 1. Get all pending jobs from DB for this queue
             $dbJobs = $storage->list(JobStatus::Pending, $this->queue, 1000);
-            if (empty($dbJobs)) {
+            if ($dbJobs === []) {
                 return;
             }
 
@@ -661,7 +664,8 @@ final class Worker
 
             foreach ($dbJobs as $job) {
                 $jobId = $job->id;
-                $availableAt = strtotime($job->availableAt ?? 'now') ?: time();
+                $availTimestamp = strtotime($job->availableAt ?? 'now');
+                $availableAt = $availTimestamp === false ? time() : $availTimestamp;
 
                 if ($availableAt <= $now) {
                     // Immediate job: should be in Redis pending list or delayed ZSET (awaiting promotion)
@@ -706,10 +710,11 @@ final class Worker
             return true;
         }
 
-        $this->lockHandle = fopen($this->lockFile, 'c');
-        if ($this->lockHandle === false) {
+        $handle = fopen($this->lockFile, 'c');
+        if ($handle === false) {
             return false;
         }
+        $this->lockHandle = $handle;
 
         if (!flock($this->lockHandle, LOCK_EX | LOCK_NB)) {
             fclose($this->lockHandle);
@@ -758,7 +763,8 @@ final class Worker
 
     private function generateWorkerId(): string
     {
-        $hostname = gethostname() ?: 'unknown';
+        $host = gethostname();
+        $hostname = $host === false ? 'unknown' : $host;
         return sprintf('%s:%d', $hostname, getmypid());
     }
 
@@ -769,5 +775,35 @@ final class Worker
             return substr($trace, 0, $maxLength) . "\n... [truncated]";
         }
         return $trace;
+    }
+
+    /**
+     * Helper to retrieve integer values from options array.
+     *
+     * @param array<string, mixed> $options
+     */
+    private function getOptionInt(array $options, string $key, int $default): int
+    {
+        return isset($options[$key]) && is_scalar($options[$key]) ? (int) $options[$key] : $default;
+    }
+
+    /**
+     * Helper to retrieve float values from options array.
+     *
+     * @param array<string, mixed> $options
+     */
+    private function getOptionFloat(array $options, string $key, float $default): float
+    {
+        return isset($options[$key]) && is_scalar($options[$key]) ? (float) $options[$key] : $default;
+    }
+
+    /**
+     * Helper to retrieve boolean values from options array.
+     *
+     * @param array<string, mixed> $options
+     */
+    private function getOptionBool(array $options, string $key, bool $default): bool
+    {
+        return isset($options[$key]) && is_scalar($options[$key]) ? (bool) $options[$key] : $default;
     }
 }

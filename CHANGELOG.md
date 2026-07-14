@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.0] - 2026-07-14
 
 ### Added
 
@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added first-class Valkey 8.0 support and integration testing.
 
 ### Changed
+
+- Raised PHPStan to Level 9 and integrated `phpstan-strict-rules`, `phpstan-deprecation-rules`, and `phpstan-phpunit`.
+- Configured PHPStan and PHPCS to analyze the `tests/` directory alongside `src/` to raise the overall test suite quality.
+- Replaced `squizlabs/php_codesniffer` with version 4.x and introduced a custom `phpcs.xml.dist` extending PSR-12 with selected Slevomat sniffs (strict type hints, declare strict types, constructor property promotion, unused uses, dead catch, useless variables/ternaries) and complexity/nesting metrics.
+- Hardened type safety throughout the codebase to satisfy Level 9, including refactoring `JobData::fromRaw()` to reduce cyclomatic complexity, extracting `Worker` option parsing into helper methods, and adding precise array shapes and inline type annotations.
+- Updated composer script configurations for `phpstan`, `cs-check`, and `cs-fix` to use default configuration files.
 
 - Documented minimum Redis 7.0 and Valkey 8.0 requirements and verified compatibility of LMOVE/BLMOVE and Lua maintenance scripts.
 - Re-validated and verified Predis 3 connection parameter handling (`read_write_timeout`) in the poll timeout validation path.
@@ -31,8 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Verified that the complete build and quality check suite (`composer check`) passes cleanly under the upgraded platform/toolchain floor.
 - Audited the codebase and test suite for compatibility with PHP 8.2 through 8.5, confirming zero deprecation warnings and full compatibility.
 - Updated the CI test matrix to run against PHP 8.2, 8.3, 8.4, and 8.5, and bumped the quality gate PHP version to 8.5.
-
-### Fixed
+- Added Valkey 8 as a CI service container alongside Redis 7, with integration tests gated on `VALKEY_HOST`/`VALKEY_PORT` environment variables.
 
 ## [1.3.0] - 2026-06-14
 
