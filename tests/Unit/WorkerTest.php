@@ -1083,7 +1083,6 @@ class WorkerTest extends TestCase
         );
 
         $method = new \ReflectionMethod($worker, 'reconcileDbAndRedis');
-        $method->setAccessible(true);
         $method->invoke($worker);
     }
 
@@ -1156,7 +1155,6 @@ class WorkerTest extends TestCase
 
         $ref = new \ReflectionClass($worker);
         $prop = $ref->getProperty('lockFile');
-        $prop->setAccessible(true);
         $lockFile = $prop->getValue($worker);
 
         $this->assertEquals('/tmp/simplequeue-worker-customqueue-name.lock', $lockFile);
