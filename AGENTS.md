@@ -321,7 +321,7 @@ Always use `InMemoryJobStorage` and `InMemoryQueueDriver` for unit tests. Reserv
 
 | Package | Purpose |
 |---------|---------|
-| `predis/predis` ^2.0\|^3.0 | Redis queue driver |
+| `predis/predis` ^3.0 | Redis queue driver |
 | `ext-pdo` | Database job storage |
 | `ext-pcntl` | Graceful worker shutdown on Unix |
 
@@ -331,7 +331,7 @@ Always use `InMemoryJobStorage` and `InMemoryQueueDriver` for unit tests. Reserv
 |---------|---------|
 | `phpunit/phpunit` ^11.0 | Testing |
 | `phpstan/phpstan` ^2.2.2 | Static analysis (Level 9 + strict-rules) |
-| `squizlabs/php_codesniffer` ^4.0 | Code style |
+| `phpcsstandards/php_codesniffer` ^4.0 | Code style |
 | `slevomat/coding-standard` ^8.29 | Strict coding standard sniffs |
 
 ## Notes for AI Agents

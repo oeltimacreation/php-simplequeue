@@ -20,6 +20,15 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      valkey:
+        image: valkey/valkey:8
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
       mysql:
         image: mysql:8.0
         env:
@@ -78,6 +87,8 @@ jobs:
           DB_DSN: mysql:host=127.0.0.1;port=3306;dbname=test_simplequeue
           DB_USER: root
           DB_PASSWORD: ''
+          VALKEY_HOST: 127.0.0.1
+          VALKEY_PORT: 6380
 
   quality:
     runs-on: ubuntu-latest

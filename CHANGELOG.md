@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.0] - 2026-07-14
 
 ### Added
 
@@ -37,8 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Verified that the complete build and quality check suite (`composer check`) passes cleanly under the upgraded platform/toolchain floor.
 - Audited the codebase and test suite for compatibility with PHP 8.2 through 8.5, confirming zero deprecation warnings and full compatibility.
 - Updated the CI test matrix to run against PHP 8.2, 8.3, 8.4, and 8.5, and bumped the quality gate PHP version to 8.5.
-
-### Fixed
+- Added Valkey 8 as a CI service container alongside Redis 7, with integration tests gated on `VALKEY_HOST`/`VALKEY_PORT` environment variables.
 
 ## [1.3.0] - 2026-06-14
 
