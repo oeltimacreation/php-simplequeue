@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-07-16
+
 ### Added
 
 - Added optional `SupportsJobRemoval` for idempotent removal of pending, delayed, and processing queue notifications.
@@ -31,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Cancellation now removes a job notification from built-in Redis and in-memory drivers. A cancelled job that was already in Redis may safely be cancelled again to retry cleanup; the method still returns `false` for the repeated storage transition.
 - For cross-process idempotency with `PdoJobStorage`, retain the documented conditional/generated active-request-ID unique index from `examples/database-schema.sql`.
+- Redis processing timestamps are eventually repaired after a blocking dequeue crash; configure `stuck_job_ttl` and progress reports for long-running handlers as described in `docs/operations.md`.
+- `QueueReconciler` callers must persist `ReconcileResult::$nextCursor` between cron invocations. Its bounded Redis `LPOS` check may produce duplicate notifications, so handlers remain required to be idempotent.
 
 ## [1.4.0] - 2026-07-14
 

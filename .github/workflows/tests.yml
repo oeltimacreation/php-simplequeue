@@ -1,115 +1,108 @@
-name: Tests
+name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [master, 'release/**']
+    tags: ['v*']
   pull_request:
-    branches: [master]
+    branches: [master, 'release/**']
+
+permissions:
+  contents: read
 
 jobs:
-  tests:
+  compatibility:
+    name: PHP ${{ matrix.php }} / ${{ matrix.service }}
     runs-on: ubuntu-latest
-
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.3', '8.4', '8.5']
+        service: [redis, valkey]
     services:
       redis:
         image: redis:7
-        ports:
-          - 6379:6379
+        ports: ['6379:6379']
         options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+          --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
       valkey:
         image: valkey/valkey:8
-        ports:
-          - 6380:6379
+        ports: ['6380:6379']
         options: >-
-          --health-cmd "valkey-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+          --health-cmd "valkey-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
       mysql:
         image: mysql:8.0
         env:
           MYSQL_ALLOW_EMPTY_PASSWORD: yes
           MYSQL_DATABASE: test_simplequeue
-        ports:
-          - 3306:3306
+        ports: ['3306:3306']
         options: >-
-          --health-cmd="mysqladmin ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+          --health-cmd="mysqladmin ping" --health-interval 10s --health-timeout 5s --health-retries 5
       postgres:
         image: postgres:15
         env:
           POSTGRES_DB: test_simplequeue
           POSTGRES_HOST_AUTH_METHOD: trust
-        ports:
-          - 5432:5432
+        ports: ['5432:5432']
         options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    strategy:
-      matrix:
-        php: ['8.2', '8.3', '8.4', '8.5']
-
-    name: PHP ${{ matrix.php }}
-
+          --health-cmd "pg_isready" --health-interval 10s --health-timeout 5s --health-retries 5
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: shivammathur/setup-php@add91f08e1598a0b6ff470f1e389f9d652559bf0
         with:
           php-version: ${{ matrix.php }}
-          extensions: pdo, pdo_sqlite, pdo_mysql, pdo_pgsql, redis
+          extensions: pdo, pdo_sqlite, pdo_mysql, pdo_pgsql
           coverage: none
-
-      - name: Install dependencies
-        run: composer install --no-interaction --prefer-dist --no-progress
-
-      - name: Run tests
-        run: vendor/bin/phpunit --no-coverage
+      - run: composer install --no-interaction --prefer-dist --no-progress
+      - run: composer test
         env:
           REDIS_HOST: 127.0.0.1
-          REDIS_PORT: 6379
+          REDIS_PORT: ${{ matrix.service == 'redis' && '6379' || '6380' }}
+          VALKEY_HOST: 127.0.0.1
+          VALKEY_PORT: 6380
           MYSQL_DSN: mysql:host=127.0.0.1;port=3306;dbname=test_simplequeue
           MYSQL_USER: root
           MYSQL_PASSWORD: ''
           POSTGRES_DSN: pgsql:host=127.0.0.1;port=5432;dbname=test_simplequeue
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ''
-          DB_DSN: mysql:host=127.0.0.1;port=3306;dbname=test_simplequeue
-          DB_USER: root
-          DB_PASSWORD: ''
-          VALKEY_HOST: 127.0.0.1
-          VALKEY_PORT: 6380
 
   quality:
     runs-on: ubuntu-latest
-
-    name: Quality gates
-
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: shivammathur/setup-php@add91f08e1598a0b6ff470f1e389f9d652559bf0
         with:
           php-version: '8.5'
-          extensions: pdo, pdo_sqlite, pdo_mysql, pdo_pgsql, redis
+          extensions: pdo, pdo_sqlite, pcov
+          coverage: pcov
+      - run: composer validate --strict
+      - run: composer install --no-interaction --prefer-dist --no-progress
+      - run: composer audit
+      - run: composer check
+      - run: composer test-coverage
+      - run: php scripts/check-coverage.php coverage/clover.xml 70
+      - run: find examples -name '*.php' -print0 | xargs -0 -n1 php -l
+
+  lowest-dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: shivammathur/setup-php@add91f08e1598a0b6ff470f1e389f9d652559bf0
+        with:
+          php-version: '8.2'
+          extensions: pdo, pdo_sqlite
           coverage: none
+      - run: composer update --prefer-lowest --prefer-stable --no-interaction --prefer-dist
+      - run: composer test
 
-      - name: Install dependencies
-        run: composer install --no-interaction --prefer-dist --no-progress
-
-      - name: Run PHPStan
-        run: composer phpstan
-
-      - name: Run PHPCS
-        run: composer cs-check
+  database-only-consumer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: shivammathur/setup-php@add91f08e1598a0b6ff470f1e389f9d652559bf0
+        with:
+          php-version: '8.2'
+          coverage: none
+      - run: composer install --no-dev --no-interaction --prefer-dist --no-progress
+      - run: php examples/basic-usage.php

@@ -585,6 +585,19 @@ if ($job->status === JobStatus::Completed) { ... }
 
 ---
 
+## Migration from v1.4.x to v1.5.0
+
+v1.5.0 is a reliability release with no required offline schema migration.
+
+- Keep the active-request-ID unique index from the provided schema for concurrent `dispatchIdempotent()` calls.
+- Cancelled jobs are now terminal, pruneable records and built-in drivers remove their notifications after the durable storage transition.
+- Invalid payload/result JSON and invalid worker settings now fail explicitly. Use `WorkerOptions` for validated configuration while retaining array options for compatibility.
+- Use `QueueReconciler` for standalone repair and persist its returned cursor. Redis visibility repair is eventual after a blocking dequeue crash; long-running handlers should report progress at least every half TTL.
+
+Known limitations remain intentional: delivery is at least once, bounded Redis pending checks can create duplicate notifications, and blocking dequeue cannot make list movement and timestamping fully atomic.
+
+---
+
 ## Development Toolchain
 
 | Tool | Version | Purpose |

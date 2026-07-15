@@ -49,3 +49,13 @@ The v1.4 lease migration must be applied before using lease-based custom
 storage implementations. Preserve existing Redis keys and add new keys only
 with an upgrade-safe rollout. Validate configuration and run the compatibility
 smoke test after deploying a new library version.
+
+## v1.5 release checklist
+
+Run `composer validate --strict`, `composer audit`, `composer check`, and the
+coverage command from a clean checkout. CI also resolves lowest supported
+dependencies and tests PHP 8.2–8.5 against Redis 7, Valkey 8, MySQL 8,
+PostgreSQL 15, and SQLite. Install smoke tests should include database-only
+usage without Predis and existing v1.4 schema/key deployments.
+The initial v1.5 line-coverage floor is 70%; raise it as focused coverage is
+added rather than lowering it for unrelated changes.
