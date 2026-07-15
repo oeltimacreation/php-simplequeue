@@ -14,6 +14,7 @@ use Oeltima\SimpleQueue\Contract\IdempotentJobResult;
 use Oeltima\SimpleQueue\Contract\SupportsIdempotentJobCreation;
 use Oeltima\SimpleQueue\Contract\SupportsPendingJobCursor;
 use Oeltima\SimpleQueue\Contract\SupportsQueueScopedStaleRecovery;
+use Oeltima\SimpleQueue\Exception\SerializationException;
 use Oeltima\SimpleQueue\SystemClock;
 
 /**
@@ -65,7 +66,7 @@ class InMemoryJobStorage implements
             'queue' => $queue,
             'type' => $type,
             'status' => 'pending',
-            'payload' => json_encode($payload),
+            'payload' => $this->encodeJson($payload, 'job payload'),
             'attempts' => 0,
             'max_attempts' => $maxAttempts,
             'available_at' => $now,
@@ -215,7 +216,7 @@ class InMemoryJobStorage implements
         $now = $this->now();
         $id = $claim->job->id;
         $this->jobs[$id]['status'] = 'completed';
-        $this->jobs[$id]['result'] = $result === null ? null : json_encode($result);
+        $this->jobs[$id]['result'] = $result === null ? null : $this->encodeJson($result, 'job result');
         $this->jobs[$id]['completed_at'] = $now;
         $this->jobs[$id]['locked_by'] = null;
         $this->jobs[$id]['locked_at'] = null;
@@ -277,7 +278,7 @@ class InMemoryJobStorage implements
         }
 
         $now = $this->now();
-        $availableAt = gmdate($this->dateFormat, (int) strtotime($now) + $delaySeconds);
+        $availableAt = gmdate($this->dateFormat, $this->clock->timestamp() + $delaySeconds);
         $id = $claim->job->id;
 
         $this->jobs[$id]['status'] = 'pending';
@@ -309,7 +310,7 @@ class InMemoryJobStorage implements
     public function recoverStaleJobs(int $ttlSeconds): int
     {
         $now = $this->now();
-        $staleThreshold = gmdate($this->dateFormat, (int) strtotime($now) - $ttlSeconds);
+        $staleThreshold = gmdate($this->dateFormat, $this->clock->timestamp() - $ttlSeconds);
         $count = 0;
 
         foreach ($this->jobs as &$job) {
@@ -506,6 +507,15 @@ class InMemoryJobStorage implements
     private function now(): string
     {
         return $this->clock->now();
+    }
+
+    private function encodeJson(mixed $value, string $context): string
+    {
+        try {
+            return json_encode($value, JSON_THROW_ON_ERROR);
+        } catch (\JsonException $exception) {
+            throw new SerializationException(sprintf('Unable to encode %s as JSON', $context), 0, $exception);
+        }
     }
 
     private function claimAvailableJob(int $id, string $workerId, string $now): ?ClaimedJob

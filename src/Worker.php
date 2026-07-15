@@ -15,6 +15,7 @@ use Oeltima\SimpleQueue\Contract\SupportsWorkerId;
 use Oeltima\SimpleQueue\Contract\SupportsTimeoutValidation;
 use Oeltima\SimpleQueue\Contract\SupportsClaimedDequeue;
 use Oeltima\SimpleQueue\Exception\HandlerNotFoundException;
+use Oeltima\SimpleQueue\Exception\SerializationException;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
@@ -29,9 +30,6 @@ final class Worker
     public const EXIT_SUCCESS = 0;
     public const EXIT_ERROR = 1;
     public const EXIT_LOCK_UNAVAILABLE = 2;
-
-    private const DEFAULT_POLL_TIMEOUT = 5;
-    private const DEFAULT_STUCK_JOB_TTL = 600; // 10 minutes
 
     private LoggerInterface $logger;
     private string $workerId;
@@ -86,35 +84,57 @@ final class Worker
             $driver->setWorkerId($this->workerId);
         }
 
-        // Configuration options
-        $lockFileOpt = $options['lock_file'] ?? null;
+        $workerOptions = WorkerOptions::fromArray($options);
+        $lockFileOpt = $workerOptions->lockFile;
         if (array_key_exists('lock_file', $options)) {
             $this->lockFile = is_string($lockFileOpt) ? $lockFileOpt : null;
         } else {
             $this->lockFile = sprintf('/tmp/simplequeue-worker-%s.lock', preg_replace('/[^a-zA-Z0-9_-]/', '', $queue));
         }
-        $this->pollTimeout = $this->getOptionInt($options, 'poll_timeout', self::DEFAULT_POLL_TIMEOUT);
-        $this->stuckJobTtl = $this->getOptionInt($options, 'stuck_job_ttl', self::DEFAULT_STUCK_JOB_TTL);
-        $this->retryBaseDelay = $this->getOptionInt($options, 'retry_base_delay', 2);
-        $this->retryMaxDelay = $this->getOptionInt($options, 'retry_max_delay', 300);
-        $clock = $options['clock'] ?? null;
-        $this->clock = $clock instanceof ClockInterface ? $clock : new SystemClock();
-
-        $this->maxJobs = $this->getOptionInt($options, 'max_jobs', 0);
-        $this->maxTime = $this->getOptionInt($options, 'max_time', 0);
-        $this->memoryLimit = $this->getOptionInt($options, 'memory_limit', 0);
-        $this->stopWhenEmpty = $this->getOptionBool($options, 'stop_when_empty', false);
-
-        $this->promoteInterval = $this->getOptionFloat($options, 'promote_interval', 5.0);
-        $this->recoveryInterval = $this->getOptionFloat($options, 'recovery_interval', 60.0);
+        $this->pollTimeout = $workerOptions->pollTimeout;
+        $this->stuckJobTtl = $workerOptions->stuckJobTtl;
+        $this->retryBaseDelay = $workerOptions->retryBaseDelay;
+        $this->retryMaxDelay = $workerOptions->retryMaxDelay;
+        $this->clock = $workerOptions->clock ?? new SystemClock();
+        $this->maxJobs = $workerOptions->maxJobs;
+        $this->maxTime = $workerOptions->maxTime;
+        $this->memoryLimit = $workerOptions->memoryLimit;
+        $this->stopWhenEmpty = $workerOptions->stopWhenEmpty;
+        $this->promoteInterval = $workerOptions->promoteInterval;
+        $this->recoveryInterval = $workerOptions->recoveryInterval;
 
         if ($driver instanceof SupportsTimeoutValidation) {
             $driver->validateTimeout($this->pollTimeout);
         }
 
-        if (isset($options['event_listener']) && is_callable($options['event_listener'])) {
-            $this->eventListener = $options['event_listener'];
+        if (is_callable($workerOptions->eventListener)) {
+            $this->eventListener = $workerOptions->eventListener;
         }
+    }
+
+    public static function withOptions(
+        JobStorageInterface $storage,
+        QueueManager $queueManager,
+        JobRegistry $registry,
+        WorkerOptions $options,
+        ?LoggerInterface $logger = null,
+        string $queue = 'default'
+    ): self {
+        return new self($storage, $queueManager, $registry, $logger, $queue, [
+            'lock_file' => $options->lockFile,
+            'poll_timeout' => $options->pollTimeout,
+            'stuck_job_ttl' => $options->stuckJobTtl,
+            'retry_base_delay' => $options->retryBaseDelay,
+            'retry_max_delay' => $options->retryMaxDelay,
+            'clock' => $options->clock,
+            'max_jobs' => $options->maxJobs,
+            'max_time' => $options->maxTime,
+            'memory_limit' => $options->memoryLimit,
+            'stop_when_empty' => $options->stopWhenEmpty,
+            'promote_interval' => $options->promoteInterval,
+            'recovery_interval' => $options->recoveryInterval,
+            'event_listener' => $options->eventListener,
+        ]);
     }
 
     /**
@@ -501,6 +521,15 @@ final class Worker
                     'error' => $e->getMessage(),
                 ]);
             }
+        } catch (SerializationException $e) {
+            $durationMs = ($this->clock->monotonic() - $startTime) * 1000.0;
+            $this->storage->markFailed($claim, $e->getMessage(), $this->truncateTrace($e));
+            $driver->ack($this->queue, $job->id);
+            $this->logger->error('Job result serialization failed after handler completion', [
+                'job_id' => $job->id,
+                'duration_ms' => $durationMs,
+                'error' => $e->getMessage(),
+            ]);
         } catch (\Throwable $e) {
             $durationMs = ($this->clock->monotonic() - $startTime) * 1000.0;
             $this->handleJobFailure($claim, $e, $driver, $durationMs);
@@ -766,35 +795,5 @@ final class Worker
             return substr($trace, 0, $maxLength) . "\n... [truncated]";
         }
         return $trace;
-    }
-
-    /**
-     * Helper to retrieve integer values from options array.
-     *
-     * @param array<string, mixed> $options
-     */
-    private function getOptionInt(array $options, string $key, int $default): int
-    {
-        return isset($options[$key]) && is_scalar($options[$key]) ? (int) $options[$key] : $default;
-    }
-
-    /**
-     * Helper to retrieve float values from options array.
-     *
-     * @param array<string, mixed> $options
-     */
-    private function getOptionFloat(array $options, string $key, float $default): float
-    {
-        return isset($options[$key]) && is_scalar($options[$key]) ? (float) $options[$key] : $default;
-    }
-
-    /**
-     * Helper to retrieve boolean values from options array.
-     *
-     * @param array<string, mixed> $options
-     */
-    private function getOptionBool(array $options, string $key, bool $default): bool
-    {
-        return isset($options[$key]) && is_scalar($options[$key]) ? (bool) $options[$key] : $default;
     }
 }

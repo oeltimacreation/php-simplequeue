@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue\Contract;
 
+use Oeltima\SimpleQueue\Exception\SerializationException;
+
 /**
  * Value object representing job data.
  *
@@ -136,9 +138,23 @@ final readonly class JobData
     private static function parsePayload(mixed $payload): array
     {
         if (is_string($payload)) {
-            $payload = json_decode($payload, true) ?? [];
+            try {
+                $payload = json_decode($payload, true, 512, JSON_THROW_ON_ERROR);
+            } catch (\JsonException $exception) {
+                throw new SerializationException('Stored job payload contains invalid JSON', 0, $exception);
+            }
         }
-        return is_array($payload) ? $payload : [];
+        if (!is_array($payload)) {
+            throw new SerializationException('Stored job payload must decode to an object');
+        }
+        $normalized = [];
+        foreach ($payload as $key => $value) {
+            if (!is_string($key)) {
+                throw new SerializationException('Stored job payload must decode to an object');
+            }
+            $normalized[$key] = $value;
+        }
+        return $normalized;
     }
 
     /**
@@ -149,9 +165,10 @@ final readonly class JobData
     private static function parseResult(mixed $result): mixed
     {
         if (is_string($result) && $result !== '') {
-            $decoded = json_decode($result, true);
-            if (json_last_error() === JSON_ERROR_NONE) {
-                return $decoded;
+            try {
+                return json_decode($result, true, 512, JSON_THROW_ON_ERROR);
+            } catch (\JsonException $exception) {
+                throw new SerializationException('Stored job result contains invalid JSON', 0, $exception);
             }
         }
         return $result;

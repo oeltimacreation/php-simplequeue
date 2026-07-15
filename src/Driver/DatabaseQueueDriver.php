@@ -9,6 +9,8 @@ use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Contract\SupportsWorkerId;
 use Oeltima\SimpleQueue\Contract\SupportsClaimedDequeue;
 use Oeltima\SimpleQueue\Contract\ClaimedJob;
+use Oeltima\SimpleQueue\Contract\ClockInterface;
+use Oeltima\SimpleQueue\SystemClock;
 
 /**
  * Database polling queue driver.
@@ -29,8 +31,11 @@ final class DatabaseQueueDriver implements QueueDriverInterface, SupportsWorkerI
      * @param JobStorageInterface $storage Job storage implementation
      * @param int $pollIntervalMs Polling interval in milliseconds (default: 250ms)
      */
-    public function __construct(private JobStorageInterface $storage, int $pollIntervalMs = 250)
-    {
+    public function __construct(
+        private JobStorageInterface $storage,
+        int $pollIntervalMs = 250,
+        private readonly ClockInterface $clock = new SystemClock()
+    ) {
         $this->pollIntervalMs = max(50, $pollIntervalMs);
         $this->workerId = bin2hex(random_bytes(16)); // Default fallback worker ID
     }
@@ -64,7 +69,7 @@ final class DatabaseQueueDriver implements QueueDriverInterface, SupportsWorkerI
 
     public function dequeueClaimed(string $queue, int $timeoutSeconds): ?ClaimedJob
     {
-        $deadline = time() + max(0, $timeoutSeconds);
+        $deadline = $this->clock->timestamp() + max(0, $timeoutSeconds);
 
         do {
             $claim = $this->storage->claimNextAvailable($queue, $this->workerId);
@@ -72,7 +77,7 @@ final class DatabaseQueueDriver implements QueueDriverInterface, SupportsWorkerI
                 return $claim;
             }
 
-            if (time() >= $deadline) {
+            if ($this->clock->timestamp() >= $deadline) {
                 return null;
             }
 

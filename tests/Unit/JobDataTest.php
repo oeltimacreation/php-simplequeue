@@ -5,30 +5,29 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Tests\Unit;
 
 use Oeltima\SimpleQueue\Contract\JobData;
+use Oeltima\SimpleQueue\Exception\SerializationException;
 use PHPUnit\Framework\TestCase;
 
 class JobDataTest extends TestCase
 {
-    public function testFromRawFallsBackToEmptyPayloadWhenJsonDecodesToScalar(): void
+    public function testFromRawRejectsPayloadJsonThatDecodesToScalar(): void
     {
-        $job = JobData::fromRaw([
+        $this->expectException(SerializationException::class);
+        JobData::fromRaw([
             'id' => 1,
             'type' => 'test.job',
             'payload' => '"not-an-array"',
         ]);
-
-        $this->assertSame([], $job->payload);
     }
 
-    public function testFromRawFallsBackToEmptyPayloadWhenPayloadIsScalar(): void
+    public function testFromRawRejectsScalarPayload(): void
     {
-        $job = JobData::fromRaw([
+        $this->expectException(SerializationException::class);
+        JobData::fromRaw([
             'id' => 1,
             'type' => 'test.job',
             'payload' => 123,
         ]);
-
-        $this->assertSame([], $job->payload);
     }
 
     public function testFromRawMapsLeaseToken(): void

@@ -14,6 +14,7 @@ use Oeltima\SimpleQueue\Contract\IdempotentJobResult;
 use Oeltima\SimpleQueue\Contract\SupportsIdempotentJobCreation;
 use Oeltima\SimpleQueue\Contract\SupportsPendingJobCursor;
 use Oeltima\SimpleQueue\Contract\SupportsQueueScopedStaleRecovery;
+use Oeltima\SimpleQueue\Exception\SerializationException;
 use Oeltima\SimpleQueue\SystemClock;
 use PDO;
 use PDOException;
@@ -207,7 +208,7 @@ class PdoJobStorage implements
                 $stmt->execute([
                     'queue' => $queue,
                     'type' => $type,
-                    'payload' => json_encode($payload),
+                    'payload' => $this->encodeJson($payload, 'job payload'),
                     'max_attempts' => $maxAttempts,
                     'available_at' => $now,
                     'request_id' => $requestId,
@@ -250,7 +251,7 @@ class PdoJobStorage implements
                 $placeholders[] = "(?, ?, 'pending', ?, 0, ?, ?, ?, ?, ?)";
                 $params[] = $job['queue'] ?? 'default';
                 $params[] = $job['type'];
-                $params[] = json_encode($job['payload']);
+                $params[] = $this->encodeJson($job['payload'], 'job payload');
                 $params[] = $job['maxAttempts'] ?? 3;
                 $params[] = $now;
                 $params[] = $job['requestId'] ?? null;
@@ -442,7 +443,7 @@ class PdoJobStorage implements
         $stmt = $this->execute($sql, [
             'id' => $claim->job->id,
             'lease_token' => $claim->leaseToken,
-            'result' => $result === null ? null : json_encode($result),
+            'result' => $result === null ? null : $this->encodeJson($result, 'job result'),
             'completed_at' => $now,
             'updated_at' => $now,
         ]);
@@ -531,7 +532,7 @@ class PdoJobStorage implements
             throw new \InvalidArgumentException('Attempts must be positive and retry delay must not be negative');
         }
         $now = $this->now();
-        $availableAt = gmdate($this->dateFormat, (int) strtotime($now) + $delaySeconds);
+        $availableAt = gmdate($this->dateFormat, $this->clock()->timestamp() + $delaySeconds);
 
         $sql = "UPDATE {$this->table}
             SET status = 'pending',
@@ -596,7 +597,7 @@ class PdoJobStorage implements
     public function recoverStaleJobs(int $ttlSeconds): int
     {
         $now = $this->now();
-        $staleThreshold = gmdate($this->dateFormat, (int) strtotime($now) - $ttlSeconds);
+        $staleThreshold = gmdate($this->dateFormat, $this->clock()->timestamp() - $ttlSeconds);
 
         // Fail poison jobs that have reached max attempts
         $sqlFailed = "UPDATE {$this->table}
@@ -859,6 +860,15 @@ class PdoJobStorage implements
     private function clock(): ClockInterface
     {
         return $this->clock ?? new SystemClock();
+    }
+
+    private function encodeJson(mixed $value, string $context): string
+    {
+        try {
+            return json_encode($value, JSON_THROW_ON_ERROR);
+        } catch (\JsonException $exception) {
+            throw new SerializationException(sprintf('Unable to encode %s as JSON', $context), 0, $exception);
+        }
     }
 
     private function claimNextAvailableWithReturning(

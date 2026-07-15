@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added optional `SupportsProcessingHeartbeat` so queue drivers can refresh processing visibility after a fenced storage progress update.
 - Added `QueueReconciler`, `ReconcileOptions`, and `ReconcileResult` for standalone, cursor-owned bounded repair batches.
 - Added optional cursor scan, bounded queue membership, claimed dequeue, and queue-scoped stale-recovery capabilities.
+- Added validated `WorkerOptions` and `Worker::withOptions()` while preserving array-based worker configuration.
 
 ### Changed
 
@@ -24,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Progress reports refresh supported queue-driver visibility timestamps only after the storage lease update succeeds; driver heartbeat errors are reported without failing the handler.
 - Workers now use bounded cursor reconciliation and retain their cursor in-process. Redis pending membership is bounded with `LPOS`; a bounded false negative may create a harmless duplicate notification under at-least-once delivery.
 - Database polling returns its original storage claim to the worker, eliminating the second claim transaction and lease token on the normal path.
+- Payload and result JSON encoding/decoding now fails explicitly with a contextual queue exception instead of silently replacing invalid data. A result serialization failure after handler success is terminal and acknowledged rather than retried.
 
 ### Migration notes
 

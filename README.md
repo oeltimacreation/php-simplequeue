@@ -286,8 +286,10 @@ $queueManager = QueueManager::create(
 ### Worker Options
 
 Options are read when `Worker` is constructed. Numeric strings are accepted for
-backwards compatibility with environment configuration. Values are not
-currently range-validated; use the safe ranges below.
+backwards compatibility with environment configuration. Invalid TTLs, negative
+limits, and a retry maximum below its base delay are rejected before the worker
+starts. `WorkerOptions` and `Worker::withOptions()` provide a validated
+object-based alternative without changing the existing constructor.
 
 | Option | Type | Default | Unit / allowed values | Description |
 |--------|------|---------|-----------------------|-------------|
