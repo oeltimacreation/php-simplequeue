@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-07-16
+
+### Fixed
+
+- Republished the v1.5 reliability release under a new immutable version after the v1.5.0 upstream tag reference changed. Library APIs and runtime behavior are unchanged from the merged v1.5.0 release.
+- Restored the required `Quality gates` CI check name for protected-branch status enforcement.
+
 ## [1.5.0] - 2026-07-16
 
 ### Added
