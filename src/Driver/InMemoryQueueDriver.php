@@ -10,6 +10,11 @@ use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
 use Oeltima\SimpleQueue\Contract\SupportsBatchEnqueue;
 use Oeltima\SimpleQueue\Contract\SupportsQueueReconciliation;
 use Oeltima\SimpleQueue\Contract\QueueStatsInterface;
+use Oeltima\SimpleQueue\Contract\SupportsJobRemoval;
+use Oeltima\SimpleQueue\Contract\SupportsProcessingHeartbeat;
+use Oeltima\SimpleQueue\Contract\SupportsBoundedQueueMembership;
+use Oeltima\SimpleQueue\Contract\ClockInterface;
+use Oeltima\SimpleQueue\SystemClock;
 
 /**
  * In-memory queue driver for testing purposes.
@@ -23,7 +28,10 @@ final class InMemoryQueueDriver implements
     SupportsStaleRecovery,
     SupportsBatchEnqueue,
     SupportsQueueReconciliation,
-    QueueStatsInterface
+    QueueStatsInterface,
+    SupportsJobRemoval,
+    SupportsProcessingHeartbeat,
+    SupportsBoundedQueueMembership
 {
     /** @var array<string, int[]> */
     private array $pending = [];
@@ -37,6 +45,10 @@ final class InMemoryQueueDriver implements
     /** @var array<string, array<int, int>> Queue -> [jobId => availableAt timestamp] */
     private array $delayed = [];
 
+    public function __construct(private readonly ClockInterface $clock = new SystemClock())
+    {
+    }
+
     public function isAvailable(): true
     {
         return true;
@@ -44,6 +56,7 @@ final class InMemoryQueueDriver implements
 
     public function enqueue(string $queue, int $jobId): void
     {
+        $this->validateJobId($jobId);
         if (!isset($this->pending[$queue])) {
             $this->pending[$queue] = [];
         }
@@ -52,6 +65,9 @@ final class InMemoryQueueDriver implements
 
     public function dequeue(string $queue, int $timeoutSeconds): ?int
     {
+        if ($timeoutSeconds < 0) {
+            throw new \InvalidArgumentException('Dequeue timeout must not be negative');
+        }
         if (!isset($this->pending[$queue]) || $this->pending[$queue] === []) {
             return null;
         }
@@ -63,13 +79,14 @@ final class InMemoryQueueDriver implements
         }
         $this->processing[$queue][] = $jobId;
 
-        $this->processingStartedAt[$queue][$jobId] = time();
+        $this->processingStartedAt[$queue][$jobId] = $this->clock->timestamp();
 
         return $jobId;
     }
 
     public function ack(string $queue, int $jobId): void
     {
+        $this->validateJobId($jobId);
         if (!isset($this->processing[$queue])) {
             return;
         }
@@ -83,14 +100,53 @@ final class InMemoryQueueDriver implements
         unset($this->processingStartedAt[$queue][$jobId]);
     }
 
+    public function remove(string $queue, int $jobId): void
+    {
+        $this->validateJobId($jobId);
+        $this->pending[$queue] = array_values(array_filter(
+            $this->pending[$queue] ?? [],
+            static fn (int $id): bool => $id !== $jobId
+        ));
+        $this->processing[$queue] = array_values(array_filter(
+            $this->processing[$queue] ?? [],
+            static fn (int $id): bool => $id !== $jobId
+        ));
+        unset($this->delayed[$queue][$jobId], $this->processingStartedAt[$queue][$jobId]);
+    }
+
+    public function heartbeatProcessing(string $queue, int $jobId): void
+    {
+        $this->validateJobId($jobId);
+        if (in_array($jobId, $this->processing[$queue] ?? [], true)) {
+            $this->processingStartedAt[$queue][$jobId] = $this->clock->timestamp();
+        }
+    }
+
+    public function hasPendingJob(string $queue, int $jobId, int $maxElements): bool
+    {
+        if ($maxElements < 1) {
+            throw new \InvalidArgumentException('Membership scan limit must be positive');
+        }
+        return in_array($jobId, array_slice($this->pending[$queue] ?? [], 0, $maxElements), true);
+    }
+
+    public function hasDelayedJob(string $queue, int $jobId): bool
+    {
+        return isset($this->delayed[$queue][$jobId]);
+    }
+
     public function nack(string $queue, int $jobId, int $delaySeconds = 0): void
     {
+        $this->validateJobId($jobId);
+        if ($delaySeconds < 0) {
+            throw new \InvalidArgumentException('Retry delay must not be negative');
+        }
         $this->ack($queue, $jobId);
         if ($delaySeconds > 0) {
             if (!isset($this->delayed[$queue])) {
                 $this->delayed[$queue] = [];
             }
-            $this->delayed[$queue][$jobId] = time() + $delaySeconds;
+            $this->delayed[$queue][$jobId] = $this->clock->timestamp() + $delaySeconds;
         } else {
             $this->enqueue($queue, $jobId);
         }
@@ -108,7 +164,7 @@ final class InMemoryQueueDriver implements
             return 0;
         }
 
-        $now = time();
+        $now = $this->clock->timestamp();
         $promoted = 0;
 
         foreach ($this->delayed[$queue] as $jobId => $availableAt) {
@@ -135,11 +191,14 @@ final class InMemoryQueueDriver implements
      */
     public function recoverStaleProcessing(string $queue, int $ttlSeconds, int $limit = 100): int
     {
+        if ($ttlSeconds < 1 || $limit < 1) {
+            throw new \InvalidArgumentException('Stale recovery TTL and limit must be positive');
+        }
         if (!isset($this->processingStartedAt[$queue]) || $this->processingStartedAt[$queue] === []) {
             return 0;
         }
 
-        $staleThreshold = time() - $ttlSeconds;
+        $staleThreshold = $this->clock->timestamp() - $ttlSeconds;
         $recovered = 0;
 
         foreach ($this->processingStartedAt[$queue] as $jobId => $startedAt) {
@@ -227,6 +286,13 @@ final class InMemoryQueueDriver implements
         $this->processing = [];
         $this->processingStartedAt = [];
         $this->delayed = [];
+    }
+
+    private function validateJobId(int $jobId): void
+    {
+        if ($jobId < 1) {
+            throw new \InvalidArgumentException('Job ID must be a positive integer');
+        }
     }
 
     /**

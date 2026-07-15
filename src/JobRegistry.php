@@ -63,7 +63,8 @@ final class JobRegistry
      *
      * @param string $type Job type identifier
      * @return JobHandlerInterface Handler instance
-     * @throws \RuntimeException If no handler is registered for the type
+     * @throws HandlerNotFoundException If no handler is registered for the type
+     * @throws \Throwable If the configured PSR-11 container cannot resolve the handler
      */
     public function get(string $type): JobHandlerInterface
     {

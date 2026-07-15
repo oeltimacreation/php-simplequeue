@@ -85,8 +85,8 @@ echo "\nJob results:\n";
 $job1 = $dispatcher->getStatus($jobId1);
 $job2 = $dispatcher->getStatus($jobId2);
 
-echo "Job #$jobId1: {$job1->status}\n";
-echo "Job #$jobId2: {$job2->status}\n";
+echo "Job #$jobId1: {$job1->status->value}\n";
+echo "Job #$jobId2: {$job2->status->value}\n";
 
 if ($job1->result) {
     echo "Job #$jobId1 result: " . json_encode($job1->result) . "\n";

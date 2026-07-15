@@ -10,6 +10,11 @@ use Oeltima\SimpleQueue\Contract\JobData;
 use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Contract\JobStorageAdminInterface;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
+use Oeltima\SimpleQueue\Contract\IdempotentJobResult;
+use Oeltima\SimpleQueue\Contract\SupportsIdempotentJobCreation;
+use Oeltima\SimpleQueue\Contract\SupportsPendingJobCursor;
+use Oeltima\SimpleQueue\Contract\SupportsQueueScopedStaleRecovery;
+use Oeltima\SimpleQueue\Exception\SerializationException;
 use Oeltima\SimpleQueue\SystemClock;
 
 /**
@@ -18,7 +23,12 @@ use Oeltima\SimpleQueue\SystemClock;
  * This storage keeps all jobs in memory and is useful for unit testing.
  * All data is lost when the process terminates.
  */
-class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterface
+class InMemoryJobStorage implements
+    JobStorageInterface,
+    JobStorageAdminInterface,
+    SupportsIdempotentJobCreation,
+    SupportsPendingJobCursor,
+    SupportsQueueScopedStaleRecovery
 {
     /** @var array<int, array<string, mixed>> */
     private array $jobs = [];
@@ -56,7 +66,7 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
             'queue' => $queue,
             'type' => $type,
             'status' => 'pending',
-            'payload' => json_encode($payload),
+            'payload' => $this->encodeJson($payload, 'job payload'),
             'attempts' => 0,
             'max_attempts' => $maxAttempts,
             'available_at' => $now,
@@ -126,6 +136,24 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
     }
 
     /**
+     * @param array<string, mixed> $payload Job payload
+     */
+    public function createIdempotentJob(
+        string $type,
+        array $payload,
+        string $requestId,
+        string $queue,
+        int $maxAttempts
+    ): IdempotentJobResult {
+        $existing = $this->findActiveByRequestId($requestId);
+        if ($existing !== null) {
+            return new IdempotentJobResult($existing->id, false);
+        }
+
+        return new IdempotentJobResult($this->createJob($type, $payload, $queue, $maxAttempts, $requestId), true);
+    }
+
+    /**
      * Atomically claim the next available job in a queue.
      *
      * @param string $queue Queue name
@@ -188,7 +216,7 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
         $now = $this->now();
         $id = $claim->job->id;
         $this->jobs[$id]['status'] = 'completed';
-        $this->jobs[$id]['result'] = $result === null ? null : json_encode($result);
+        $this->jobs[$id]['result'] = $result === null ? null : $this->encodeJson($result, 'job result');
         $this->jobs[$id]['completed_at'] = $now;
         $this->jobs[$id]['locked_by'] = null;
         $this->jobs[$id]['locked_at'] = null;
@@ -220,6 +248,9 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
 
     public function updateProgress(ClaimedJob $claim, ?int $progress = null, ?string $message = null): bool
     {
+        if ($progress !== null && ($progress < 0 || $progress > 100)) {
+            throw new \InvalidArgumentException('Progress must be null or an integer between 0 and 100');
+        }
         if (!$this->ownsClaim($claim)) {
             return false;
         }
@@ -239,12 +270,15 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
         int $delaySeconds,
         ?string $errorMessage = null
     ): bool {
+        if ($attempts < 1 || $delaySeconds < 0) {
+            throw new \InvalidArgumentException('Attempts must be positive and retry delay must not be negative');
+        }
         if (!$this->ownsClaim($claim)) {
             return false;
         }
 
         $now = $this->now();
-        $availableAt = gmdate($this->dateFormat, (int) strtotime($now) + $delaySeconds);
+        $availableAt = gmdate($this->dateFormat, $this->clock->timestamp() + $delaySeconds);
         $id = $claim->job->id;
 
         $this->jobs[$id]['status'] = 'pending';
@@ -276,7 +310,7 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
     public function recoverStaleJobs(int $ttlSeconds): int
     {
         $now = $this->now();
-        $staleThreshold = gmdate($this->dateFormat, (int) strtotime($now) - $ttlSeconds);
+        $staleThreshold = gmdate($this->dateFormat, $this->clock->timestamp() - $ttlSeconds);
         $count = 0;
 
         foreach ($this->jobs as &$job) {
@@ -312,6 +346,37 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
         return $count;
     }
 
+    public function recoverStaleJobsForQueue(string $queue, int $ttlSeconds, int $limit): int
+    {
+        if ($ttlSeconds < 1 || $limit < 1) {
+            throw new \InvalidArgumentException('Stale recovery TTL and limit must be positive');
+        }
+        $now = $this->now();
+        $threshold = gmdate($this->dateFormat, $this->clock->timestamp() - $ttlSeconds);
+        $recovered = 0;
+        foreach ($this->jobs as &$job) {
+            if (
+                $recovered === $limit
+                || $job['queue'] !== $queue
+                || $job['status'] !== 'running'
+                || $job['locked_at'] >= $threshold
+            ) {
+                continue;
+            }
+            $job['status'] = 'pending';
+            $attempts = isset($job['attempts']) && is_numeric($job['attempts']) ? (int) $job['attempts'] : 0;
+            $job['attempts'] = $attempts + 1;
+            $job['available_at'] = $now;
+            $job['locked_by'] = null;
+            $job['locked_at'] = null;
+            $job['lease_token'] = null;
+            $job['updated_at'] = $now;
+            $recovered++;
+        }
+        unset($job);
+        return $recovered;
+    }
+
     /**
      * Get jobs by status.
      *
@@ -337,6 +402,27 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
         $filtered = array_slice($filtered, $offset, $limit, true);
 
         return array_values(array_map(fn($job) => JobData::fromRaw($job), $filtered));
+    }
+
+    /**
+     * @return list<JobData>
+     */
+    public function scanPending(string $queue, ?int $afterId, int $limit): array
+    {
+        if ($limit < 1) {
+            throw new \InvalidArgumentException('Scan limit must be positive');
+        }
+        $jobs = [];
+        foreach ($this->jobs as $id => $job) {
+            if ($job['status'] !== 'pending' || $job['queue'] !== $queue || ($afterId !== null && $id <= $afterId)) {
+                continue;
+            }
+            $jobs[] = JobData::fromRaw($job);
+            if (count($jobs) === $limit) {
+                break;
+            }
+        }
+        return $jobs;
     }
 
     public function count(?JobStatus $status = null, ?string $queue = null): int
@@ -409,6 +495,10 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
 
         $now = $this->now();
         $this->jobs[$id]['status'] = 'cancelled';
+        $this->jobs[$id]['completed_at'] = $now;
+        $this->jobs[$id]['locked_by'] = null;
+        $this->jobs[$id]['locked_at'] = null;
+        $this->jobs[$id]['lease_token'] = null;
         $this->jobs[$id]['updated_at'] = $now;
 
         return true;
@@ -417,6 +507,15 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
     private function now(): string
     {
         return $this->clock->now();
+    }
+
+    private function encodeJson(mixed $value, string $context): string
+    {
+        try {
+            return json_encode($value, JSON_THROW_ON_ERROR);
+        } catch (\JsonException $exception) {
+            throw new SerializationException(sprintf('Unable to encode %s as JSON', $context), 0, $exception);
+        }
     }
 
     private function claimAvailableJob(int $id, string $workerId, string $now): ?ClaimedJob

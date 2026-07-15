@@ -230,5 +230,22 @@ class JobDispatcherTest extends TestCase
         $this->assertTrue($result);
         $status = $this->dispatcher->getStatus($jobId);
         $this->assertSame(JobStatus::Cancelled, $status->status);
+        $this->assertNotContains($jobId, $this->driver->getPending('default'));
+    }
+
+    public function testRepeatedCancellationRetriesNotificationCleanup(): void
+    {
+        $jobId = $this->dispatcher->dispatch('email.send', []);
+        $this->assertTrue($this->dispatcher->cancelJob($jobId));
+        $this->driver->enqueue('default', $jobId);
+
+        $this->assertFalse($this->dispatcher->cancelJob($jobId));
+        $this->assertNotContains($jobId, $this->driver->getPending('default'));
+    }
+
+    public function testDispatchRejectsInvalidPublicArguments(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->dispatcher->dispatch('', [], 'default', 0);
     }
 }

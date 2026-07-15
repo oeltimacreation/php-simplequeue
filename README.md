@@ -285,13 +285,34 @@ $queueManager = QueueManager::create(
 
 ### Worker Options
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `poll_timeout` | 5 | Seconds to wait for new jobs |
-| `stuck_job_ttl` | 600 | Seconds before recovering stuck jobs |
-| `retry_base_delay` | 2 | Base delay for exponential backoff |
-| `retry_max_delay` | 300 | Maximum retry delay in seconds |
-| `lock_file` | `/tmp/simplequeue-worker.lock` | Lock file path (null to disable) |
+Options are read when `Worker` is constructed. Numeric strings are accepted for
+backwards compatibility with environment configuration. Invalid TTLs, negative
+limits, and a retry maximum below its base delay are rejected before the worker
+starts. `WorkerOptions` and `Worker::withOptions()` provide a validated
+object-based alternative without changing the existing constructor.
+
+| Option | Type | Default | Unit / allowed values | Description |
+|--------|------|---------|-----------------------|-------------|
+| `poll_timeout` | `int` | `5` | seconds; `0` or greater | Time to wait for a job. With Redis, the client read/write timeout must be greater than this value or disabled (`-1`). |
+| `stuck_job_ttl` | `int` | `600` | seconds; positive | Age after which a running job is eligible for stale recovery. Long jobs must report progress or use a larger TTL. |
+| `retry_base_delay` | `int` | `2` | seconds; non-negative | Base for exponential retry delay. |
+| `retry_max_delay` | `int` | `300` | seconds; non-negative and at least `retry_base_delay` | Upper bound for exponential retry delay. |
+| `lock_file` | `string\|null` | queue-scoped `/tmp/simplequeue-worker-{queue}.lock` | path, or `null` to disable | Singleton lock path. One lock is required per worker process/queue. |
+| `clock` | `ClockInterface` | `SystemClock` | injected clock | Deterministic wall/monotonic time for tests and custom runtimes. |
+| `max_jobs` | `int` | `0` | jobs; `0` disables | Exit after processing this many jobs. |
+| `max_time` | `int` | `0` | seconds; `0` disables | Exit after this much worker uptime. |
+| `memory_limit` | `int` | `0` | MB; `0` disables | Exit when the PHP process exceeds this memory limit. |
+| `stop_when_empty` | `bool` | `false` | `true` or `false` | Exit when no job is available instead of polling indefinitely. |
+| `promote_interval` | `float` | `5.0` | seconds; non-negative | Minimum interval between delayed-job promotion runs. |
+| `recovery_interval` | `float` | `60.0` | seconds; non-negative | Minimum interval between stale-job recovery and reconciliation runs. |
+| `event_listener` | `callable\|null` | `null` | `(string $event, array $data): void` | Receives worker lifecycle events; listener failures are logged and do not stop the worker. |
+
+`poll_timeout` is passed to the selected driver. `max_jobs`, `max_time`,
+`memory_limit`, and `stop_when_empty` are loop exit controls; the interval
+options only throttle maintenance. The worker returns `0` (`Worker::EXIT_SUCCESS`)
+after a normal stop or configured limit, `1` (`Worker::EXIT_ERROR`) for an
+unhandled worker error, and `2` (`Worker::EXIT_LOCK_UNAVAILABLE`) when its
+singleton lock cannot be acquired.
 
 ### PSR-11 Container Integration
 
@@ -467,9 +488,9 @@ If your queue driver supports statistics (implements `QueueStatsInterface` like 
 ```php
 use Oeltima\SimpleQueue\Contract\QueueStatsInterface;
 
-if ($queueManager->getDriver() instanceof QueueStatsInterface) {
+if ($queueManager->driver() instanceof QueueStatsInterface) {
     /** @var QueueStatsInterface $driver */
-    $driver = $queueManager->getDriver();
+    $driver = $queueManager->driver();
     
     $pending = $driver->getPendingCount('default');
     $processing = $driver->getProcessingCount('default');
@@ -561,6 +582,19 @@ if ($job->status === JobStatus::Completed) { ... }
 - PHPUnit locked to `^11.0` (PHPUnit 10 dropped)
 - PHPStan upgraded to `^2.2.2` at level 9 with strict-rules
 - PHPCS migrated from `squizlabs/php_codesniffer` to `phpcsstandards/php_codesniffer ^4.0` with Slevomat coding standard
+
+---
+
+## Migration from v1.4.x to v1.5.0
+
+v1.5.0 is a reliability release with no required offline schema migration.
+
+- Keep the active-request-ID unique index from the provided schema for concurrent `dispatchIdempotent()` calls.
+- Cancelled jobs are now terminal, pruneable records and built-in drivers remove their notifications after the durable storage transition.
+- Invalid payload/result JSON and invalid worker settings now fail explicitly. Use `WorkerOptions` for validated configuration while retaining array options for compatibility.
+- Use `QueueReconciler` for standalone repair and persist its returned cursor. Redis visibility repair is eventual after a blocking dequeue crash; long-running handlers should report progress at least every half TTL.
+
+Known limitations remain intentional: delivery is at least once, bounded Redis pending checks can create duplicate notifications, and blocking dequeue cannot make list movement and timestamping fully atomic.
 
 ---
 

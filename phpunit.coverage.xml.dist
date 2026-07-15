@@ -17,6 +17,9 @@
         <testsuite name="Integration">
             <directory>tests/Integration</directory>
         </testsuite>
+        <testsuite name="Compatibility">
+            <directory>tests/Compatibility</directory>
+        </testsuite>
     </testsuites>
 
     <source>
@@ -27,6 +30,7 @@
 
     <coverage>
         <report>
+            <clover outputFile="coverage/clover.xml"/>
             <html outputDirectory="coverage"/>
             <text outputFile="php://stdout" showOnlySummary="true"/>
         </report>

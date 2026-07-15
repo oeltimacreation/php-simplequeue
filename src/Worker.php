@@ -6,16 +6,16 @@ namespace Oeltima\SimpleQueue;
 
 use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\ClaimedJob;
-use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
 use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
+use Oeltima\SimpleQueue\Contract\SupportsProcessingHeartbeat;
 use Oeltima\SimpleQueue\Contract\SupportsWorkerId;
 use Oeltima\SimpleQueue\Contract\SupportsTimeoutValidation;
-use Oeltima\SimpleQueue\Contract\SupportsQueueReconciliation;
-use Oeltima\SimpleQueue\Contract\JobStorageAdminInterface;
+use Oeltima\SimpleQueue\Contract\SupportsClaimedDequeue;
 use Oeltima\SimpleQueue\Exception\HandlerNotFoundException;
+use Oeltima\SimpleQueue\Exception\SerializationException;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
@@ -30,9 +30,6 @@ final class Worker
     public const EXIT_SUCCESS = 0;
     public const EXIT_ERROR = 1;
     public const EXIT_LOCK_UNAVAILABLE = 2;
-
-    private const DEFAULT_POLL_TIMEOUT = 5;
-    private const DEFAULT_STUCK_JOB_TTL = 600; // 10 minutes
 
     private LoggerInterface $logger;
     private string $workerId;
@@ -58,6 +55,7 @@ final class Worker
     private float $recoveryInterval;
     private float $lastPromoteTime = 0.0;
     private float $lastRecoveryTime = 0.0;
+    private ?int $reconcileCursor = null;
 
     /** @var (callable(string, array<string, mixed>): void)|null */
     private $eventListener = null;
@@ -86,35 +84,57 @@ final class Worker
             $driver->setWorkerId($this->workerId);
         }
 
-        // Configuration options
-        $lockFileOpt = $options['lock_file'] ?? null;
+        $workerOptions = WorkerOptions::fromArray($options);
+        $lockFileOpt = $workerOptions->lockFile;
         if (array_key_exists('lock_file', $options)) {
             $this->lockFile = is_string($lockFileOpt) ? $lockFileOpt : null;
         } else {
             $this->lockFile = sprintf('/tmp/simplequeue-worker-%s.lock', preg_replace('/[^a-zA-Z0-9_-]/', '', $queue));
         }
-        $this->pollTimeout = $this->getOptionInt($options, 'poll_timeout', self::DEFAULT_POLL_TIMEOUT);
-        $this->stuckJobTtl = $this->getOptionInt($options, 'stuck_job_ttl', self::DEFAULT_STUCK_JOB_TTL);
-        $this->retryBaseDelay = $this->getOptionInt($options, 'retry_base_delay', 2);
-        $this->retryMaxDelay = $this->getOptionInt($options, 'retry_max_delay', 300);
-        $clock = $options['clock'] ?? null;
-        $this->clock = $clock instanceof ClockInterface ? $clock : new SystemClock();
-
-        $this->maxJobs = $this->getOptionInt($options, 'max_jobs', 0);
-        $this->maxTime = $this->getOptionInt($options, 'max_time', 0);
-        $this->memoryLimit = $this->getOptionInt($options, 'memory_limit', 0);
-        $this->stopWhenEmpty = $this->getOptionBool($options, 'stop_when_empty', false);
-
-        $this->promoteInterval = $this->getOptionFloat($options, 'promote_interval', 5.0);
-        $this->recoveryInterval = $this->getOptionFloat($options, 'recovery_interval', 60.0);
+        $this->pollTimeout = $workerOptions->pollTimeout;
+        $this->stuckJobTtl = $workerOptions->stuckJobTtl;
+        $this->retryBaseDelay = $workerOptions->retryBaseDelay;
+        $this->retryMaxDelay = $workerOptions->retryMaxDelay;
+        $this->clock = $workerOptions->clock ?? new SystemClock();
+        $this->maxJobs = $workerOptions->maxJobs;
+        $this->maxTime = $workerOptions->maxTime;
+        $this->memoryLimit = $workerOptions->memoryLimit;
+        $this->stopWhenEmpty = $workerOptions->stopWhenEmpty;
+        $this->promoteInterval = $workerOptions->promoteInterval;
+        $this->recoveryInterval = $workerOptions->recoveryInterval;
 
         if ($driver instanceof SupportsTimeoutValidation) {
             $driver->validateTimeout($this->pollTimeout);
         }
 
-        if (isset($options['event_listener']) && is_callable($options['event_listener'])) {
-            $this->eventListener = $options['event_listener'];
+        if (is_callable($workerOptions->eventListener)) {
+            $this->eventListener = $workerOptions->eventListener;
         }
+    }
+
+    public static function withOptions(
+        JobStorageInterface $storage,
+        QueueManager $queueManager,
+        JobRegistry $registry,
+        WorkerOptions $options,
+        ?LoggerInterface $logger = null,
+        string $queue = 'default'
+    ): self {
+        return new self($storage, $queueManager, $registry, $logger, $queue, [
+            'lock_file' => $options->lockFile,
+            'poll_timeout' => $options->pollTimeout,
+            'stuck_job_ttl' => $options->stuckJobTtl,
+            'retry_base_delay' => $options->retryBaseDelay,
+            'retry_max_delay' => $options->retryMaxDelay,
+            'clock' => $options->clock,
+            'max_jobs' => $options->maxJobs,
+            'max_time' => $options->maxTime,
+            'memory_limit' => $options->memoryLimit,
+            'stop_when_empty' => $options->stopWhenEmpty,
+            'promote_interval' => $options->promoteInterval,
+            'recovery_interval' => $options->recoveryInterval,
+            'event_listener' => $options->eventListener,
+        ]);
     }
 
     /**
@@ -320,6 +340,13 @@ final class Worker
         $jobId = null;
 
         try {
+            if ($driver instanceof SupportsClaimedDequeue) {
+                $claim = $driver->dequeueClaimed($this->queue, $timeoutSeconds);
+                if ($claim === null) {
+                    return null;
+                }
+                return $claim;
+            }
             $jobId = $driver->dequeue($this->queue, $timeoutSeconds);
 
             if ($jobId === null) {
@@ -494,6 +521,15 @@ final class Worker
                     'error' => $e->getMessage(),
                 ]);
             }
+        } catch (SerializationException $e) {
+            $durationMs = ($this->clock->monotonic() - $startTime) * 1000.0;
+            $this->storage->markFailed($claim, $e->getMessage(), $this->truncateTrace($e));
+            $driver->ack($this->queue, $job->id);
+            $this->logger->error('Job result serialization failed after handler completion', [
+                'job_id' => $job->id,
+                'duration_ms' => $durationMs,
+                'error' => $e->getMessage(),
+            ]);
         } catch (\Throwable $e) {
             $durationMs = ($this->clock->monotonic() - $startTime) * 1000.0;
             $this->handleJobFailure($claim, $e, $driver, $durationMs);
@@ -513,8 +549,28 @@ final class Worker
         $handler = $this->registry->get($job->type);
 
         $progressCallback = function (int $percent, ?string $message = null) use ($claim): void {
-            $this->storage->updateProgress($claim, $percent, $message);
-            $this->storage->heartbeat($claim);
+            $updated = $this->storage->updateProgress($claim, $percent, $message);
+            if (!$updated) {
+                return;
+            }
+
+            $driver = $this->queueManager->driver();
+            if (!$driver instanceof SupportsProcessingHeartbeat) {
+                return;
+            }
+
+            try {
+                $driver->heartbeatProcessing($this->queue, $claim->job->id);
+            } catch (\Throwable $exception) {
+                $this->logger->error('Failed to refresh queue processing visibility', [
+                    'job_id' => $claim->job->id,
+                    'error' => $exception->getMessage(),
+                ]);
+                $this->emit('infrastructure_failure', [
+                    'job_id' => $claim->job->id,
+                    'context' => 'processing_heartbeat',
+                ]);
+            }
         };
 
         $result = $handler->handle($job->id, $job->payload, $progressCallback);
@@ -612,7 +668,9 @@ final class Worker
 
     private function recoverStaleJobs(): void
     {
-        $recovered = $this->storage->recoverStaleJobs($this->stuckJobTtl);
+        $recovered = $this->storage instanceof \Oeltima\SimpleQueue\Contract\SupportsQueueScopedStaleRecovery
+            ? $this->storage->recoverStaleJobsForQueue($this->queue, $this->stuckJobTtl, 100)
+            : $this->storage->recoverStaleJobs($this->stuckJobTtl);
 
         // Also recover from driver if supported
         $driver = $this->queueManager->driver();
@@ -637,64 +695,26 @@ final class Worker
     private function reconcileDbAndRedis(): void
     {
         $driver = $this->queueManager->driver();
-        if (!($driver instanceof SupportsQueueReconciliation)) {
+        if (!($driver instanceof \Oeltima\SimpleQueue\Contract\SupportsBoundedQueueMembership)) {
             return;
         }
 
         $storage = $this->storage;
-        if (!($storage instanceof JobStorageAdminInterface)) {
+        if (!($storage instanceof \Oeltima\SimpleQueue\Contract\SupportsPendingJobCursor)) {
             return;
         }
 
         try {
-            $this->logger->info('Running DB-Redis reconciliation sweep');
-
-            // 1. Get all pending jobs from DB for this queue
-            $dbJobs = $storage->list(JobStatus::Pending, $this->queue, 1000);
-            if ($dbJobs === []) {
-                return;
-            }
-
-            // 2. Get pending and delayed IDs from Redis
-            $redisPending = array_flip($driver->getPendingIds($this->queue));
-            $redisDelayed = array_flip($driver->getDelayedIds($this->queue));
-
-            $now = time();
-            $reconciledCount = 0;
-
-            foreach ($dbJobs as $job) {
-                $jobId = $job->id;
-                $availTimestamp = strtotime($job->availableAt ?? 'now');
-                $availableAt = $availTimestamp === false ? time() : $availTimestamp;
-
-                if ($availableAt <= $now) {
-                    // Immediate job: should be in Redis pending list or delayed ZSET (awaiting promotion)
-                    if (!isset($redisPending[$jobId]) && !isset($redisDelayed[$jobId])) {
-                        $this->logger->warning('Reconciling pending job missing from Redis pending queue', [
-                            'job_id' => $jobId,
-                            'queue' => $this->queue,
-                        ]);
-                        $driver->enqueue($this->queue, $jobId);
-                        $reconciledCount++;
-                    }
-                } else {
-                    // Delayed job: should be in Redis delayed ZSET
-                    if (!isset($redisDelayed[$jobId])) {
-                        $this->logger->warning('Reconciling delayed job missing from Redis delayed queue', [
-                            'job_id' => $jobId,
-                            'queue' => $this->queue,
-                            'delay_seconds' => $availableAt - $now,
-                        ]);
-                        $delaySeconds = max(0, $availableAt - $now);
-                        $driver->nack($this->queue, $jobId, $delaySeconds);
-                        $reconciledCount++;
-                    }
-                }
-            }
-
-            if ($reconciledCount > 0) {
-                $this->logger->info('DB-Redis reconciliation completed', ['reconciled_count' => $reconciledCount]);
-            }
+            $result = (new QueueReconciler($storage, $driver, $this->clock))->reconcile(
+                $this->queue,
+                new ReconcileOptions(cursor: $this->reconcileCursor)
+            );
+            $this->reconcileCursor = $result->nextCursor;
+            $this->logger->info('Bounded DB-Redis reconciliation completed', [
+                'scanned' => $result->scanned,
+                'restored' => $result->restored,
+                'next_cursor' => $result->nextCursor,
+            ]);
         } catch (\Throwable $e) {
             $this->logger->error('Failed to run DB-Redis reconciliation sweep', [
                 'error' => $e->getMessage(),
@@ -775,35 +795,5 @@ final class Worker
             return substr($trace, 0, $maxLength) . "\n... [truncated]";
         }
         return $trace;
-    }
-
-    /**
-     * Helper to retrieve integer values from options array.
-     *
-     * @param array<string, mixed> $options
-     */
-    private function getOptionInt(array $options, string $key, int $default): int
-    {
-        return isset($options[$key]) && is_scalar($options[$key]) ? (int) $options[$key] : $default;
-    }
-
-    /**
-     * Helper to retrieve float values from options array.
-     *
-     * @param array<string, mixed> $options
-     */
-    private function getOptionFloat(array $options, string $key, float $default): float
-    {
-        return isset($options[$key]) && is_scalar($options[$key]) ? (float) $options[$key] : $default;
-    }
-
-    /**
-     * Helper to retrieve boolean values from options array.
-     *
-     * @param array<string, mixed> $options
-     */
-    private function getOptionBool(array $options, string $key, bool $default): bool
-    {
-        return isset($options[$key]) && is_scalar($options[$key]) ? (bool) $options[$key] : $default;
     }
 }

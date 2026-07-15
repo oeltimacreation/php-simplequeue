@@ -7,6 +7,7 @@ namespace Oeltima\SimpleQueue\Tests\Unit;
 use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
+use Oeltima\SimpleQueue\Exception\SerializationException;
 use PHPUnit\Framework\TestCase;
 
 class InMemoryStorageTest extends TestCase
@@ -27,6 +28,18 @@ class InMemoryStorageTest extends TestCase
         $this->assertEquals(1, $id1);
         $this->assertEquals(2, $id2);
         $this->assertEquals(3, $id3);
+    }
+
+    public function testCreateJobRejectsUnserializablePayload(): void
+    {
+        $resource = fopen('php://memory', 'r');
+        $this->assertIsResource($resource);
+        $this->expectException(SerializationException::class);
+        try {
+            $this->storage->createJob('test.job', ['resource' => $resource]);
+        } finally {
+            fclose($resource);
+        }
     }
 
     public function testCreateJobsBatch(): void
@@ -419,6 +432,7 @@ class InMemoryStorageTest extends TestCase
                 '2026-06-14 12:15:00',
                 '2026-06-14 12:15:00'
             );
+        $clock->method('timestamp')->willReturn(strtotime('2026-06-14 12:15:00 UTC'));
 
         $storage = new InMemoryJobStorage($clock);
 
@@ -447,6 +461,7 @@ class InMemoryStorageTest extends TestCase
                 '2026-06-14 12:15:00',
                 '2026-06-14 12:15:00'
             );
+        $clock->method('timestamp')->willReturn(strtotime('2026-06-14 12:15:00 UTC'));
 
         $storage = new InMemoryJobStorage($clock);
 
@@ -474,6 +489,9 @@ class InMemoryStorageTest extends TestCase
         $job = $this->storage->find($id);
         $this->assertNotNull($job);
         $this->assertSame(JobStatus::Cancelled, $job->status);
+        $this->assertNotNull($job->completedAt);
+        $this->assertNull($job->lockedBy);
+        $this->assertNull($job->leaseToken);
     }
 
     public function testCancelNonPendingJobFails(): void

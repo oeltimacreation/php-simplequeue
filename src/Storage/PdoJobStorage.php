@@ -10,6 +10,11 @@ use Oeltima\SimpleQueue\Contract\JobData;
 use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Contract\JobStorageAdminInterface;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
+use Oeltima\SimpleQueue\Contract\IdempotentJobResult;
+use Oeltima\SimpleQueue\Contract\SupportsIdempotentJobCreation;
+use Oeltima\SimpleQueue\Contract\SupportsPendingJobCursor;
+use Oeltima\SimpleQueue\Contract\SupportsQueueScopedStaleRecovery;
+use Oeltima\SimpleQueue\Exception\SerializationException;
 use Oeltima\SimpleQueue\SystemClock;
 use PDO;
 use PDOException;
@@ -23,7 +28,12 @@ use PDOStatement;
  *
  * Supports auto-reconnect for long-running workers via connection factory.
  */
-class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
+class PdoJobStorage implements
+    JobStorageInterface,
+    JobStorageAdminInterface,
+    SupportsIdempotentJobCreation,
+    SupportsPendingJobCursor,
+    SupportsQueueScopedStaleRecovery
 {
     protected ?PDO $pdo = null;
 
@@ -198,7 +208,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
                 $stmt->execute([
                     'queue' => $queue,
                     'type' => $type,
-                    'payload' => json_encode($payload),
+                    'payload' => $this->encodeJson($payload, 'job payload'),
                     'max_attempts' => $maxAttempts,
                     'available_at' => $now,
                     'request_id' => $requestId,
@@ -241,7 +251,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
                 $placeholders[] = "(?, ?, 'pending', ?, 0, ?, ?, ?, ?, ?)";
                 $params[] = $job['queue'] ?? 'default';
                 $params[] = $job['type'];
-                $params[] = json_encode($job['payload']);
+                $params[] = $this->encodeJson($job['payload'], 'job payload');
                 $params[] = $job['maxAttempts'] ?? 3;
                 $params[] = $now;
                 $params[] = $job['requestId'] ?? null;
@@ -318,6 +328,55 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
     }
 
     /**
+     * @param array<string, mixed> $payload Job payload
+     */
+    public function createIdempotentJob(
+        string $type,
+        array $payload,
+        string $requestId,
+        string $queue,
+        int $maxAttempts
+    ): IdempotentJobResult {
+        // The database conditional/generated unique index is the concurrency authority.
+        for ($attempt = 0; $attempt < 2; $attempt++) {
+            $existing = $this->findActiveByRequestId($requestId);
+            if ($existing !== null) {
+                return new IdempotentJobResult($existing->id, false);
+            }
+
+            $pdo = $this->getPdo();
+            $hasSavepoint = $pdo->inTransaction();
+            if ($hasSavepoint) {
+                $pdo->exec('SAVEPOINT simplequeue_idempotent_job');
+            }
+
+            try {
+                $result = new IdempotentJobResult(
+                    $this->createJob($type, $payload, $queue, $maxAttempts, $requestId),
+                    true
+                );
+                if ($hasSavepoint) {
+                    $pdo->exec('RELEASE SAVEPOINT simplequeue_idempotent_job');
+                }
+                return $result;
+            } catch (PDOException $exception) {
+                if (!$this->isUniqueConstraintViolation($exception)) {
+                    throw $exception;
+                }
+
+                $this->rollbackIdempotentSavepoint($pdo, $hasSavepoint);
+
+                $existing = $this->findActiveByRequestId($requestId);
+                if ($existing !== null) {
+                    return new IdempotentJobResult($existing->id, false);
+                }
+            }
+        }
+
+        throw new \RuntimeException('Could not resolve concurrent idempotent job creation');
+    }
+
+    /**
      * Atomically claim the next available job in a queue.
      *
      * @param string $queue Queue name
@@ -384,7 +443,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         $stmt = $this->execute($sql, [
             'id' => $claim->job->id,
             'lease_token' => $claim->leaseToken,
-            'result' => $result === null ? null : json_encode($result),
+            'result' => $result === null ? null : $this->encodeJson($result, 'job result'),
             'completed_at' => $now,
             'updated_at' => $now,
         ]);
@@ -423,6 +482,9 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
 
     public function updateProgress(ClaimedJob $claim, ?int $progress = null, ?string $message = null): bool
     {
+        if ($progress !== null && ($progress < 0 || $progress > 100)) {
+            throw new \InvalidArgumentException('Progress must be null or an integer between 0 and 100');
+        }
         $now = $this->now();
 
         $sql = "UPDATE {$this->table}
@@ -466,8 +528,11 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         int $delaySeconds,
         ?string $errorMessage = null
     ): bool {
+        if ($attempts < 1 || $delaySeconds < 0) {
+            throw new \InvalidArgumentException('Attempts must be positive and retry delay must not be negative');
+        }
         $now = $this->now();
-        $availableAt = gmdate($this->dateFormat, (int) strtotime($now) + $delaySeconds);
+        $availableAt = gmdate($this->dateFormat, $this->clock()->timestamp() + $delaySeconds);
 
         $sql = "UPDATE {$this->table}
             SET status = 'pending',
@@ -532,7 +597,7 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
     public function recoverStaleJobs(int $ttlSeconds): int
     {
         $now = $this->now();
-        $staleThreshold = gmdate($this->dateFormat, (int) strtotime($now) - $ttlSeconds);
+        $staleThreshold = gmdate($this->dateFormat, $this->clock()->timestamp() - $ttlSeconds);
 
         // Fail poison jobs that have reached max attempts
         $sqlFailed = "UPDATE {$this->table}
@@ -577,19 +642,79 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         return $countFailed + $countPending;
     }
 
+    public function recoverStaleJobsForQueue(string $queue, int $ttlSeconds, int $limit): int
+    {
+        if ($ttlSeconds < 1 || $limit < 1) {
+            throw new \InvalidArgumentException('Stale recovery TTL and limit must be positive');
+        }
+        $now = $this->now();
+        $threshold = gmdate($this->dateFormat, $this->clock()->timestamp() - $ttlSeconds);
+        $sql = "SELECT * FROM {$this->table} WHERE queue = :queue AND status = 'running' " .
+            'AND locked_at < :threshold ORDER BY locked_at ASC LIMIT :limit';
+        $statement = $this->withReconnect(function (PDO $pdo) use ($sql, $queue, $threshold, $limit): PDOStatement {
+            $prepared = $pdo->prepare($sql);
+            if (!$prepared instanceof PDOStatement) {
+                throw new \RuntimeException('Failed to prepare SQL statement');
+            }
+            $prepared->bindValue('queue', $queue);
+            $prepared->bindValue('threshold', $threshold);
+            $prepared->bindValue('limit', $limit, PDO::PARAM_INT);
+            $prepared->execute();
+            return $prepared;
+        });
+        $recovered = 0;
+        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $job = JobData::fromRaw($row);
+            $terminal = $job->attempts + 1 >= $job->maxAttempts;
+            $update = "UPDATE {$this->table} SET status = :status, attempts = :attempts, " .
+                'available_at = :available_at, completed_at = :completed_at, locked_by = NULL, ' .
+                "locked_at = NULL, lease_token = NULL, updated_at = :updated_at WHERE id = :id " .
+                "AND status = 'running' AND locked_at < :threshold";
+            $changed = $this->execute($update, [
+                'status' => $terminal ? 'failed' : 'pending',
+                'attempts' => $job->attempts + 1,
+                'available_at' => $now,
+                'completed_at' => $terminal ? $now : null,
+                'updated_at' => $now,
+                'id' => $job->id,
+                'threshold' => $threshold,
+            ]);
+            $recovered += $changed->rowCount();
+        }
+        return $recovered;
+    }
+
     public function cancel(int $id): bool
     {
         $now = $this->now();
         $sql = "UPDATE {$this->table}
-            SET status = 'cancelled', updated_at = :updated_at
+            SET status = 'cancelled', completed_at = :completed_at,
+                locked_by = NULL, locked_at = NULL, lease_token = NULL, updated_at = :updated_at
             WHERE id = :id AND status = 'pending'";
 
         $stmt = $this->execute($sql, [
             'id' => $id,
+            'completed_at' => $now,
             'updated_at' => $now,
         ]);
 
         return $stmt->rowCount() > 0;
+    }
+
+    private function isUniqueConstraintViolation(PDOException $exception): bool
+    {
+        return in_array((string) $exception->getCode(), ['23000', '23505'], true)
+            || (string) ($exception->errorInfo[0] ?? '') === '23000';
+    }
+
+    private function rollbackIdempotentSavepoint(PDO $pdo, bool $hasSavepoint): void
+    {
+        if (!$hasSavepoint) {
+            return;
+        }
+
+        $pdo->exec('ROLLBACK TO SAVEPOINT simplequeue_idempotent_job');
+        $pdo->exec('RELEASE SAVEPOINT simplequeue_idempotent_job');
     }
 
     /**
@@ -645,6 +770,37 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         }
 
         return $jobs;
+    }
+
+    /**
+     * @return list<JobData>
+     */
+    public function scanPending(string $queue, ?int $afterId, int $limit): array
+    {
+        if ($limit < 1) {
+            throw new \InvalidArgumentException('Scan limit must be positive');
+        }
+        $sql = "SELECT * FROM {$this->table} WHERE queue = :queue AND status = 'pending'";
+        $params = ['queue' => $queue];
+        if ($afterId !== null) {
+            $sql .= ' AND id > :after_id';
+            $params['after_id'] = $afterId;
+        }
+        $sql .= ' ORDER BY id ASC LIMIT :limit';
+        $stmt = $this->withReconnect(function (PDO $pdo) use ($sql, $params, $limit): PDOStatement {
+            $statement = $pdo->prepare($sql);
+            if (!$statement instanceof PDOStatement) {
+                throw new \RuntimeException('Failed to prepare SQL statement');
+            }
+            foreach ($params as $key => $value) {
+                $statement->bindValue($key, $value);
+            }
+            $statement->bindValue('limit', $limit, PDO::PARAM_INT);
+            $statement->execute();
+            return $statement;
+        });
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        return array_values(array_map(static fn (array $row): JobData => JobData::fromRaw($row), $rows));
     }
 
     /**
@@ -704,6 +860,15 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
     private function clock(): ClockInterface
     {
         return $this->clock ?? new SystemClock();
+    }
+
+    private function encodeJson(mixed $value, string $context): string
+    {
+        try {
+            return json_encode($value, JSON_THROW_ON_ERROR);
+        } catch (\JsonException $exception) {
+            throw new SerializationException(sprintf('Unable to encode %s as JSON', $context), 0, $exception);
+        }
     }
 
     private function claimNextAvailableWithReturning(

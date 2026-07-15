@@ -83,6 +83,17 @@ final class DatabaseQueueDriverTest extends TestCase
         $this->assertEquals($jobId, $result);
     }
 
+    public function testDequeueClaimedReturnsTheOriginalStorageClaim(): void
+    {
+        $jobId = $this->storage->createJob('test', [], 'default');
+
+        $claim = $this->driver->dequeueClaimed('default', 0);
+
+        $this->assertNotNull($claim);
+        $this->assertSame($jobId, $claim->job->id);
+        $this->assertSame($claim->leaseToken, $claim->job->leaseToken);
+    }
+
     public function testDequeueFiltersByQueue(): void
     {
         $this->storage->createJob('test', ['foo' => 'bar'], 'other-queue');
