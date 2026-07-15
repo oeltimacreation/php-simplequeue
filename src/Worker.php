@@ -11,6 +11,7 @@ use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
 use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
+use Oeltima\SimpleQueue\Contract\SupportsProcessingHeartbeat;
 use Oeltima\SimpleQueue\Contract\SupportsWorkerId;
 use Oeltima\SimpleQueue\Contract\SupportsTimeoutValidation;
 use Oeltima\SimpleQueue\Contract\SupportsQueueReconciliation;
@@ -513,8 +514,28 @@ final class Worker
         $handler = $this->registry->get($job->type);
 
         $progressCallback = function (int $percent, ?string $message = null) use ($claim): void {
-            $this->storage->updateProgress($claim, $percent, $message);
-            $this->storage->heartbeat($claim);
+            $updated = $this->storage->updateProgress($claim, $percent, $message);
+            if (!$updated) {
+                return;
+            }
+
+            $driver = $this->queueManager->driver();
+            if (!$driver instanceof SupportsProcessingHeartbeat) {
+                return;
+            }
+
+            try {
+                $driver->heartbeatProcessing($this->queue, $claim->job->id);
+            } catch (\Throwable $exception) {
+                $this->logger->error('Failed to refresh queue processing visibility', [
+                    'job_id' => $claim->job->id,
+                    'error' => $exception->getMessage(),
+                ]);
+                $this->emit('infrastructure_failure', [
+                    'job_id' => $claim->job->id,
+                    'context' => 'processing_heartbeat',
+                ]);
+            }
         };
 
         $result = $handler->handle($job->id, $job->payload, $progressCallback);

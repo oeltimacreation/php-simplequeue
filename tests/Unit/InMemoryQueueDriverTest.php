@@ -69,6 +69,22 @@ class InMemoryQueueDriverTest extends TestCase
         $this->assertArrayNotHasKey(7, $this->driver->getDelayed('default'));
     }
 
+    public function testHeartbeatProcessingRefreshesVisibilityTimestamp(): void
+    {
+        $this->driver->enqueue('default', 5);
+        $this->driver->dequeue('default', 0);
+        $reflection = new \ReflectionClass($this->driver);
+        $property = $reflection->getProperty('processingStartedAt');
+        $timestamps = $property->getValue($this->driver);
+        $timestamps['default'][5] = 1;
+        $property->setValue($this->driver, $timestamps);
+
+        $this->driver->heartbeatProcessing('default', 5);
+
+        $timestamps = $property->getValue($this->driver);
+        $this->assertGreaterThan(1, $timestamps['default'][5]);
+    }
+
     public function testDequeueReturnsNullWhenEmpty(): void
     {
         $jobId = $this->driver->dequeue('default', 0);

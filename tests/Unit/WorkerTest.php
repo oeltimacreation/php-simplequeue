@@ -824,7 +824,7 @@ class WorkerTest extends TestCase
         $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
     }
 
-    public function testProgressCallbackTriggersUpdateProgressAndHeartbeat(): void
+    public function testProgressCallbackTriggersUpdateProgressWithoutRedundantStorageHeartbeat(): void
     {
         $handler = new class implements JobHandlerInterface {
             public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
@@ -865,10 +865,7 @@ class WorkerTest extends TestCase
             ->with($claim, 45, 'Progress message')
             ->willReturn(true);
 
-        $this->storage->expects($this->once())
-            ->method('heartbeat')
-            ->with($claim)
-            ->willReturn(true);
+        $this->storage->expects($this->never())->method('heartbeat');
 
         $this->storage->expects($this->once())
             ->method('markCompleted')

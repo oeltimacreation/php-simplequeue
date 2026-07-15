@@ -11,12 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added optional `SupportsJobRemoval` for idempotent removal of pending, delayed, and processing queue notifications.
 - Added optional `SupportsIdempotentJobCreation` and `IdempotentJobResult` so built-in storage implementations can resolve concurrent idempotent dispatch safely at the storage boundary.
+- Added optional `SupportsProcessingHeartbeat` so queue drivers can refresh processing visibility after a fenced storage progress update.
 
 ### Changed
 
 - `cancelJob()` now removes notifications after storage cancellation. If cleanup fails, cancellation remains durable and a contextual `QueueException` reports the repairable notifier inconsistency.
 - Cancelled jobs now receive `completed_at`, clear ownership fields, and are eligible for existing retention pruning.
 - `dispatch()`, batch dispatch, idempotent dispatch, progress updates, queue drivers, and stale recovery now reject invalid public input instead of accepting values without valid queue semantics.
+- Redis non-blocking dequeue now atomically moves and timestamps a notification. Blocking dequeue timestamp gaps are repaired through bounded processing-list cursor slices, and malformed Redis IDs are removed instead of being coerced to job ID `0`.
+- Progress reports refresh supported queue-driver visibility timestamps only after the storage lease update succeeds; driver heartbeat errors are reported without failing the handler.
 
 ### Migration notes
 

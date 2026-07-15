@@ -11,6 +11,9 @@ use Oeltima\SimpleQueue\Contract\SupportsBatchEnqueue;
 use Oeltima\SimpleQueue\Contract\SupportsQueueReconciliation;
 use Oeltima\SimpleQueue\Contract\QueueStatsInterface;
 use Oeltima\SimpleQueue\Contract\SupportsJobRemoval;
+use Oeltima\SimpleQueue\Contract\SupportsProcessingHeartbeat;
+use Oeltima\SimpleQueue\Contract\ClockInterface;
+use Oeltima\SimpleQueue\SystemClock;
 
 /**
  * In-memory queue driver for testing purposes.
@@ -25,7 +28,8 @@ final class InMemoryQueueDriver implements
     SupportsBatchEnqueue,
     SupportsQueueReconciliation,
     QueueStatsInterface,
-    SupportsJobRemoval
+    SupportsJobRemoval,
+    SupportsProcessingHeartbeat
 {
     /** @var array<string, int[]> */
     private array $pending = [];
@@ -38,6 +42,10 @@ final class InMemoryQueueDriver implements
 
     /** @var array<string, array<int, int>> Queue -> [jobId => availableAt timestamp] */
     private array $delayed = [];
+
+    public function __construct(private readonly ClockInterface $clock = new SystemClock())
+    {
+    }
 
     public function isAvailable(): true
     {
@@ -69,7 +77,7 @@ final class InMemoryQueueDriver implements
         }
         $this->processing[$queue][] = $jobId;
 
-        $this->processingStartedAt[$queue][$jobId] = time();
+        $this->processingStartedAt[$queue][$jobId] = $this->clock->timestamp();
 
         return $jobId;
     }
@@ -104,6 +112,14 @@ final class InMemoryQueueDriver implements
         unset($this->delayed[$queue][$jobId], $this->processingStartedAt[$queue][$jobId]);
     }
 
+    public function heartbeatProcessing(string $queue, int $jobId): void
+    {
+        $this->validateJobId($jobId);
+        if (in_array($jobId, $this->processing[$queue] ?? [], true)) {
+            $this->processingStartedAt[$queue][$jobId] = $this->clock->timestamp();
+        }
+    }
+
     public function nack(string $queue, int $jobId, int $delaySeconds = 0): void
     {
         $this->validateJobId($jobId);
@@ -115,7 +131,7 @@ final class InMemoryQueueDriver implements
             if (!isset($this->delayed[$queue])) {
                 $this->delayed[$queue] = [];
             }
-            $this->delayed[$queue][$jobId] = time() + $delaySeconds;
+            $this->delayed[$queue][$jobId] = $this->clock->timestamp() + $delaySeconds;
         } else {
             $this->enqueue($queue, $jobId);
         }
@@ -133,7 +149,7 @@ final class InMemoryQueueDriver implements
             return 0;
         }
 
-        $now = time();
+        $now = $this->clock->timestamp();
         $promoted = 0;
 
         foreach ($this->delayed[$queue] as $jobId => $availableAt) {
@@ -167,7 +183,7 @@ final class InMemoryQueueDriver implements
             return 0;
         }
 
-        $staleThreshold = time() - $ttlSeconds;
+        $staleThreshold = $this->clock->timestamp() - $ttlSeconds;
         $recovered = 0;
 
         foreach ($this->processingStartedAt[$queue] as $jobId => $startedAt) {

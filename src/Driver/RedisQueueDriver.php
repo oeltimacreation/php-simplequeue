@@ -12,6 +12,10 @@ use Oeltima\SimpleQueue\Contract\SupportsTimeoutValidation;
 use Oeltima\SimpleQueue\Contract\SupportsQueueReconciliation;
 use Oeltima\SimpleQueue\Contract\QueueStatsInterface;
 use Oeltima\SimpleQueue\Contract\SupportsJobRemoval;
+use Oeltima\SimpleQueue\Contract\SupportsProcessingHeartbeat;
+use Oeltima\SimpleQueue\Contract\ClockInterface;
+use Oeltima\SimpleQueue\Exception\QueueException;
+use Oeltima\SimpleQueue\SystemClock;
 use Predis\ClientInterface;
 
 /**
@@ -29,8 +33,16 @@ final class RedisQueueDriver implements
     SupportsTimeoutValidation,
     SupportsQueueReconciliation,
     QueueStatsInterface,
-    SupportsJobRemoval
+    SupportsJobRemoval,
+    SupportsProcessingHeartbeat
 {
+    private const DEQUEUE_LUA = <<<'LUA'
+local jobId = redis.call('LMOVE', KEYS[1], KEYS[2], 'RIGHT', 'LEFT')
+if jobId then
+    redis.call('ZADD', KEYS[3], ARGV[1], jobId)
+end
+return jobId
+LUA;
     private const PROMOTE_DELAYED_LUA = <<<'LUA'
 local delayedKey = KEYS[1]
 local pendingKey = KEYS[2]
@@ -63,13 +75,17 @@ end
 return #staleJobs
 LUA;
 
+    /** @var array<string, int> */
+    private array $repairCursors = [];
+
     /**
      * @param ClientInterface $redis Predis client instance
      * @param string $prefix Key prefix for all queue keys
      */
     public function __construct(
         #[\SensitiveParameter] private ClientInterface $redis,
-        private string $prefix = 'simplequeue'
+        private string $prefix = 'simplequeue',
+        private readonly ClockInterface $clock = new SystemClock()
     ) {
     }
 
@@ -131,12 +147,13 @@ LUA;
             throw new \InvalidArgumentException('Dequeue timeout must not be negative');
         }
         if ($timeoutSeconds <= 0) {
-            // Non-blocking: use LMOVE instead of BLMOVE
-            $result = $this->redis->lmove(
+            $result = $this->redis->eval(
+                self::DEQUEUE_LUA,
+                3,
                 $this->pendingKey($queue),
                 $this->processingKey($queue),
-                'RIGHT',
-                'LEFT'
+                $this->processingZKey($queue),
+                (string) $this->clock->timestamp()
             );
         } else {
             // Blocking with timeout
@@ -153,10 +170,17 @@ LUA;
             return null;
         }
 
+        if (!is_string($result) || !$this->isValidRedisJobId($result)) {
+            $this->discardMalformedProcessingNotification($queue, is_scalar($result) ? (string) $result : '');
+            throw new QueueException('Redis returned a malformed queue job ID');
+        }
+
         $jobId = (int) $result;
 
-        // Track processing start time in ZSET
-        $this->redis->zadd($this->processingZKey($queue), [$jobId => time()]);
+        if ($timeoutSeconds > 0) {
+            // BLMOVE cannot be wrapped in Lua; repair handles its crash window.
+            $this->redis->zadd($this->processingZKey($queue), [$jobId => $this->clock->timestamp()]);
+        }
 
         return $jobId;
     }
@@ -187,6 +211,12 @@ LUA;
         );
     }
 
+    public function heartbeatProcessing(string $queue, int $jobId): void
+    {
+        $this->validateJobId($jobId);
+        $this->redis->zadd($this->processingZKey($queue), [$jobId => $this->clock->timestamp()]);
+    }
+
     public function nack(string $queue, int $jobId, int $delaySeconds = 0): void
     {
         $this->validateJobId($jobId);
@@ -201,7 +231,7 @@ LUA;
 
         if ($delaySeconds > 0) {
             // Add to delayed ZSET with future timestamp
-            $availableAt = time() + $delaySeconds;
+            $availableAt = $this->clock->timestamp() + $delaySeconds;
             $pipe->zadd($this->delayedKey($queue), [$jobId => $availableAt]);
         } else {
             // Immediate re-enqueue
@@ -219,7 +249,7 @@ LUA;
      */
     public function promoteDelayedJobs(string $queue, int $limit = 100): int
     {
-        $now = time();
+        $now = $this->clock->timestamp();
 
         $result = $this->redis->eval(
             self::PROMOTE_DELAYED_LUA,
@@ -246,7 +276,8 @@ LUA;
         if ($ttlSeconds < 1 || $limit < 1) {
             throw new \InvalidArgumentException('Stale recovery TTL and limit must be positive');
         }
-        $staleThreshold = time() - $ttlSeconds;
+        $this->repairUnscoredProcessing($queue, $limit);
+        $staleThreshold = $this->clock->timestamp() - $ttlSeconds;
 
         $result = $this->redis->eval(
             self::RECOVER_STALE_LUA,
@@ -374,5 +405,34 @@ LUA;
         if ($jobId < 1) {
             throw new \InvalidArgumentException('Job ID must be a positive integer');
         }
+    }
+
+    private function repairUnscoredProcessing(string $queue, int $limit): void
+    {
+        $cursor = $this->repairCursors[$queue] ?? 0;
+        $ids = $this->redis->lrange($this->processingKey($queue), $cursor, $cursor + $limit - 1);
+        $this->repairCursors[$queue] = count($ids) < $limit ? 0 : $cursor + count($ids);
+        foreach ($ids as $id) {
+            if (!$this->isValidRedisJobId($id)) {
+                $this->discardMalformedProcessingNotification($queue, $id);
+                continue;
+            }
+            if ($this->redis->zscore($this->processingZKey($queue), $id) === null) {
+                $this->redis->zadd($this->processingZKey($queue), [(int) $id => $this->clock->timestamp()]);
+            }
+        }
+    }
+
+    private function discardMalformedProcessingNotification(string $queue, string $value): void
+    {
+        $this->redis->lrem($this->processingKey($queue), 0, $value);
+        $this->redis->zrem($this->processingZKey($queue), $value);
+    }
+
+    private function isValidRedisJobId(string $value): bool
+    {
+        return preg_match('/^[1-9][0-9]*$/', $value) === 1
+            && (strlen($value) < strlen((string) PHP_INT_MAX)
+                || (strlen($value) === strlen((string) PHP_INT_MAX) && $value <= (string) PHP_INT_MAX));
     }
 }

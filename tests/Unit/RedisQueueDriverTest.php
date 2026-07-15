@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Tests\Unit;
 
 use Oeltima\SimpleQueue\Driver\RedisQueueDriver;
+use Oeltima\SimpleQueue\Exception\QueueException;
 use PHPUnit\Framework\TestCase;
 use Predis\ClientInterface;
 use Predis\Command\CommandInterface;
@@ -104,16 +105,16 @@ class RedisQueueDriverTest extends TestCase
 
     public function testDequeueNonBlockingWhenTimeoutZero(): void
     {
-        $this->redis->returns['lmove'] = '123';
+        $this->redis->returns['eval'] = '123';
 
         $jobId = $this->driver->dequeue('default', 0);
 
         $this->assertEquals(123, $jobId);
 
         $callMethods = array_column($this->redis->calls, 'method');
-        $this->assertContains('lmove', $callMethods, 'Should use non-blocking lmove');
+        $this->assertContains('eval', $callMethods, 'Should use atomic Lua dequeue');
+        $this->assertNotContains('lmove', $callMethods, 'Lua owns the non-blocking move');
         $this->assertNotContains('blmove', $callMethods, 'Should not use blocking blmove');
-        $this->assertContains('zadd', $callMethods, 'Should track in processing ZSET');
     }
 
     public function testDequeueBlockingWhenTimeoutPositive(): void
@@ -131,11 +132,39 @@ class RedisQueueDriverTest extends TestCase
 
     public function testDequeueReturnsNullWhenEmpty(): void
     {
-        $this->redis->returns['lmove'] = null;
+        $this->redis->returns['eval'] = null;
 
         $jobId = $this->driver->dequeue('default', 0);
 
         $this->assertNull($jobId);
+    }
+
+    public function testDequeueRejectsMalformedRedisJobIdWithoutCastingIt(): void
+    {
+        $this->redis->returns['eval'] = '0';
+
+        $this->expectException(QueueException::class);
+        try {
+            $this->driver->dequeue('default', 0);
+        } finally {
+            $methods = array_column($this->redis->calls, 'method');
+            $this->assertContains('lrem', $methods);
+            $this->assertContains('zrem', $methods);
+        }
+    }
+
+    public function testStaleRecoveryRepairsUnscoredProcessingInBoundedSlice(): void
+    {
+        $this->redis->returns['lrange'] = ['123'];
+        $this->redis->returns['zscore'] = null;
+        $this->redis->returns['eval'] = 0;
+
+        $this->assertSame(0, $this->driver->recoverStaleProcessing('default', 60, 1));
+
+        $methods = array_column($this->redis->calls, 'method');
+        $this->assertContains('lrange', $methods);
+        $this->assertContains('zscore', $methods);
+        $this->assertContains('zadd', $methods);
     }
 
     public function testAckRemovesFromProcessingListAndZset(): void
@@ -206,6 +235,7 @@ class RedisQueueDriverTest extends TestCase
     public function testRecoverStaleProcessingEvaluatesLuaScript(): void
     {
         $this->redis->returns['eval'] = 2;
+        $this->redis->returns['lrange'] = [];
 
         $count = $this->driver->recoverStaleProcessing('default', 600, 75);
 
