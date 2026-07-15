@@ -12,6 +12,8 @@ use Oeltima\SimpleQueue\Contract\JobStorageAdminInterface;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\IdempotentJobResult;
 use Oeltima\SimpleQueue\Contract\SupportsIdempotentJobCreation;
+use Oeltima\SimpleQueue\Contract\SupportsPendingJobCursor;
+use Oeltima\SimpleQueue\Contract\SupportsQueueScopedStaleRecovery;
 use Oeltima\SimpleQueue\SystemClock;
 
 /**
@@ -20,7 +22,12 @@ use Oeltima\SimpleQueue\SystemClock;
  * This storage keeps all jobs in memory and is useful for unit testing.
  * All data is lost when the process terminates.
  */
-class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterface, SupportsIdempotentJobCreation
+class InMemoryJobStorage implements
+    JobStorageInterface,
+    JobStorageAdminInterface,
+    SupportsIdempotentJobCreation,
+    SupportsPendingJobCursor,
+    SupportsQueueScopedStaleRecovery
 {
     /** @var array<int, array<string, mixed>> */
     private array $jobs = [];
@@ -338,6 +345,37 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
         return $count;
     }
 
+    public function recoverStaleJobsForQueue(string $queue, int $ttlSeconds, int $limit): int
+    {
+        if ($ttlSeconds < 1 || $limit < 1) {
+            throw new \InvalidArgumentException('Stale recovery TTL and limit must be positive');
+        }
+        $now = $this->now();
+        $threshold = gmdate($this->dateFormat, $this->clock->timestamp() - $ttlSeconds);
+        $recovered = 0;
+        foreach ($this->jobs as &$job) {
+            if (
+                $recovered === $limit
+                || $job['queue'] !== $queue
+                || $job['status'] !== 'running'
+                || $job['locked_at'] >= $threshold
+            ) {
+                continue;
+            }
+            $job['status'] = 'pending';
+            $attempts = isset($job['attempts']) && is_numeric($job['attempts']) ? (int) $job['attempts'] : 0;
+            $job['attempts'] = $attempts + 1;
+            $job['available_at'] = $now;
+            $job['locked_by'] = null;
+            $job['locked_at'] = null;
+            $job['lease_token'] = null;
+            $job['updated_at'] = $now;
+            $recovered++;
+        }
+        unset($job);
+        return $recovered;
+    }
+
     /**
      * Get jobs by status.
      *
@@ -363,6 +401,27 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
         $filtered = array_slice($filtered, $offset, $limit, true);
 
         return array_values(array_map(fn($job) => JobData::fromRaw($job), $filtered));
+    }
+
+    /**
+     * @return list<JobData>
+     */
+    public function scanPending(string $queue, ?int $afterId, int $limit): array
+    {
+        if ($limit < 1) {
+            throw new \InvalidArgumentException('Scan limit must be positive');
+        }
+        $jobs = [];
+        foreach ($this->jobs as $id => $job) {
+            if ($job['status'] !== 'pending' || $job['queue'] !== $queue || ($afterId !== null && $id <= $afterId)) {
+                continue;
+            }
+            $jobs[] = JobData::fromRaw($job);
+            if (count($jobs) === $limit) {
+                break;
+            }
+        }
+        return $jobs;
     }
 
     public function count(?JobStatus $status = null, ?string $queue = null): int

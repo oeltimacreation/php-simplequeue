@@ -7,6 +7,8 @@ namespace Oeltima\SimpleQueue\Driver;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Contract\SupportsWorkerId;
+use Oeltima\SimpleQueue\Contract\SupportsClaimedDequeue;
+use Oeltima\SimpleQueue\Contract\ClaimedJob;
 
 /**
  * Database polling queue driver.
@@ -16,7 +18,7 @@ use Oeltima\SimpleQueue\Contract\SupportsWorkerId;
  *
  * Note: This driver has higher latency than Redis due to polling.
  */
-final class DatabaseQueueDriver implements QueueDriverInterface, SupportsWorkerId
+final class DatabaseQueueDriver implements QueueDriverInterface, SupportsWorkerId, SupportsClaimedDequeue
 {
     private const ERR_INVALID_JOB_ID = 'jobId must be a positive integer';
 
@@ -57,12 +59,17 @@ final class DatabaseQueueDriver implements QueueDriverInterface, SupportsWorkerI
 
     public function dequeue(string $queue, int $timeoutSeconds): ?int
     {
+        return $this->dequeueClaimed($queue, $timeoutSeconds)?->job->id;
+    }
+
+    public function dequeueClaimed(string $queue, int $timeoutSeconds): ?ClaimedJob
+    {
         $deadline = time() + max(0, $timeoutSeconds);
 
         do {
             $claim = $this->storage->claimNextAvailable($queue, $this->workerId);
             if ($claim !== null) {
-                return $claim->job->id;
+                return $claim;
             }
 
             if (time() >= $deadline) {

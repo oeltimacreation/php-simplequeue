@@ -27,10 +27,13 @@ means the singleton lock was unavailable.
 Call `JobStorageAdminInterface::pruneCompleted()` on a scheduled maintenance
 job. Retention applies to terminal records whose completion timestamp is older
 than the configured period; keep enough history for incident investigation.
-The v1.4 reconciliation sweep compares pending storage rows with notifier
-collections and repairs missing notifications, but is limited to the newest
-1,000 storage rows and can load complete Redis collections. Treat it as a
-small-queue repair mechanism until the bounded cursor-based reconciler lands.
+`QueueReconciler` performs bounded source-of-truth repair. Persist
+`ReconcileResult::$nextCursor` when invoking it from cron; workers keep this
+cursor in memory. Pending jobs are scanned in ascending ID order and wrap after
+the final page, so old records are eventually considered. The duration setting
+is a soft deadline checked between bounded membership operations. Redis pending
+membership uses a bounded `LPOS`; a false negative can enqueue a duplicate,
+which is safe under the library's at-least-once delivery contract.
 
 ## Failure model
 

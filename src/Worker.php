@@ -6,7 +6,6 @@ namespace Oeltima\SimpleQueue;
 
 use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\ClaimedJob;
-use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
@@ -14,8 +13,7 @@ use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
 use Oeltima\SimpleQueue\Contract\SupportsProcessingHeartbeat;
 use Oeltima\SimpleQueue\Contract\SupportsWorkerId;
 use Oeltima\SimpleQueue\Contract\SupportsTimeoutValidation;
-use Oeltima\SimpleQueue\Contract\SupportsQueueReconciliation;
-use Oeltima\SimpleQueue\Contract\JobStorageAdminInterface;
+use Oeltima\SimpleQueue\Contract\SupportsClaimedDequeue;
 use Oeltima\SimpleQueue\Exception\HandlerNotFoundException;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -59,6 +57,7 @@ final class Worker
     private float $recoveryInterval;
     private float $lastPromoteTime = 0.0;
     private float $lastRecoveryTime = 0.0;
+    private ?int $reconcileCursor = null;
 
     /** @var (callable(string, array<string, mixed>): void)|null */
     private $eventListener = null;
@@ -321,6 +320,13 @@ final class Worker
         $jobId = null;
 
         try {
+            if ($driver instanceof SupportsClaimedDequeue) {
+                $claim = $driver->dequeueClaimed($this->queue, $timeoutSeconds);
+                if ($claim === null) {
+                    return null;
+                }
+                return $claim;
+            }
             $jobId = $driver->dequeue($this->queue, $timeoutSeconds);
 
             if ($jobId === null) {
@@ -633,7 +639,9 @@ final class Worker
 
     private function recoverStaleJobs(): void
     {
-        $recovered = $this->storage->recoverStaleJobs($this->stuckJobTtl);
+        $recovered = $this->storage instanceof \Oeltima\SimpleQueue\Contract\SupportsQueueScopedStaleRecovery
+            ? $this->storage->recoverStaleJobsForQueue($this->queue, $this->stuckJobTtl, 100)
+            : $this->storage->recoverStaleJobs($this->stuckJobTtl);
 
         // Also recover from driver if supported
         $driver = $this->queueManager->driver();
@@ -658,64 +666,26 @@ final class Worker
     private function reconcileDbAndRedis(): void
     {
         $driver = $this->queueManager->driver();
-        if (!($driver instanceof SupportsQueueReconciliation)) {
+        if (!($driver instanceof \Oeltima\SimpleQueue\Contract\SupportsBoundedQueueMembership)) {
             return;
         }
 
         $storage = $this->storage;
-        if (!($storage instanceof JobStorageAdminInterface)) {
+        if (!($storage instanceof \Oeltima\SimpleQueue\Contract\SupportsPendingJobCursor)) {
             return;
         }
 
         try {
-            $this->logger->info('Running DB-Redis reconciliation sweep');
-
-            // 1. Get all pending jobs from DB for this queue
-            $dbJobs = $storage->list(JobStatus::Pending, $this->queue, 1000);
-            if ($dbJobs === []) {
-                return;
-            }
-
-            // 2. Get pending and delayed IDs from Redis
-            $redisPending = array_flip($driver->getPendingIds($this->queue));
-            $redisDelayed = array_flip($driver->getDelayedIds($this->queue));
-
-            $now = time();
-            $reconciledCount = 0;
-
-            foreach ($dbJobs as $job) {
-                $jobId = $job->id;
-                $availTimestamp = strtotime($job->availableAt ?? 'now');
-                $availableAt = $availTimestamp === false ? time() : $availTimestamp;
-
-                if ($availableAt <= $now) {
-                    // Immediate job: should be in Redis pending list or delayed ZSET (awaiting promotion)
-                    if (!isset($redisPending[$jobId]) && !isset($redisDelayed[$jobId])) {
-                        $this->logger->warning('Reconciling pending job missing from Redis pending queue', [
-                            'job_id' => $jobId,
-                            'queue' => $this->queue,
-                        ]);
-                        $driver->enqueue($this->queue, $jobId);
-                        $reconciledCount++;
-                    }
-                } else {
-                    // Delayed job: should be in Redis delayed ZSET
-                    if (!isset($redisDelayed[$jobId])) {
-                        $this->logger->warning('Reconciling delayed job missing from Redis delayed queue', [
-                            'job_id' => $jobId,
-                            'queue' => $this->queue,
-                            'delay_seconds' => $availableAt - $now,
-                        ]);
-                        $delaySeconds = max(0, $availableAt - $now);
-                        $driver->nack($this->queue, $jobId, $delaySeconds);
-                        $reconciledCount++;
-                    }
-                }
-            }
-
-            if ($reconciledCount > 0) {
-                $this->logger->info('DB-Redis reconciliation completed', ['reconciled_count' => $reconciledCount]);
-            }
+            $result = (new QueueReconciler($storage, $driver, $this->clock))->reconcile(
+                $this->queue,
+                new ReconcileOptions(cursor: $this->reconcileCursor)
+            );
+            $this->reconcileCursor = $result->nextCursor;
+            $this->logger->info('Bounded DB-Redis reconciliation completed', [
+                'scanned' => $result->scanned,
+                'restored' => $result->restored,
+                'next_cursor' => $result->nextCursor,
+            ]);
         } catch (\Throwable $e) {
             $this->logger->error('Failed to run DB-Redis reconciliation sweep', [
                 'error' => $e->getMessage(),

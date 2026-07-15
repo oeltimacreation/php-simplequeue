@@ -12,6 +12,8 @@ use Oeltima\SimpleQueue\Contract\JobStorageAdminInterface;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\IdempotentJobResult;
 use Oeltima\SimpleQueue\Contract\SupportsIdempotentJobCreation;
+use Oeltima\SimpleQueue\Contract\SupportsPendingJobCursor;
+use Oeltima\SimpleQueue\Contract\SupportsQueueScopedStaleRecovery;
 use Oeltima\SimpleQueue\SystemClock;
 use PDO;
 use PDOException;
@@ -25,7 +27,12 @@ use PDOStatement;
  *
  * Supports auto-reconnect for long-running workers via connection factory.
  */
-class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface, SupportsIdempotentJobCreation
+class PdoJobStorage implements
+    JobStorageInterface,
+    JobStorageAdminInterface,
+    SupportsIdempotentJobCreation,
+    SupportsPendingJobCursor,
+    SupportsQueueScopedStaleRecovery
 {
     protected ?PDO $pdo = null;
 
@@ -634,6 +641,48 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface, Su
         return $countFailed + $countPending;
     }
 
+    public function recoverStaleJobsForQueue(string $queue, int $ttlSeconds, int $limit): int
+    {
+        if ($ttlSeconds < 1 || $limit < 1) {
+            throw new \InvalidArgumentException('Stale recovery TTL and limit must be positive');
+        }
+        $now = $this->now();
+        $threshold = gmdate($this->dateFormat, $this->clock()->timestamp() - $ttlSeconds);
+        $sql = "SELECT * FROM {$this->table} WHERE queue = :queue AND status = 'running' " .
+            'AND locked_at < :threshold ORDER BY locked_at ASC LIMIT :limit';
+        $statement = $this->withReconnect(function (PDO $pdo) use ($sql, $queue, $threshold, $limit): PDOStatement {
+            $prepared = $pdo->prepare($sql);
+            if (!$prepared instanceof PDOStatement) {
+                throw new \RuntimeException('Failed to prepare SQL statement');
+            }
+            $prepared->bindValue('queue', $queue);
+            $prepared->bindValue('threshold', $threshold);
+            $prepared->bindValue('limit', $limit, PDO::PARAM_INT);
+            $prepared->execute();
+            return $prepared;
+        });
+        $recovered = 0;
+        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $job = JobData::fromRaw($row);
+            $terminal = $job->attempts + 1 >= $job->maxAttempts;
+            $update = "UPDATE {$this->table} SET status = :status, attempts = :attempts, " .
+                'available_at = :available_at, completed_at = :completed_at, locked_by = NULL, ' .
+                "locked_at = NULL, lease_token = NULL, updated_at = :updated_at WHERE id = :id " .
+                "AND status = 'running' AND locked_at < :threshold";
+            $changed = $this->execute($update, [
+                'status' => $terminal ? 'failed' : 'pending',
+                'attempts' => $job->attempts + 1,
+                'available_at' => $now,
+                'completed_at' => $terminal ? $now : null,
+                'updated_at' => $now,
+                'id' => $job->id,
+                'threshold' => $threshold,
+            ]);
+            $recovered += $changed->rowCount();
+        }
+        return $recovered;
+    }
+
     public function cancel(int $id): bool
     {
         $now = $this->now();
@@ -720,6 +769,37 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface, Su
         }
 
         return $jobs;
+    }
+
+    /**
+     * @return list<JobData>
+     */
+    public function scanPending(string $queue, ?int $afterId, int $limit): array
+    {
+        if ($limit < 1) {
+            throw new \InvalidArgumentException('Scan limit must be positive');
+        }
+        $sql = "SELECT * FROM {$this->table} WHERE queue = :queue AND status = 'pending'";
+        $params = ['queue' => $queue];
+        if ($afterId !== null) {
+            $sql .= ' AND id > :after_id';
+            $params['after_id'] = $afterId;
+        }
+        $sql .= ' ORDER BY id ASC LIMIT :limit';
+        $stmt = $this->withReconnect(function (PDO $pdo) use ($sql, $params, $limit): PDOStatement {
+            $statement = $pdo->prepare($sql);
+            if (!$statement instanceof PDOStatement) {
+                throw new \RuntimeException('Failed to prepare SQL statement');
+            }
+            foreach ($params as $key => $value) {
+                $statement->bindValue($key, $value);
+            }
+            $statement->bindValue('limit', $limit, PDO::PARAM_INT);
+            $statement->execute();
+            return $statement;
+        });
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        return array_values(array_map(static fn (array $row): JobData => JobData::fromRaw($row), $rows));
     }
 
     /**

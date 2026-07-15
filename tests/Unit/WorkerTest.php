@@ -11,7 +11,6 @@ use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
 use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
-use Oeltima\SimpleQueue\Contract\SupportsQueueReconciliation;
 use Oeltima\SimpleQueue\JobRegistry;
 use Oeltima\SimpleQueue\QueueManager;
 use Oeltima\SimpleQueue\Worker;
@@ -21,7 +20,7 @@ use Psr\Log\LoggerInterface;
 interface WorkerTestDelayedQueueDriver extends QueueDriverInterface, SupportsDelayedJobs
 {
 }
-interface WorkerTestReconciliationQueueDriver extends QueueDriverInterface, SupportsQueueReconciliation
+interface WorkerTestReconciliationQueueDriver extends QueueDriverInterface, \Oeltima\SimpleQueue\Contract\SupportsBoundedQueueMembership
 {
 }
 
@@ -1046,14 +1045,14 @@ class WorkerTest extends TestCase
 
         // 2. Redis currently has NOTHING (missing both jobs)
         $driver->expects($this->any())
-            ->method('getPendingIds')
+            ->method('hasPendingJob')
             ->with('default')
-            ->willReturn([]);
+            ->willReturn(false);
 
         $driver->expects($this->any())
-            ->method('getDelayedIds')
+            ->method('hasDelayedJob')
             ->with('default')
-            ->willReturn([]);
+            ->willReturn(false);
 
         // 3. We expect the worker to reconcile both:
         // - Enqueue the pending one

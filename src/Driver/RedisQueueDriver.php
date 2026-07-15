@@ -13,6 +13,7 @@ use Oeltima\SimpleQueue\Contract\SupportsQueueReconciliation;
 use Oeltima\SimpleQueue\Contract\QueueStatsInterface;
 use Oeltima\SimpleQueue\Contract\SupportsJobRemoval;
 use Oeltima\SimpleQueue\Contract\SupportsProcessingHeartbeat;
+use Oeltima\SimpleQueue\Contract\SupportsBoundedQueueMembership;
 use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Exception\QueueException;
 use Oeltima\SimpleQueue\SystemClock;
@@ -34,7 +35,8 @@ final class RedisQueueDriver implements
     SupportsQueueReconciliation,
     QueueStatsInterface,
     SupportsJobRemoval,
-    SupportsProcessingHeartbeat
+    SupportsProcessingHeartbeat,
+    SupportsBoundedQueueMembership
 {
     private const DEQUEUE_LUA = <<<'LUA'
 local jobId = redis.call('LMOVE', KEYS[1], KEYS[2], 'RIGHT', 'LEFT')
@@ -215,6 +217,19 @@ LUA;
     {
         $this->validateJobId($jobId);
         $this->redis->zadd($this->processingZKey($queue), [$jobId => $this->clock->timestamp()]);
+    }
+
+    public function hasPendingJob(string $queue, int $jobId, int $maxElements): bool
+    {
+        if ($maxElements < 1) {
+            throw new \InvalidArgumentException('Membership scan limit must be positive');
+        }
+        return $this->redis->lpos($this->pendingKey($queue), (string) $jobId, 'MAXLEN', $maxElements) !== null;
+    }
+
+    public function hasDelayedJob(string $queue, int $jobId): bool
+    {
+        return $this->redis->zscore($this->delayedKey($queue), (string) $jobId) !== null;
     }
 
     public function nack(string $queue, int $jobId, int $delaySeconds = 0): void
