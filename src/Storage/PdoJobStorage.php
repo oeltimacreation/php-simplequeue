@@ -10,6 +10,8 @@ use Oeltima\SimpleQueue\Contract\JobData;
 use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Contract\JobStorageAdminInterface;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
+use Oeltima\SimpleQueue\Contract\IdempotentJobResult;
+use Oeltima\SimpleQueue\Contract\SupportsIdempotentJobCreation;
 use Oeltima\SimpleQueue\SystemClock;
 use PDO;
 use PDOException;
@@ -23,7 +25,7 @@ use PDOStatement;
  *
  * Supports auto-reconnect for long-running workers via connection factory.
  */
-class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
+class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface, SupportsIdempotentJobCreation
 {
     protected ?PDO $pdo = null;
 
@@ -318,6 +320,55 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
     }
 
     /**
+     * @param array<string, mixed> $payload Job payload
+     */
+    public function createIdempotentJob(
+        string $type,
+        array $payload,
+        string $requestId,
+        string $queue,
+        int $maxAttempts
+    ): IdempotentJobResult {
+        // The database conditional/generated unique index is the concurrency authority.
+        for ($attempt = 0; $attempt < 2; $attempt++) {
+            $existing = $this->findActiveByRequestId($requestId);
+            if ($existing !== null) {
+                return new IdempotentJobResult($existing->id, false);
+            }
+
+            $pdo = $this->getPdo();
+            $hasSavepoint = $pdo->inTransaction();
+            if ($hasSavepoint) {
+                $pdo->exec('SAVEPOINT simplequeue_idempotent_job');
+            }
+
+            try {
+                $result = new IdempotentJobResult(
+                    $this->createJob($type, $payload, $queue, $maxAttempts, $requestId),
+                    true
+                );
+                if ($hasSavepoint) {
+                    $pdo->exec('RELEASE SAVEPOINT simplequeue_idempotent_job');
+                }
+                return $result;
+            } catch (PDOException $exception) {
+                if (!$this->isUniqueConstraintViolation($exception)) {
+                    throw $exception;
+                }
+
+                $this->rollbackIdempotentSavepoint($pdo, $hasSavepoint);
+
+                $existing = $this->findActiveByRequestId($requestId);
+                if ($existing !== null) {
+                    return new IdempotentJobResult($existing->id, false);
+                }
+            }
+        }
+
+        throw new \RuntimeException('Could not resolve concurrent idempotent job creation');
+    }
+
+    /**
      * Atomically claim the next available job in a queue.
      *
      * @param string $queue Queue name
@@ -423,6 +474,9 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
 
     public function updateProgress(ClaimedJob $claim, ?int $progress = null, ?string $message = null): bool
     {
+        if ($progress !== null && ($progress < 0 || $progress > 100)) {
+            throw new \InvalidArgumentException('Progress must be null or an integer between 0 and 100');
+        }
         $now = $this->now();
 
         $sql = "UPDATE {$this->table}
@@ -466,6 +520,9 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
         int $delaySeconds,
         ?string $errorMessage = null
     ): bool {
+        if ($attempts < 1 || $delaySeconds < 0) {
+            throw new \InvalidArgumentException('Attempts must be positive and retry delay must not be negative');
+        }
         $now = $this->now();
         $availableAt = gmdate($this->dateFormat, (int) strtotime($now) + $delaySeconds);
 
@@ -581,15 +638,33 @@ class PdoJobStorage implements JobStorageInterface, JobStorageAdminInterface
     {
         $now = $this->now();
         $sql = "UPDATE {$this->table}
-            SET status = 'cancelled', updated_at = :updated_at
+            SET status = 'cancelled', completed_at = :completed_at,
+                locked_by = NULL, locked_at = NULL, lease_token = NULL, updated_at = :updated_at
             WHERE id = :id AND status = 'pending'";
 
         $stmt = $this->execute($sql, [
             'id' => $id,
+            'completed_at' => $now,
             'updated_at' => $now,
         ]);
 
         return $stmt->rowCount() > 0;
+    }
+
+    private function isUniqueConstraintViolation(PDOException $exception): bool
+    {
+        return in_array((string) $exception->getCode(), ['23000', '23505'], true)
+            || (string) ($exception->errorInfo[0] ?? '') === '23000';
+    }
+
+    private function rollbackIdempotentSavepoint(PDO $pdo, bool $hasSavepoint): void
+    {
+        if (!$hasSavepoint) {
+            return;
+        }
+
+        $pdo->exec('ROLLBACK TO SAVEPOINT simplequeue_idempotent_job');
+        $pdo->exec('RELEASE SAVEPOINT simplequeue_idempotent_job');
     }
 
     /**

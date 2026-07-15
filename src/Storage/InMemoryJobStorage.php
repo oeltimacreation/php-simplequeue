@@ -10,6 +10,8 @@ use Oeltima\SimpleQueue\Contract\JobData;
 use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Contract\JobStorageAdminInterface;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
+use Oeltima\SimpleQueue\Contract\IdempotentJobResult;
+use Oeltima\SimpleQueue\Contract\SupportsIdempotentJobCreation;
 use Oeltima\SimpleQueue\SystemClock;
 
 /**
@@ -18,7 +20,7 @@ use Oeltima\SimpleQueue\SystemClock;
  * This storage keeps all jobs in memory and is useful for unit testing.
  * All data is lost when the process terminates.
  */
-class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterface
+class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterface, SupportsIdempotentJobCreation
 {
     /** @var array<int, array<string, mixed>> */
     private array $jobs = [];
@@ -126,6 +128,24 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
     }
 
     /**
+     * @param array<string, mixed> $payload Job payload
+     */
+    public function createIdempotentJob(
+        string $type,
+        array $payload,
+        string $requestId,
+        string $queue,
+        int $maxAttempts
+    ): IdempotentJobResult {
+        $existing = $this->findActiveByRequestId($requestId);
+        if ($existing !== null) {
+            return new IdempotentJobResult($existing->id, false);
+        }
+
+        return new IdempotentJobResult($this->createJob($type, $payload, $queue, $maxAttempts, $requestId), true);
+    }
+
+    /**
      * Atomically claim the next available job in a queue.
      *
      * @param string $queue Queue name
@@ -220,6 +240,9 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
 
     public function updateProgress(ClaimedJob $claim, ?int $progress = null, ?string $message = null): bool
     {
+        if ($progress !== null && ($progress < 0 || $progress > 100)) {
+            throw new \InvalidArgumentException('Progress must be null or an integer between 0 and 100');
+        }
         if (!$this->ownsClaim($claim)) {
             return false;
         }
@@ -239,6 +262,9 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
         int $delaySeconds,
         ?string $errorMessage = null
     ): bool {
+        if ($attempts < 1 || $delaySeconds < 0) {
+            throw new \InvalidArgumentException('Attempts must be positive and retry delay must not be negative');
+        }
         if (!$this->ownsClaim($claim)) {
             return false;
         }
@@ -409,6 +435,10 @@ class InMemoryJobStorage implements JobStorageInterface, JobStorageAdminInterfac
 
         $now = $this->now();
         $this->jobs[$id]['status'] = 'cancelled';
+        $this->jobs[$id]['completed_at'] = $now;
+        $this->jobs[$id]['locked_by'] = null;
+        $this->jobs[$id]['locked_at'] = null;
+        $this->jobs[$id]['lease_token'] = null;
         $this->jobs[$id]['updated_at'] = $now;
 
         return true;

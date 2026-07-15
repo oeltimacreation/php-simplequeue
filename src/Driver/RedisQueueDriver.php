@@ -11,6 +11,7 @@ use Oeltima\SimpleQueue\Contract\SupportsBatchEnqueue;
 use Oeltima\SimpleQueue\Contract\SupportsTimeoutValidation;
 use Oeltima\SimpleQueue\Contract\SupportsQueueReconciliation;
 use Oeltima\SimpleQueue\Contract\QueueStatsInterface;
+use Oeltima\SimpleQueue\Contract\SupportsJobRemoval;
 use Predis\ClientInterface;
 
 /**
@@ -27,7 +28,8 @@ final class RedisQueueDriver implements
     SupportsBatchEnqueue,
     SupportsTimeoutValidation,
     SupportsQueueReconciliation,
-    QueueStatsInterface
+    QueueStatsInterface,
+    SupportsJobRemoval
 {
     private const PROMOTE_DELAYED_LUA = <<<'LUA'
 local delayedKey = KEYS[1]
@@ -119,11 +121,15 @@ LUA;
 
     public function enqueue(string $queue, int $jobId): void
     {
+        $this->validateJobId($jobId);
         $this->redis->lpush($this->pendingKey($queue), [(string) $jobId]);
     }
 
     public function dequeue(string $queue, int $timeoutSeconds): ?int
     {
+        if ($timeoutSeconds < 0) {
+            throw new \InvalidArgumentException('Dequeue timeout must not be negative');
+        }
         if ($timeoutSeconds <= 0) {
             // Non-blocking: use LMOVE instead of BLMOVE
             $result = $this->redis->lmove(
@@ -157,6 +163,7 @@ LUA;
 
     public function ack(string $queue, int $jobId): void
     {
+        $this->validateJobId($jobId);
         /** @var \Predis\Pipeline\Pipeline $pipe */
         $pipe = $this->redis->pipeline();
         $pipe->lrem($this->processingKey($queue), 1, (string) $jobId);
@@ -164,8 +171,28 @@ LUA;
         $pipe->execute();
     }
 
+    public function remove(string $queue, int $jobId): void
+    {
+        $this->validateJobId($jobId);
+        $id = (string) $jobId;
+        $this->redis->eval(
+            "redis.call('LREM', KEYS[1], 0, ARGV[1]); redis.call('ZREM', KEYS[2], ARGV[1]); " .
+            "redis.call('LREM', KEYS[3], 0, ARGV[1]); redis.call('ZREM', KEYS[4], ARGV[1]); return 1",
+            4,
+            $this->pendingKey($queue),
+            $this->delayedKey($queue),
+            $this->processingKey($queue),
+            $this->processingZKey($queue),
+            $id
+        );
+    }
+
     public function nack(string $queue, int $jobId, int $delaySeconds = 0): void
     {
+        $this->validateJobId($jobId);
+        if ($delaySeconds < 0) {
+            throw new \InvalidArgumentException('Retry delay must not be negative');
+        }
         /** @var \Predis\Pipeline\Pipeline $pipe */
         $pipe = $this->redis->pipeline();
         // Remove from processing lists
@@ -216,6 +243,9 @@ LUA;
      */
     public function recoverStaleProcessing(string $queue, int $ttlSeconds, int $limit = 100): int
     {
+        if ($ttlSeconds < 1 || $limit < 1) {
+            throw new \InvalidArgumentException('Stale recovery TTL and limit must be positive');
+        }
         $staleThreshold = time() - $ttlSeconds;
 
         $result = $this->redis->eval(
@@ -337,5 +367,12 @@ LUA;
     private function delayedKey(string $queue): string
     {
         return sprintf('%s:queue:%s:delayed', $this->prefix, $queue);
+    }
+
+    private function validateJobId(int $jobId): void
+    {
+        if ($jobId < 1) {
+            throw new \InvalidArgumentException('Job ID must be a positive integer');
+        }
     }
 }

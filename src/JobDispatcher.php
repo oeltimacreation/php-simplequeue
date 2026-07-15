@@ -7,6 +7,9 @@ namespace Oeltima\SimpleQueue;
 use Oeltima\SimpleQueue\Contract\JobData;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\SupportsBatchEnqueue;
+use Oeltima\SimpleQueue\Contract\SupportsIdempotentJobCreation;
+use Oeltima\SimpleQueue\Contract\SupportsJobRemoval;
+use Oeltima\SimpleQueue\Exception\QueueException;
 
 /**
  * Service for dispatching jobs to the queue.
@@ -38,6 +41,7 @@ final class JobDispatcher
         int $maxAttempts = 3,
         ?string $requestId = null
     ): int {
+        $this->validateDispatchArguments($type, $queue, $maxAttempts, $requestId);
         $jobId = $this->storage->createJob($type, $payload, $queue, $maxAttempts, $requestId);
         $this->queueManager->enqueue($jobId, $queue);
 
@@ -61,6 +65,17 @@ final class JobDispatcher
         string $queue = 'default',
         int $maxAttempts = 3
     ): array {
+        $this->validateDispatchArguments($type, $queue, $maxAttempts, $requestId);
+        if ($requestId === '') {
+            throw new \InvalidArgumentException('Request ID must not be empty for idempotent dispatch');
+        }
+        if ($this->storage instanceof SupportsIdempotentJobCreation) {
+            $result = $this->storage->createIdempotentJob($type, $payload, $requestId, $queue, $maxAttempts);
+            if ($result->created) {
+                $this->queueManager->enqueue($result->jobId, $queue);
+            }
+            return ['job_id' => $result->jobId, 'created' => $result->created];
+        }
         $existing = $this->storage->findActiveByRequestId($requestId);
 
         if ($existing !== null) {
@@ -87,6 +102,7 @@ final class JobDispatcher
         string $queue = 'default',
         int $maxAttempts = 3
     ): array {
+        $this->validateDispatchArguments($type, $queue, $maxAttempts, null);
         $jobs = [];
         foreach ($payloads as $payload) {
             $jobs[] = [
@@ -146,6 +162,34 @@ final class JobDispatcher
      */
     public function cancelJob(int $jobId): bool
     {
-        return $this->storage->cancel($jobId);
+        if ($jobId < 1) {
+            throw new \InvalidArgumentException('Job ID must be a positive integer');
+        }
+        $job = $this->storage->find($jobId);
+        $cancelled = $this->storage->cancel($jobId);
+        if (($cancelled || $job?->status->value === 'cancelled') && $job !== null) {
+            $driver = $this->queueManager->driver();
+            if ($driver instanceof SupportsJobRemoval) {
+                try {
+                    $driver->remove($job->queue, $jobId);
+                } catch (\Throwable $exception) {
+                    throw new QueueException('Job was cancelled but queue notification cleanup failed', 0, $exception);
+                }
+            }
+        }
+        return $cancelled;
+    }
+
+    private function validateDispatchArguments(string $type, string $queue, int $maxAttempts, ?string $requestId): void
+    {
+        if (trim($type) === '' || trim($queue) === '') {
+            throw new \InvalidArgumentException('Job type and queue must not be empty');
+        }
+        if ($maxAttempts < 1) {
+            throw new \InvalidArgumentException('Maximum attempts must be at least 1');
+        }
+        if ($requestId !== null && trim($requestId) === '') {
+            throw new \InvalidArgumentException('Request ID must not be empty when provided');
+        }
     }
 }

@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added optional `SupportsJobRemoval` for idempotent removal of pending, delayed, and processing queue notifications.
+- Added optional `SupportsIdempotentJobCreation` and `IdempotentJobResult` so built-in storage implementations can resolve concurrent idempotent dispatch safely at the storage boundary.
+
+### Changed
+
+- `cancelJob()` now removes notifications after storage cancellation. If cleanup fails, cancellation remains durable and a contextual `QueueException` reports the repairable notifier inconsistency.
+- Cancelled jobs now receive `completed_at`, clear ownership fields, and are eligible for existing retention pruning.
+- `dispatch()`, batch dispatch, idempotent dispatch, progress updates, queue drivers, and stale recovery now reject invalid public input instead of accepting values without valid queue semantics.
+
+### Migration notes
+
+- Cancellation now removes a job notification from built-in Redis and in-memory drivers. A cancelled job that was already in Redis may safely be cancelled again to retry cleanup; the method still returns `false` for the repeated storage transition.
+- For cross-process idempotency with `PdoJobStorage`, retain the documented conditional/generated active-request-ID unique index from `examples/database-schema.sql`.
+
 ## [1.4.0] - 2026-07-14
 
 ### Added

@@ -10,6 +10,7 @@ use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
 use Oeltima\SimpleQueue\Contract\SupportsBatchEnqueue;
 use Oeltima\SimpleQueue\Contract\SupportsQueueReconciliation;
 use Oeltima\SimpleQueue\Contract\QueueStatsInterface;
+use Oeltima\SimpleQueue\Contract\SupportsJobRemoval;
 
 /**
  * In-memory queue driver for testing purposes.
@@ -23,7 +24,8 @@ final class InMemoryQueueDriver implements
     SupportsStaleRecovery,
     SupportsBatchEnqueue,
     SupportsQueueReconciliation,
-    QueueStatsInterface
+    QueueStatsInterface,
+    SupportsJobRemoval
 {
     /** @var array<string, int[]> */
     private array $pending = [];
@@ -44,6 +46,7 @@ final class InMemoryQueueDriver implements
 
     public function enqueue(string $queue, int $jobId): void
     {
+        $this->validateJobId($jobId);
         if (!isset($this->pending[$queue])) {
             $this->pending[$queue] = [];
         }
@@ -52,6 +55,9 @@ final class InMemoryQueueDriver implements
 
     public function dequeue(string $queue, int $timeoutSeconds): ?int
     {
+        if ($timeoutSeconds < 0) {
+            throw new \InvalidArgumentException('Dequeue timeout must not be negative');
+        }
         if (!isset($this->pending[$queue]) || $this->pending[$queue] === []) {
             return null;
         }
@@ -70,6 +76,7 @@ final class InMemoryQueueDriver implements
 
     public function ack(string $queue, int $jobId): void
     {
+        $this->validateJobId($jobId);
         if (!isset($this->processing[$queue])) {
             return;
         }
@@ -83,8 +90,26 @@ final class InMemoryQueueDriver implements
         unset($this->processingStartedAt[$queue][$jobId]);
     }
 
+    public function remove(string $queue, int $jobId): void
+    {
+        $this->validateJobId($jobId);
+        $this->pending[$queue] = array_values(array_filter(
+            $this->pending[$queue] ?? [],
+            static fn (int $id): bool => $id !== $jobId
+        ));
+        $this->processing[$queue] = array_values(array_filter(
+            $this->processing[$queue] ?? [],
+            static fn (int $id): bool => $id !== $jobId
+        ));
+        unset($this->delayed[$queue][$jobId], $this->processingStartedAt[$queue][$jobId]);
+    }
+
     public function nack(string $queue, int $jobId, int $delaySeconds = 0): void
     {
+        $this->validateJobId($jobId);
+        if ($delaySeconds < 0) {
+            throw new \InvalidArgumentException('Retry delay must not be negative');
+        }
         $this->ack($queue, $jobId);
         if ($delaySeconds > 0) {
             if (!isset($this->delayed[$queue])) {
@@ -135,6 +160,9 @@ final class InMemoryQueueDriver implements
      */
     public function recoverStaleProcessing(string $queue, int $ttlSeconds, int $limit = 100): int
     {
+        if ($ttlSeconds < 1 || $limit < 1) {
+            throw new \InvalidArgumentException('Stale recovery TTL and limit must be positive');
+        }
         if (!isset($this->processingStartedAt[$queue]) || $this->processingStartedAt[$queue] === []) {
             return 0;
         }
@@ -227,6 +255,13 @@ final class InMemoryQueueDriver implements
         $this->processing = [];
         $this->processingStartedAt = [];
         $this->delayed = [];
+    }
+
+    private function validateJobId(int $jobId): void
+    {
+        if ($jobId < 1) {
+            throw new \InvalidArgumentException('Job ID must be a positive integer');
+        }
     }
 
     /**

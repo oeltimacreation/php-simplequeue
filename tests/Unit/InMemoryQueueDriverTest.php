@@ -54,6 +54,21 @@ class InMemoryQueueDriverTest extends TestCase
         $this->assertNotContains(1, $pending);
     }
 
+    public function testRemoveDeletesAllNotificationStatesIdempotently(): void
+    {
+        $this->driver->enqueue('default', 7);
+        $this->driver->dequeue('default', 0);
+        $this->driver->nack('default', 7, 60);
+        $this->driver->enqueue('default', 7);
+
+        $this->driver->remove('default', 7);
+        $this->driver->remove('default', 7);
+
+        $this->assertNotContains(7, $this->driver->getPending('default'));
+        $this->assertNotContains(7, $this->driver->getProcessing('default'));
+        $this->assertArrayNotHasKey(7, $this->driver->getDelayed('default'));
+    }
+
     public function testDequeueReturnsNullWhenEmpty(): void
     {
         $jobId = $this->driver->dequeue('default', 0);
