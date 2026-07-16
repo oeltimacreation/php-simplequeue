@@ -1,632 +1,105 @@
 # OeltimaCreation PHP SimpleQueue
 
-A lightweight, framework-agnostic background job queue system for PHP. Supports Redis and database-backed queues with automatic retries, progress tracking, and graceful shutdown.
+A small, framework-agnostic PHP queue for durable background jobs. Job data is
+stored in a database; Redis or database polling delivers work to workers.
 
-## Features
-
-- **Framework Agnostic**: Works with any PHP framework or standalone applications
-- **Multiple Queue Drivers**: Redis (recommended) and Database polling
-- **Automatic Retries**: Configurable retry with exponential backoff
-- **Progress Tracking**: Report job progress with percentage and messages
-- **Graceful Shutdown**: Handles SIGTERM/SIGINT for clean worker termination
-- **Singleton Worker**: File locking prevents multiple workers from running
-- **Stale Job Recovery**: Automatically recovers jobs stuck in running state
-- **PSR Compliant**: Uses PSR-3 Logger and PSR-11 Container interfaces
+It supports retries with backoff, delayed retries, progress reporting,
+lease-based job ownership, graceful shutdown, and bounded queue repair.
 
 ## Requirements
 
-- PHP 8.2 or higher (fully tested on PHP 8.2 through 8.5)
-- Redis >= 7.0 or Valkey >= 8.0 (optional, for Redis/Valkey driver)
-- PDO (optional, for database driver)
+- PHP 8.2 or later
+- PDO and a supported database for durable jobs
+- Redis 7+ or Valkey 8+ with `predis/predis:^3` for Redis delivery (optional)
 
-### Platform Compatibility Matrix
-
-| Library Version | PHP Version | Redis Version | Valkey Version | Primary QA Gates |
-| :--- | :--- | :--- | :--- | :--- |
-| **1.4.x** (Current) | PHP 8.2 – 8.5 | Redis >= 7.0 | Valkey >= 8.0 | PHPStan L9 + Strict, PHPCS 4.0 + Slevomat |
-| **1.3.x** | PHP 8.1 – 8.4 | Redis >= 6.2 | N/A | PHPStan L8, PSR-12 |
-
-## Installation
+## Install
 
 ```bash
 composer require oeltimacreation/php-simplequeue
+composer require predis/predis # only when using the Redis driver
 ```
 
-For Redis support:
+Create the `background_jobs` table using the schema for your database in
+[the database guide](docs/database.md).
+
+## Quick start
+
+The in-memory sample has no services to configure and is the fastest way to
+see the complete dispatch → process → inspect flow:
+
 ```bash
-composer require predis/predis
+php examples/basic/in-memory.php
 ```
 
-## Quick Start
-
-### 1. Create a Job Handler
+For a durable Redis setup, configure the environment variables shown in
+[the Redis example](examples/redis/README.md), then run the worker and
+dispatcher in separate terminals.
 
 ```php
-<?php
-
 use Oeltima\SimpleQueue\Contract\JobHandlerInterface;
-
-class SendEmailJob implements JobHandlerInterface
-{
-    public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
-    {
-        $to = $payload['to'];
-        $subject = $payload['subject'];
-        $body = $payload['body'];
-
-        // Report progress
-        if ($progressCallback) {
-            $progressCallback(50, 'Sending email...');
-        }
-
-        // Send email logic here
-        mail($to, $subject, $body);
-
-        if ($progressCallback) {
-            $progressCallback(100, 'Email sent');
-        }
-
-        return ['sent_at' => date('Y-m-d H:i:s')];
-    }
-}
-```
-
-### 2. Set Up the Queue
-
-```php
-<?php
-
+use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
 use Oeltima\SimpleQueue\JobDispatcher;
 use Oeltima\SimpleQueue\JobRegistry;
 use Oeltima\SimpleQueue\QueueManager;
-use Oeltima\SimpleQueue\Storage\PdoJobStorage;
-use Predis\Client as RedisClient;
-
-// Create storage with connection factory (recommended for long-running workers)
-$connectionFactory = fn() => new PDO(
-    'mysql:host=localhost;dbname=myapp',
-    'user',
-    'password',
-    [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
-);
-$storage = new PdoJobStorage($connectionFactory);
-
-// Or pass a PDO instance directly (for short-lived scripts)
-// $pdo = new PDO('mysql:host=localhost;dbname=myapp', 'user', 'password');
-// $storage = new PdoJobStorage($pdo);
-
-// Create queue manager with Redis (recommended)
-$redis = new RedisClient(['host' => '127.0.0.1']);
-$queueManager = QueueManager::redis($redis);
-
-// Or use database polling as fallback
-// $queueManager = QueueManager::database($storage);
-
-// Or auto-select (tries Redis first, falls back to database)
-// $queueManager = QueueManager::create('auto', $redis, $storage);
-
-// Create job registry and register handlers
-$registry = new JobRegistry();
-$registry->register('email.send', SendEmailJob::class);
-
-// Create dispatcher
-$dispatcher = new JobDispatcher($storage, $queueManager);
-```
-
-### 3. Dispatch Jobs
-
-```php
-// Dispatch a single job
-$jobId = $dispatcher->dispatch('email.send', [
-    'to' => 'user@example.com',
-    'subject' => 'Welcome!',
-    'body' => 'Thanks for signing up.',
-]);
-
-// Dispatch with custom options
-$jobId = $dispatcher->dispatch(
-    type: 'email.send',
-    payload: ['to' => 'user@example.com', 'subject' => 'Hello'],
-    queue: 'emails',      // Custom queue name
-    maxAttempts: 5,       // Retry up to 5 times
-    requestId: 'req-123'  // Correlation ID for tracing
-);
-
-// Dispatch batch
-$jobIds = $dispatcher->dispatchBatch('email.send', [
-    ['to' => 'user1@example.com', 'subject' => 'Hello'],
-    ['to' => 'user2@example.com', 'subject' => 'Hello'],
-]);
-
-// Check job status
-$job = $dispatcher->getStatus($jobId);
-echo $job->status;    // pending, running, completed, failed
-echo $job->progress;  // 0-100
-```
-
-### 4. Run the Worker
-
-```php
-<?php
-// worker.php
-
-use Oeltima\SimpleQueue\Worker;
-use Monolog\Logger;
-use Monolog\Handler\StreamHandler;
-
-// Set up logging
-$logger = new Logger('worker');
-$logger->pushHandler(new StreamHandler('php://stdout'));
-
-// Create worker
-$worker = new Worker(
-    storage: $storage,
-    queueManager: $queueManager,
-    registry: $registry,
-    logger: $logger,
-    queue: 'default',
-    options: [
-        'poll_timeout' => 5,        // Seconds to wait for jobs
-        'stuck_job_ttl' => 600,     // Recover jobs running > 10 min
-        'retry_base_delay' => 2,    // Base delay for exponential backoff
-        'retry_max_delay' => 300,   // Maximum retry delay (5 min)
-        'lock_file' => '/tmp/myapp-worker.lock',
-    ]
-);
-
-// Run the worker (blocks until shutdown signal)
-$worker->run();
-```
-
-Run the worker:
-```bash
-php worker.php
-```
-
-For production, use a process manager like Supervisor:
-
-```ini
-[program:queue-worker]
-command=php /path/to/worker.php
-autostart=true
-autorestart=true
-user=www-data
-numprocs=1
-redirect_stderr=true
-stdout_logfile=/var/log/queue-worker.log
-```
-
-## Database Schema
-
-Create the jobs table. For details on MySQL, PostgreSQL, and SQLite, see [database-schema.sql](file:///home/nerdv2/work/Oeltimacreation/php-simplequeue/examples/database-schema.sql).
-
-### MySQL / MariaDB Schema
-
-```sql
-CREATE TABLE background_jobs (
-    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    queue VARCHAR(255) NOT NULL DEFAULT 'default',
-    type VARCHAR(255) NOT NULL,
-    status ENUM('pending', 'running', 'completed', 'failed', 'cancelled') NOT NULL DEFAULT 'pending',
-    payload JSON,
-    attempts INT UNSIGNED NOT NULL DEFAULT 0,
-    max_attempts INT UNSIGNED NOT NULL DEFAULT 3,
-    progress INT UNSIGNED DEFAULT NULL,
-    progress_message VARCHAR(255) DEFAULT NULL,
-    result JSON DEFAULT NULL,
-    available_at DATETIME NOT NULL,
-    started_at DATETIME DEFAULT NULL,
-    completed_at DATETIME DEFAULT NULL,
-    locked_by VARCHAR(255) DEFAULT NULL,
-    locked_at DATETIME DEFAULT NULL,
-    lease_token VARCHAR(64) DEFAULT NULL,
-    error_message TEXT DEFAULT NULL,
-    error_trace TEXT DEFAULT NULL,
-    request_id VARCHAR(255) DEFAULT NULL,
-    -- Generated virtual column to enforce unique active request_id (idempotency)
-    active_request_id VARCHAR(255) GENERATED ALWAYS AS (
-        CASE WHEN status IN ('pending', 'running') THEN request_id ELSE NULL END
-    ) VIRTUAL,
-    created_at DATETIME NOT NULL,
-    updated_at DATETIME NOT NULL,
-    
-    INDEX idx_queue_status (queue, status),
-    INDEX idx_claim_ready (queue, status, available_at, id),
-    INDEX idx_status_available (status, available_at),
-    INDEX idx_locked_at (locked_at),
-    INDEX idx_lease_token (lease_token),
-    INDEX idx_type (type),
-    INDEX idx_request_id (request_id),
-    UNIQUE KEY uq_active_request_id (active_request_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-```
-
-### Idempotent Dispatch & Unique Constraints
-
-To prevent race conditions where concurrent calls to `JobDispatcher::dispatchIdempotent()` create duplicate jobs, you should add a conditional unique constraint on the `request_id` column:
-
-- **MySQL 5.7+ / MariaDB**: Add a virtual generated column mapping active jobs (pending/running) to the `request_id` and define a unique key on it (included in the schema above).
-- **PostgreSQL**: Define a partial unique index:
-  ```sql
-  CREATE UNIQUE INDEX uq_active_request_id ON background_jobs (request_id) WHERE status IN ('pending', 'running');
-  ```
-- **SQLite**: Define a partial unique index:
-  ```sql
-  CREATE UNIQUE INDEX uq_active_request_id ON background_jobs (request_id) WHERE status IN ('pending', 'running');
-  ```
-
-## Configuration
-
-### Queue Drivers
-
-**Redis Driver** (recommended for production):
-```php
-use Oeltima\SimpleQueue\QueueManager;
-use Predis\Client;
-
-$redis = new Client(['host' => '127.0.0.1', 'port' => 6379]);
-$queueManager = QueueManager::redis($redis, 'myapp'); // prefix for Redis keys
-```
-
-**Database Driver** (fallback option):
-```php
-$queueManager = QueueManager::database($storage);
-```
-
-**Auto Selection**:
-```php
-$queueManager = QueueManager::create(
-    driverName: 'auto',     // 'redis', 'db', or 'auto'
-    redis: $redis,          // Optional Redis client
-    storage: $storage,      // Optional storage for DB fallback
-    redisPrefix: 'myapp'
-);
-```
-
-### Worker Options
-
-Options are read when `Worker` is constructed. Numeric strings are accepted for
-backwards compatibility with environment configuration. Invalid TTLs, negative
-limits, and a retry maximum below its base delay are rejected before the worker
-starts. `WorkerOptions` and `Worker::withOptions()` provide a validated
-object-based alternative without changing the existing constructor.
-
-| Option | Type | Default | Unit / allowed values | Description |
-|--------|------|---------|-----------------------|-------------|
-| `poll_timeout` | `int` | `5` | seconds; `0` or greater | Time to wait for a job. With Redis, the client read/write timeout must be greater than this value or disabled (`-1`). |
-| `stuck_job_ttl` | `int` | `600` | seconds; positive | Age after which a running job is eligible for stale recovery. Long jobs must report progress or use a larger TTL. |
-| `retry_base_delay` | `int` | `2` | seconds; non-negative | Base for exponential retry delay. |
-| `retry_max_delay` | `int` | `300` | seconds; non-negative and at least `retry_base_delay` | Upper bound for exponential retry delay. |
-| `lock_file` | `string\|null` | queue-scoped `/tmp/simplequeue-worker-{queue}.lock` | path, or `null` to disable | Singleton lock path. One lock is required per worker process/queue. |
-| `clock` | `ClockInterface` | `SystemClock` | injected clock | Deterministic wall/monotonic time for tests and custom runtimes. |
-| `max_jobs` | `int` | `0` | jobs; `0` disables | Exit after processing this many jobs. |
-| `max_time` | `int` | `0` | seconds; `0` disables | Exit after this much worker uptime. |
-| `memory_limit` | `int` | `0` | MB; `0` disables | Exit when the PHP process exceeds this memory limit. |
-| `stop_when_empty` | `bool` | `false` | `true` or `false` | Exit when no job is available instead of polling indefinitely. |
-| `promote_interval` | `float` | `5.0` | seconds; non-negative | Minimum interval between delayed-job promotion runs. |
-| `recovery_interval` | `float` | `60.0` | seconds; non-negative | Minimum interval between stale-job recovery and reconciliation runs. |
-| `event_listener` | `callable\|null` | `null` | `(string $event, array $data): void` | Receives worker lifecycle events; listener failures are logged and do not stop the worker. |
-
-`poll_timeout` is passed to the selected driver. `max_jobs`, `max_time`,
-`memory_limit`, and `stop_when_empty` are loop exit controls; the interval
-options only throttle maintenance. The worker returns `0` (`Worker::EXIT_SUCCESS`)
-after a normal stop or configured limit, `1` (`Worker::EXIT_ERROR`) for an
-unhandled worker error, and `2` (`Worker::EXIT_LOCK_UNAVAILABLE`) when its
-singleton lock cannot be acquired.
-
-### PSR-11 Container Integration
-
-```php
-use Oeltima\SimpleQueue\JobRegistry;
-
-// Pass your PSR-11 container
-$registry = new JobRegistry($container);
-$registry->register('email.send', SendEmailJob::class);
-
-// Handler will be resolved from container if registered
-// Otherwise, instantiated directly
-```
-
-## Advanced Usage
-
-### Connection Handling for Long-Running Workers
-
-When running workers for extended periods, database connections can time out (e.g., MySQL's `wait_timeout`). To handle this gracefully, pass a **connection factory** instead of a PDO instance:
-
-```php
-use Oeltima\SimpleQueue\Storage\PdoJobStorage;
-
-// Connection factory - creates fresh connections on demand
-$connectionFactory = function (): PDO {
-    $pdo = new PDO(
-        'mysql:host=localhost;dbname=myapp',
-        'user',
-        'password',
-        [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
-    );
-    return $pdo;
-};
-
-$storage = new PdoJobStorage($connectionFactory);
-```
-
-The storage will automatically:
-1. Optimistically execute queries on the database.
-2. If a connection loss exception is caught (e.g., MySQL server has gone away), it will immediately clear the stale connection, invoke the factory to establish a fresh connection, and retry the operation once.
-3. Continue processing without crashing, eliminating the overhead of running `SELECT 1` before every query.
-
-You can also force a reconnection manually:
-
-```php
-$storage->reconnect(); // Next operation will use a fresh connection
-```
-
-### Custom Job Storage
-
-Implement `JobStorageInterface` for custom storage:
-
-```php
-use Oeltima\SimpleQueue\Contract\JobStorageInterface;
-use Oeltima\SimpleQueue\Contract\JobData;
-
-class MongoJobStorage implements JobStorageInterface
-{
-    public function createJob(string $type, array $payload, ...): int { ... }
-    public function find(int $id): ?JobData { ... }
-    // Implement all interface methods
-}
-```
-
-### Custom Queue Driver
-
-Implement `QueueDriverInterface` for custom drivers:
-
-```php
-use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
-
-class RabbitMQDriver implements QueueDriverInterface
-{
-    public function isAvailable(): bool { ... }
-    public function enqueue(string $queue, int $jobId): void { ... }
-    public function dequeue(string $queue, int $timeoutSeconds): ?int { ... }
-    public function ack(string $queue, int $jobId): void { ... }
-    public function nack(string $queue, int $jobId): void { ... }
-}
-```
-
-### Handling Job Failures
-
-Jobs automatically retry with exponential backoff:
-- Attempt 1 fails → retry after 2 seconds
-- Attempt 2 fails → retry after 4 seconds
-- Attempt 3 fails → marked as failed
-
-Access error information:
-```php
-$job = $dispatcher->getStatus($jobId);
-if ($job->status === 'failed') {
-    echo $job->errorMessage;
-    echo $job->errorTrace;
-}
-```
-
-### Testing
-
-Use in-memory implementations for testing:
-
-```php
-use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
 use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
+use Oeltima\SimpleQueue\Worker;
+
+final class WelcomeEmail implements JobHandlerInterface
+{
+    public function handle(int $jobId, array $payload, ?callable $progress = null): mixed
+    {
+        if ($progress !== null) {
+            $progress(100, 'Email sent');
+        }
+
+        return ['recipient' => $payload['email']];
+    }
+}
 
 $storage = new InMemoryJobStorage();
-$driver = new InMemoryQueueDriver();
-$queueManager = new QueueManager($driver);
+$queues = new QueueManager(new InMemoryQueueDriver());
+$registry = new JobRegistry();
+$registry->register('email.welcome', WelcomeEmail::class);
+$dispatcher = new JobDispatcher($storage, $queues);
 
-// Dispatch and process synchronously
-$dispatcher = new JobDispatcher($storage, $queueManager);
-$jobId = $dispatcher->dispatch('test.job', ['data' => 'value']);
+$jobId = $dispatcher->dispatch('email.welcome', ['email' => 'ada@example.test']);
+(new Worker($storage, $queues, $registry, queue: 'default', options: ['lock_file' => null]))->processOne();
 
-$worker = new Worker($storage, $queueManager, $registry);
-$worker->processOne(); // Process single job
-
-$job = $storage->find($jobId);
-$this->assertEquals('completed', $job->status);
+echo $dispatcher->getStatus($jobId)?->status->value; // completed
 ```
 
-### Idempotency & At-Least-Once Caveats
+## Documentation
 
-OeltimaCreation SimpleQueue guarantees **at-least-once delivery**. In rare scenarios (e.g. worker crashing after finishing a task but before acknowledging it, network partition, or lease expiration), a job may be executed more than once. 
+- [Getting started](docs/getting-started.md) — durable setup and first worker
+- [Configuration](docs/configuration.md) — drivers and worker options
+- [Database guide](docs/database.md) — schemas, indexes, and idempotency
+- [Operations](docs/operations.md) — deployment, repair, retention, monitoring
+- [Architecture](docs/architecture.md) — delivery and ownership model
+- [Extending](docs/extending.md) — custom handlers, storage, and drivers
+- [Upgrading](docs/upgrading.md) — supported upgrade paths
+- [Examples](examples/README.md) — runnable sample catalogue
 
-**Therefore, your job handlers MUST be idempotent.**
+## Important delivery rule
 
-#### Idempotent Dispatching
+SimpleQueue provides **at-least-once delivery**. A job can run more than once
+if a worker completes a side effect and stops before its acknowledgement is
+stored. Make every handler idempotent: use transaction IDs, unique database
+constraints, or provider idempotency keys for external side effects.
 
-The library provides `dispatchIdempotent()` to prevent duplicate active jobs for the same unique transaction or request. For this to be safe under concurrent calls, you **must** configure database unique constraints:
+`dispatchIdempotent()` prevents duplicate *active* jobs for one request ID.
+For cross-process safety with `PdoJobStorage`, keep the conditional/generated
+active-request-ID unique index from the database guide.
 
-```php
-// Dispatch a job with a unique request ID
-$result = $dispatcher->dispatchIdempotent(
-    type: 'order.process',
-    payload: ['order_id' => 12345],
-    requestId: 'req_order_12345'
-);
-
-if ($result['created']) {
-    echo "Dispatched new job: " . $result['job_id'];
-} else {
-    echo "Using existing active job: " . $result['job_id'];
-}
-```
-
-Ensure your database enforces this uniqueness. See the **Database Schema** section for MySQL, PostgreSQL, and SQLite configurations.
-
----
-
-### Safe Predis Timeout Configuration
-
-If you use the Redis queue driver with a blocking dequeue call (when `poll_timeout` is positive), you must configure your Predis connection timeout carefully. If Predis's `read_write_timeout` is less than or equal to the worker's `poll_timeout`, Predis will close the connection while waiting, causing connection errors in the worker.
-
-When starting up, the worker automatically validates this configuration. Ensure your Predis client is configured as follows:
-
-```php
-use Predis\Client;
-
-$redis = new Client([
-    'host' => '127.0.0.1',
-    'port' => 6379,
-    // Set read_write_timeout to -1 (disable) or a value higher than your poll_timeout (e.g. 60)
-    'read_write_timeout' => -1,
-]);
-```
-
----
-
-### Queue Statistics & Monitoring
-
-If your queue driver supports statistics (implements `QueueStatsInterface` like `RedisQueueDriver`), you can query queue sizes and processing status:
-
-```php
-use Oeltima\SimpleQueue\Contract\QueueStatsInterface;
-
-if ($queueManager->driver() instanceof QueueStatsInterface) {
-    /** @var QueueStatsInterface $driver */
-    $driver = $queueManager->driver();
-    
-    $pending = $driver->getPendingCount('default');
-    $processing = $driver->getProcessingCount('default');
-    $delayed = $driver->getDelayedCount('default');
-    
-    echo "Pending: $pending | Processing: $processing | Delayed: $delayed\n";
-}
-```
-
----
-
-## Migration from v1.2.x to v1.3.0
-
-v1.3.0 introduces breaking changes to resolve concurrency races and improve performance:
-
-### 1. Database Schema Update
-You must add a `lease_token` column and alter the `available_at` column. See the [1.3.0 migration script](file:///home/nerdv2/work/Oeltimacreation/php-simplequeue/examples/migrations/1.3.0-lease-based-claims.sql) for details.
-
-### 2. JobStorageInterface Changes
-If you have written custom job storage backends, you must implement the new lease-based claim flow:
-- Implement `claimNextAvailable(string $queue, string $workerId): ?ClaimedJob`.
-- Implement `claimById(int $id, string $workerId): ?ClaimedJob`.
-- Update `markCompleted`, `markFailed`, `updateProgress`, `scheduleRetry`, and `heartbeat` to accept a `ClaimedJob` instead of `$jobId`.
-- Remove the deprecated `getNextPendingJobId()` and `claimJob()`.
-
----
-
-## API Reference
-
-### JobDispatcher
-
-| Method | Description |
-|--------|-------------|
-| `dispatch(string $type, array $payload, ...)` | Queue a single job |
-| `dispatchBatch(string $type, array $payloads, ...)` | Queue multiple jobs |
-| `getStatus(int $jobId)` | Get job details |
-
-### Worker
-
-| Method | Description |
-|--------|-------------|
-| `run()` | Start the worker loop |
-| `processOne()` | Process a single job |
-| `stop()` | Signal the worker to stop |
-| `getWorkerId()` | Get the worker identifier |
-
-### JobData
-
-| Property | Type | Description |
-|----------|------|-------------|
-| `id` | int | Job ID |
-| `type` | string | Job type identifier |
-| `status` | JobStatus | Job status enum (pending, running, completed, failed, cancelled) |
-| `payload` | array | Job data |
-| `progress` | ?int | Progress percentage (0-100) |
-| `progressMessage` | ?string | Progress status message |
-| `result` | mixed | Job result (when completed) |
-| `errorMessage` | ?string | Error message (when failed) |
-| `attempts` | int | Number of attempts made |
-
-## Migration from v1.3.x to v1.4.0
-
-v1.4.0 is a platform and toolchain modernization release:
-
-### 1. PHP Version Requirement
-
-**BREAKING**: The minimum PHP version is now **8.2**. PHP 8.1 is no longer supported.
-
-### 2. Predis Version Requirement
-
-**BREAKING**: The Predis requirement has been bumped to **^3.0**. Predis 2.x is no longer supported.
-
-### 3. JobStatus Enum
-
-Job statuses are now represented by the `Oeltima\SimpleQueue\Contract\JobStatus` backed enum instead of raw strings. If you compare statuses directly, update your code:
-
-```php
-use Oeltima\SimpleQueue\Contract\JobStatus;
-
-// Before (v1.3.x)
-if ($job->status === 'completed') { ... }
-
-// After (v1.4.0)
-if ($job->status === JobStatus::Completed) { ... }
-```
-
-### 4. Dev Toolchain Updates (for contributors)
-
-- PHPUnit locked to `^11.0` (PHPUnit 10 dropped)
-- PHPStan upgraded to `^2.2.2` at level 9 with strict-rules
-- PHPCS migrated from `squizlabs/php_codesniffer` to `phpcsstandards/php_codesniffer ^4.0` with Slevomat coding standard
-
----
-
-## Migration from v1.4.x to v1.5.0
-
-v1.5.0 is a reliability release with no required offline schema migration.
-
-- Keep the active-request-ID unique index from the provided schema for concurrent `dispatchIdempotent()` calls.
-- Cancelled jobs are now terminal, pruneable records and built-in drivers remove their notifications after the durable storage transition.
-- Invalid payload/result JSON and invalid worker settings now fail explicitly. Use `WorkerOptions` for validated configuration while retaining array options for compatibility.
-- Use `QueueReconciler` for standalone repair and persist its returned cursor. Redis visibility repair is eventual after a blocking dequeue crash; long-running handlers should report progress at least every half TTL.
-
-Known limitations remain intentional: delivery is at least once, bounded Redis pending checks can create duplicate notifications, and blocking dequeue cannot make list movement and timestamping fully atomic.
-
----
-
-## Development Toolchain
-
-| Tool | Version | Purpose |
-|------|---------|--------|
-| PHPUnit | ^11.0 | Testing framework |
-| PHPStan | ^2.2.2 (Level 9 + strict-rules) | Static analysis |
-| PHPCS | phpcsstandards/php_codesniffer ^4.0 | Code style (PSR-12 + Slevomat) |
-| Predis | ^3.0 (dev) | Redis/Valkey integration testing |
+## Development
 
 ```bash
-# Run all quality checks
-composer check
-
-# Individual commands
-composer test          # PHPUnit (no coverage)
-composer phpstan       # PHPStan level 9 + strict-rules
-composer cs-check      # PHPCS with custom ruleset
-composer cs-fix        # Auto-fix code style
-composer test-coverage # PHPUnit with HTML coverage report
+composer check        # tests, PHPStan, and coding style
+composer test
+composer phpstan
+composer cs-check
+composer test-coverage
 ```
 
-## Contributing
-
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
-
-## Security
-
-If you discover a security vulnerability, please send an email to gema@oeltimacreation.com instead of using the issue tracker.
-
-## License
-
-The MIT License (MIT). Please see [LICENSE](LICENSE) for more information.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution details,
+[SECURITY.md](SECURITY.md) for vulnerability reporting, and [LICENSE](LICENSE)
+for license terms.

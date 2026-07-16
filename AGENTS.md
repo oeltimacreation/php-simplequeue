@@ -5,7 +5,7 @@
 ## Project Identity
 
 - **Name**: OeltimaCreation PHP SimpleQueue
-- **Version**: 1.4.0
+- **Version**: 1.5.2
 - **Language**: PHP 8.2+
 - **Type**: Framework-agnostic background job queue library
 - **License**: MIT
@@ -283,6 +283,18 @@ Always use `InMemoryJobStorage` and `InMemoryQueueDriver` for unit tests. Reserv
 
 ## Common Tasks
 
+### Preparing a Release
+
+Every stable release must use this workflow:
+
+1. Create `release/<version>` from `master` (for example, `release/1.6.0`) and open a pull request back to `master`/`main`. Do not tag directly from a feature branch.
+2. Update `CHANGELOG.md`, set Composer/Packagist release metadata to the non-prefixed semantic version (`1.6.0`), and complete the full release validation suite.
+3. Merge only after all required CI checks pass. Tag the resulting default-branch commit with the Git tag `v1.6.0`.
+4. Create a GitHub release titled `v1.6.0`. Its notes must contain the matching changelog section, not only GitHub's generated compare link.
+5. Verify Packagist exposes and installs `1.6.0` from the tagged commit before announcing the release.
+
+Never move, recreate, or reuse a published stable tag. If a release must be corrected after Packagist indexes it, publish a new patch version instead.
+
 ### Adding a New Queue Driver
 
 1. Implement `QueueDriverInterface` in `src/Driver/`
@@ -345,3 +357,4 @@ Always use `InMemoryJobStorage` and `InMemoryQueueDriver` for unit tests. Reserv
 - **Predis is optional**: Redis-related code must handle `predis/predis` not being installed; PHPStan config ignores Predis errors
 - **Backward compatibility**: Interface changes are breaking — document in CHANGELOG.md and consider carefully
 - **In-memory parity**: `InMemoryJobStorage` and `InMemoryQueueDriver` must implement the same behavior as their real counterparts for reliable testing
+- **Release policy**: Follow the release workflow above exactly. Git tags and GitHub release titles use `v` (for example, `v1.6.0`); Composer/Packagist versions use no prefix (for example, `1.6.0`).

@@ -1,4 +1,7 @@
-# Architecture outline
+# Architecture
+
+See [getting started](getting-started.md) for setup and
+[operations](operations.md) for deployment and repair guidance.
 
 ## Boundaries and source of truth
 
@@ -23,8 +26,8 @@ Running jobs have a lease in storage and a processing visibility marker in
 drivers that support it. Progress callbacks are the cooperative refresh point.
 Handlers longer than `stuck_job_ttl` should report progress at least often
 enough to leave room for maintenance cadence and network jitter, or operators
-should choose a larger TTL. The v1.4 worker does not interrupt a synchronous
-handler and therefore does not promise a hard timeout.
+should choose a larger TTL. Workers do not interrupt a synchronous handler and
+therefore do not promise a hard timeout.
 
 ## Drivers and scaling
 
@@ -33,4 +36,3 @@ database driver polls storage and claims rows there. The worker singleton lock
 is a local file lock: scale by using one lock file per independent worker/queue
 and coordinate process counts with the supervisor. The current Redis key layout
 does not promise Redis Cluster hash-slot compatibility.
-
