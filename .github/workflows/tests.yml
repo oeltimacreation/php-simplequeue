@@ -106,4 +106,4 @@ jobs:
           php-version: '8.2'
           coverage: none
       - run: composer install --no-dev --no-interaction --prefer-dist --no-progress
-      - run: php examples/basic-usage.php
+      - run: php examples/basic/in-memory.php

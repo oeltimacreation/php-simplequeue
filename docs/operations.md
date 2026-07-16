@@ -1,4 +1,7 @@
-# Operations outline
+# Operations
+
+This guide assumes the durable setup in [getting started](getting-started.md).
+See [configuration](configuration.md) for the full worker option reference.
 
 ## Worker and Redis settings
 
@@ -50,12 +53,12 @@ storage implementations. Preserve existing Redis keys and add new keys only
 with an upgrade-safe rollout. Validate configuration and run the compatibility
 smoke test after deploying a new library version.
 
-## v1.5 release checklist
+## Release and deployment checks
 
 Run `composer validate --strict`, `composer audit`, `composer check`, and the
 coverage command from a clean checkout. CI also resolves lowest supported
 dependencies and tests PHP 8.2–8.5 against Redis 7, Valkey 8, MySQL 8,
 PostgreSQL 15, and SQLite. Install smoke tests should include database-only
 usage without Predis and existing v1.4 schema/key deployments.
-The initial v1.5 line-coverage floor is 70%; raise it as focused coverage is
-added rather than lowering it for unrelated changes.
+Keep the compatibility smoke tests and raise coverage through focused tests;
+do not lower quality gates to accommodate unrelated changes.
