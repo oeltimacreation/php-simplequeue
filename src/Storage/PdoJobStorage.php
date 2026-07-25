@@ -15,6 +15,7 @@ use Oeltima\SimpleQueue\Contract\SupportsIdempotentJobCreation;
 use Oeltima\SimpleQueue\Contract\SupportsPendingJobCursor;
 use Oeltima\SimpleQueue\Contract\SupportsQueueScopedStaleRecovery;
 use Oeltima\SimpleQueue\Exception\SerializationException;
+use Oeltima\SimpleQueue\Internal\PdoClaimTransaction;
 use Oeltima\SimpleQueue\SystemClock;
 use PDO;
 use PDOException;
@@ -1019,102 +1020,85 @@ class PdoJobStorage implements
         string $leaseToken,
         string $now
     ): ?ClaimedJob {
-        $began = false;
+        $transaction = new PdoClaimTransaction($pdo, $driver);
+        $transaction->begin();
 
         try {
-            if ($driver === 'sqlite') {
-                $pdo->exec('BEGIN IMMEDIATE');
-            } else {
-                $pdo->beginTransaction();
-            }
-            $began = true;
-
-            $select = $this->prepare($pdo, $selectSql);
-            $select->execute($selectParams);
-
-            $row = $select->fetch(PDO::FETCH_ASSOC);
-            if (!is_array($row)) {
-                if ($driver === 'sqlite') {
-                    $pdo->exec('COMMIT');
-                } else {
-                    $pdo->commit();
-                }
-                return null;
-            }
-
-            $rowId = $row['id'] ?? 0;
-            $id = is_int($rowId) ? $rowId : (is_numeric($rowId) ? (int) $rowId : 0);
-            if ($id === 0) {
-                if ($driver === 'sqlite') {
-                    $pdo->exec('COMMIT');
-                } else {
-                    $pdo->commit();
-                }
-                return null;
-            }
-            $updateSql = "UPDATE {$this->table}
-                SET status = 'running',
-                    locked_by = :worker_id,
-                    locked_at = :locked_at,
-                    started_at = :started_at,
-                    lease_token = :lease_token,
-                    updated_at = :updated_at
-                WHERE id = :id
-                AND (
-                    (status = 'pending' AND available_at <= :now)
-                    OR (status = 'running' AND locked_by = :worker_id_where)
-                )";
-
-            $update = $this->prepare($pdo, $updateSql);
-            $update->execute([
-                'id' => $id,
-                'worker_id' => $workerId,
-                'worker_id_where' => $workerId,
-                'locked_at' => $now,
-                'started_at' => $now,
-                'lease_token' => $leaseToken,
-                'updated_at' => $now,
-                'now' => $now,
-            ]);
-
-            if ($update->rowCount() === 0) {
-                if ($driver === 'sqlite') {
-                    $pdo->exec('COMMIT');
-                } else {
-                    $pdo->commit();
-                }
-                return null;
-            }
-
-            $find = $this->prepare($pdo, "SELECT * FROM {$this->table} WHERE id = :id");
-            $find->execute(['id' => $id]);
-
-            if ($driver === 'sqlite') {
-                $pdo->exec('COMMIT');
-            } else {
-                $pdo->commit();
-            }
-
-            return $this->claimFromStatement($find, $workerId, $leaseToken);
-        } catch (\Throwable $e) {
-            if ($began) {
-                if ($driver === 'sqlite') {
-                    try {
-                        $pdo->exec('ROLLBACK');
-                    } catch (\Throwable $_) {
-                        // Suppress rollback error
-                    }
-                } elseif ($pdo->inTransaction()) {
-                    try {
-                        $pdo->rollBack();
-                    } catch (\Throwable $_) {
-                        // Suppress rollback error to avoid masking the original exception
-                    }
-                }
-            }
-
-            throw $e;
+            $statement = $this->claimWithinTransaction(
+                $pdo,
+                $selectSql,
+                $selectParams,
+                $workerId,
+                $leaseToken,
+                $now
+            );
+            $transaction->commit();
+            return $statement === null ? null : $this->claimFromStatement($statement, $workerId, $leaseToken);
+        } catch (\Throwable $exception) {
+            $transaction->rollbackIgnoringFailure();
+            throw $exception;
         }
+    }
+
+    /**
+     * @param array<string, mixed> $selectParams
+     */
+    private function claimWithinTransaction(
+        PDO $pdo,
+        string $selectSql,
+        array $selectParams,
+        string $workerId,
+        string $leaseToken,
+        string $now
+    ): ?PDOStatement {
+        $select = $this->prepare($pdo, $selectSql);
+        $select->execute($selectParams);
+        $id = $this->claimRowId($select->fetch(PDO::FETCH_ASSOC));
+        if ($id === null) {
+            return null;
+        }
+
+        $updateSql = "UPDATE {$this->table}
+            SET status = 'running',
+                locked_by = :worker_id,
+                locked_at = :locked_at,
+                started_at = :started_at,
+                lease_token = :lease_token,
+                updated_at = :updated_at
+            WHERE id = :id
+            AND (
+                (status = 'pending' AND available_at <= :now)
+                OR (status = 'running' AND locked_by = :worker_id_where)
+            )";
+        $update = $this->prepare($pdo, $updateSql);
+        $update->execute([
+            'id' => $id,
+            'worker_id' => $workerId,
+            'worker_id_where' => $workerId,
+            'locked_at' => $now,
+            'started_at' => $now,
+            'lease_token' => $leaseToken,
+            'updated_at' => $now,
+            'now' => $now,
+        ]);
+        if ($update->rowCount() === 0) {
+            return null;
+        }
+
+        $find = $this->prepare($pdo, "SELECT * FROM {$this->table} WHERE id = :id");
+        $find->execute(['id' => $id]);
+        return $find;
+    }
+
+    private function claimRowId(mixed $row): ?int
+    {
+        if (!is_array($row)) {
+            return null;
+        }
+
+        $rowId = $row['id'] ?? 0;
+        $id = is_int($rowId) ? $rowId : (is_numeric($rowId) ? (int) $rowId : 0);
+        return $id === 0 ? null : $id;
     }
 
     private function claimFromStatement(PDOStatement $stmt, string $workerId, string $leaseToken): ?ClaimedJob
