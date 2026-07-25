@@ -15,6 +15,7 @@ use Oeltima\SimpleQueue\Contract\SupportsJobRemoval;
 use Oeltima\SimpleQueue\Contract\SupportsProcessingHeartbeat;
 use Oeltima\SimpleQueue\Contract\SupportsBoundedQueueMembership;
 use Oeltima\SimpleQueue\Contract\ClockInterface;
+use Oeltima\SimpleQueue\Internal\PositiveJobId;
 use Oeltima\SimpleQueue\Internal\RedisResponseNormalizer;
 use Oeltima\SimpleQueue\SystemClock;
 use Predis\ClientInterface;
@@ -383,9 +384,7 @@ LUA;
 
     private function validateJobId(int $jobId): void
     {
-        if ($jobId < 1) {
-            throw new \InvalidArgumentException('Job ID must be a positive integer');
-        }
+        PositiveJobId::fromInt($jobId);
     }
 
     private function readWriteTimeout(): ?float

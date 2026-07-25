@@ -10,6 +10,7 @@ use Oeltima\SimpleQueue\Contract\SupportsWorkerId;
 use Oeltima\SimpleQueue\Contract\SupportsClaimedDequeue;
 use Oeltima\SimpleQueue\Contract\ClaimedJob;
 use Oeltima\SimpleQueue\Contract\ClockInterface;
+use Oeltima\SimpleQueue\Internal\PositiveJobId;
 use Oeltima\SimpleQueue\SystemClock;
 
 /**
@@ -56,9 +57,7 @@ final class DatabaseQueueDriver implements QueueDriverInterface, SupportsWorkerI
 
     public function enqueue(string $queue, int $jobId): void
     {
-        if ($jobId <= 0) {
-            throw new \InvalidArgumentException(self::ERR_INVALID_JOB_ID);
-        }
+        PositiveJobId::fromInt($jobId, self::ERR_INVALID_JOB_ID);
         // Job is already in the database, nothing to do
     }
 
@@ -87,17 +86,13 @@ final class DatabaseQueueDriver implements QueueDriverInterface, SupportsWorkerI
 
     public function ack(string $queue, int $jobId): void
     {
-        if ($jobId <= 0) {
-            throw new \InvalidArgumentException(self::ERR_INVALID_JOB_ID);
-        }
+        PositiveJobId::fromInt($jobId, self::ERR_INVALID_JOB_ID);
         // Job status is managed by storage, nothing to do
     }
 
     public function nack(string $queue, int $jobId, int $delaySeconds = 0): void
     {
-        if ($jobId <= 0) {
-            throw new \InvalidArgumentException(self::ERR_INVALID_JOB_ID);
-        }
+        PositiveJobId::fromInt($jobId, self::ERR_INVALID_JOB_ID);
         // Retry is handled by storage scheduleRetry, nothing to do
         // The delaySeconds is already handled via storage->scheduleRetry()
     }
