@@ -22,6 +22,8 @@ use Oeltima\SimpleQueue\SystemClock;
  *
  * This storage keeps all jobs in memory and is useful for unit testing.
  * All data is lost when the process terminates.
+ *
+ * @phpstan-import-type StoredJobRow from \Oeltima\SimpleQueue\Internal\InMemoryJobRow
  */
 class InMemoryJobStorage implements
     JobStorageInterface,
@@ -30,7 +32,7 @@ class InMemoryJobStorage implements
     SupportsPendingJobCursor,
     SupportsQueueScopedStaleRecovery
 {
-    /** @var array<int, array<string, mixed>> */
+    /** @var array<int, StoredJobRow> */
     private array $jobs = [];
 
     private int $nextId = 1;
@@ -65,7 +67,7 @@ class InMemoryJobStorage implements
             'id' => $id,
             'queue' => $queue,
             'type' => $type,
-            'status' => 'pending',
+            'status' => JobStatus::Pending,
             'payload' => $this->encodeJson($payload, 'job payload'),
             'attempts' => 0,
             'max_attempts' => $maxAttempts,
@@ -126,7 +128,7 @@ class InMemoryJobStorage implements
         foreach ($this->jobs as $job) {
             if (
                 $job['request_id'] === $requestId
-                && in_array($job['status'], ['pending', 'running'], true)
+                && in_array($job['status'], [JobStatus::Pending, JobStatus::Running], true)
             ) {
                 return JobData::fromRaw($job);
             }
@@ -167,7 +169,7 @@ class InMemoryJobStorage implements
         $candidateAvailableAt = null;
 
         foreach ($this->jobs as $id => $job) {
-            if ($job['status'] !== 'pending') {
+            if ($job['status'] !== JobStatus::Pending) {
                 continue;
             }
             if ($job['queue'] !== $queue) {
@@ -214,14 +216,11 @@ class InMemoryJobStorage implements
         }
 
         $now = $this->now();
-        $id = $claim->job->id;
-        $this->jobs[$id]['status'] = 'completed';
-        $this->jobs[$id]['result'] = $result === null ? null : $this->encodeJson($result, 'job result');
-        $this->jobs[$id]['completed_at'] = $now;
-        $this->jobs[$id]['locked_by'] = null;
-        $this->jobs[$id]['locked_at'] = null;
-        $this->jobs[$id]['lease_token'] = null;
-        $this->jobs[$id]['updated_at'] = $now;
+        $job = &$this->jobs[$claim->job->id];
+        $job['status'] = JobStatus::Completed;
+        $job['result'] = $result === null ? null : $this->encodeJson($result, 'job result');
+        $job['completed_at'] = $now;
+        $this->releaseClaim($job, $now);
 
         return true;
     }
@@ -233,15 +232,12 @@ class InMemoryJobStorage implements
         }
 
         $now = $this->now();
-        $id = $claim->job->id;
-        $this->jobs[$id]['status'] = 'failed';
-        $this->jobs[$id]['error_message'] = $errorMessage;
-        $this->jobs[$id]['error_trace'] = $errorTrace;
-        $this->jobs[$id]['completed_at'] = $now;
-        $this->jobs[$id]['locked_by'] = null;
-        $this->jobs[$id]['locked_at'] = null;
-        $this->jobs[$id]['lease_token'] = null;
-        $this->jobs[$id]['updated_at'] = $now;
+        $job = &$this->jobs[$claim->job->id];
+        $job['status'] = JobStatus::Failed;
+        $job['error_message'] = $errorMessage;
+        $job['error_trace'] = $errorTrace;
+        $job['completed_at'] = $now;
+        $this->releaseClaim($job, $now);
 
         return true;
     }
@@ -255,11 +251,11 @@ class InMemoryJobStorage implements
             return false;
         }
 
-        $id = $claim->job->id;
-        $this->jobs[$id]['progress'] = $progress;
-        $this->jobs[$id]['progress_message'] = $message;
-        $this->jobs[$id]['locked_at'] = $this->now();
-        $this->jobs[$id]['updated_at'] = $this->jobs[$id]['locked_at'];
+        $job = &$this->jobs[$claim->job->id];
+        $job['progress'] = $progress;
+        $job['progress_message'] = $message;
+        $job['locked_at'] = $this->now();
+        $job['updated_at'] = $job['locked_at'];
 
         return true;
     }
@@ -279,16 +275,13 @@ class InMemoryJobStorage implements
 
         $now = $this->now();
         $availableAt = gmdate($this->dateFormat, $this->clock->timestamp() + $delaySeconds);
-        $id = $claim->job->id;
 
-        $this->jobs[$id]['status'] = 'pending';
-        $this->jobs[$id]['attempts'] = $attempts;
-        $this->jobs[$id]['available_at'] = $availableAt;
-        $this->jobs[$id]['error_message'] = $errorMessage;
-        $this->jobs[$id]['locked_by'] = null;
-        $this->jobs[$id]['locked_at'] = null;
-        $this->jobs[$id]['lease_token'] = null;
-        $this->jobs[$id]['updated_at'] = $now;
+        $job = &$this->jobs[$claim->job->id];
+        $job['status'] = JobStatus::Pending;
+        $job['attempts'] = $attempts;
+        $job['available_at'] = $availableAt;
+        $job['error_message'] = $errorMessage;
+        $this->releaseClaim($job, $now);
 
         return true;
     }
@@ -300,9 +293,9 @@ class InMemoryJobStorage implements
         }
 
         $now = $this->now();
-        $id = $claim->job->id;
-        $this->jobs[$id]['locked_at'] = $now;
-        $this->jobs[$id]['updated_at'] = $now;
+        $job = &$this->jobs[$claim->job->id];
+        $job['locked_at'] = $now;
+        $job['updated_at'] = $now;
 
         return true;
     }
@@ -314,32 +307,27 @@ class InMemoryJobStorage implements
         $count = 0;
 
         foreach ($this->jobs as &$job) {
-            if ($job['status'] !== 'running') {
+            if ($job['status'] !== JobStatus::Running) {
                 continue;
             }
             if ($job['locked_at'] === null || $job['locked_at'] >= $staleThreshold) {
                 continue;
             }
 
-            $attempts = isset($job['attempts']) && is_numeric($job['attempts']) ? (int) $job['attempts'] : 0;
-            $maxAttempts = isset($job['max_attempts']) && is_numeric($job['max_attempts'])
-                ? (int) $job['max_attempts']
-                : 3;
+            $attempts = $job['attempts'];
+            $maxAttempts = $job['max_attempts'];
             $nextAttempts = $attempts + 1;
             if ($nextAttempts >= $maxAttempts) {
-                $job['status'] = 'failed';
+                $job['status'] = JobStatus::Failed;
                 $job['error_message'] = 'Job timed out / worker crashed (stale recovery)';
                 $job['completed_at'] = $now;
             } else {
-                $job['status'] = 'pending';
+                $job['status'] = JobStatus::Pending;
                 $job['attempts'] = $nextAttempts;
                 $job['available_at'] = $now;
             }
 
-            $job['locked_by'] = null;
-            $job['locked_at'] = null;
-            $job['lease_token'] = null;
-            $job['updated_at'] = $now;
+            $this->releaseClaim($job, $now);
             $count++;
         }
 
@@ -358,19 +346,15 @@ class InMemoryJobStorage implements
             if (
                 $recovered === $limit
                 || $job['queue'] !== $queue
-                || $job['status'] !== 'running'
-                || $job['locked_at'] >= $threshold
+                || $job['status'] !== JobStatus::Running
+                || ($job['locked_at'] !== null && $job['locked_at'] >= $threshold)
             ) {
                 continue;
             }
-            $job['status'] = 'pending';
-            $attempts = isset($job['attempts']) && is_numeric($job['attempts']) ? (int) $job['attempts'] : 0;
-            $job['attempts'] = $attempts + 1;
+            $job['status'] = JobStatus::Pending;
+            $job['attempts']++;
             $job['available_at'] = $now;
-            $job['locked_by'] = null;
-            $job['locked_at'] = null;
-            $job['lease_token'] = null;
-            $job['updated_at'] = $now;
+            $this->releaseClaim($job, $now);
             $recovered++;
         }
         unset($job);
@@ -389,7 +373,7 @@ class InMemoryJobStorage implements
     public function list(?JobStatus $status = null, ?string $queue = null, int $limit = 100, int $offset = 0): array
     {
         $filtered = array_filter($this->jobs, function (array $job) use ($status, $queue): bool {
-            if ($status !== null && $job['status'] !== $status->value) {
+            if ($status !== null && $job['status'] !== $status) {
                 return false;
             }
             if ($queue !== null && $job['queue'] !== $queue) {
@@ -414,7 +398,7 @@ class InMemoryJobStorage implements
         }
         $jobs = [];
         foreach ($this->jobs as $id => $job) {
-            if ($job['status'] !== 'pending' || $job['queue'] !== $queue || ($afterId !== null && $id <= $afterId)) {
+            if (!$this->isPendingAfter($job, $queue, $id, $afterId)) {
                 continue;
             }
             $jobs[] = JobData::fromRaw($job);
@@ -430,7 +414,7 @@ class InMemoryJobStorage implements
         $count = 0;
 
         foreach ($this->jobs as $job) {
-            if ($status !== null && $job['status'] !== $status->value) {
+            if ($status !== null && $job['status'] !== $status) {
                 continue;
             }
             if ($queue !== null && $job['queue'] !== $queue) {
@@ -451,7 +435,7 @@ class InMemoryJobStorage implements
         $count = 0;
 
         foreach ($this->jobs as $id => $job) {
-            if (!in_array($job['status'], ['completed', 'cancelled'], true)) {
+            if (!in_array($job['status'], [JobStatus::Completed, JobStatus::Cancelled], true)) {
                 continue;
             }
             if ($job['completed_at'] === null || $job['completed_at'] >= $threshold) {
@@ -489,17 +473,15 @@ class InMemoryJobStorage implements
             return false;
         }
 
-        if ($this->jobs[$id]['status'] !== 'pending') {
+        if ($this->jobs[$id]['status'] !== JobStatus::Pending) {
             return false;
         }
 
         $now = $this->now();
-        $this->jobs[$id]['status'] = 'cancelled';
-        $this->jobs[$id]['completed_at'] = $now;
-        $this->jobs[$id]['locked_by'] = null;
-        $this->jobs[$id]['locked_at'] = null;
-        $this->jobs[$id]['lease_token'] = null;
-        $this->jobs[$id]['updated_at'] = $now;
+        $job = &$this->jobs[$id];
+        $job['status'] = JobStatus::Cancelled;
+        $job['completed_at'] = $now;
+        $this->releaseClaim($job, $now);
 
         return true;
     }
@@ -524,21 +506,21 @@ class InMemoryJobStorage implements
             return null;
         }
 
-        $job = $this->jobs[$id];
-        $isPending = $job['status'] === 'pending' && $job['available_at'] <= $now;
-        $isAlreadyLockedByMe = $job['status'] === 'running' && $job['locked_by'] === $workerId;
+        $job = &$this->jobs[$id];
+        $isPending = $job['status'] === JobStatus::Pending && $job['available_at'] <= $now;
+        $isAlreadyLockedByMe = $job['status'] === JobStatus::Running && $job['locked_by'] === $workerId;
 
         if (!$isPending && !$isAlreadyLockedByMe) {
             return null;
         }
 
         $leaseToken = $this->generateLeaseToken();
-        $this->jobs[$id]['status'] = 'running';
-        $this->jobs[$id]['locked_by'] = $workerId;
-        $this->jobs[$id]['locked_at'] = $now;
-        $this->jobs[$id]['started_at'] = $now;
-        $this->jobs[$id]['lease_token'] = $leaseToken;
-        $this->jobs[$id]['updated_at'] = $now;
+        $job['status'] = JobStatus::Running;
+        $job['locked_by'] = $workerId;
+        $job['locked_at'] = $now;
+        $job['started_at'] = $now;
+        $job['lease_token'] = $leaseToken;
+        $job['updated_at'] = $now;
 
         return new ClaimedJob(JobData::fromRaw($this->jobs[$id]), $workerId, $leaseToken);
     }
@@ -548,12 +530,29 @@ class InMemoryJobStorage implements
         return bin2hex(random_bytes(32));
     }
 
+    /** @param StoredJobRow $job */
+    private function releaseClaim(array &$job, string $now): void
+    {
+        $job['locked_by'] = null;
+        $job['locked_at'] = null;
+        $job['lease_token'] = null;
+        $job['updated_at'] = $now;
+    }
+
+    /** @param StoredJobRow $job */
+    private function isPendingAfter(array $job, string $queue, int $id, ?int $afterId): bool
+    {
+        return $job['status'] === JobStatus::Pending
+            && $job['queue'] === $queue
+            && ($afterId === null || $id > $afterId);
+    }
+
     private function ownsClaim(ClaimedJob $claim): bool
     {
         $id = $claim->job->id;
 
         return isset($this->jobs[$id])
-            && $this->jobs[$id]['status'] === 'running'
+            && $this->jobs[$id]['status'] === JobStatus::Running
             && $this->jobs[$id]['lease_token'] === $claim->leaseToken;
     }
 }
