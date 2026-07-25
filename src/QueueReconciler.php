@@ -9,6 +9,8 @@ use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Contract\SupportsBoundedQueueMembership;
 use Oeltima\SimpleQueue\Contract\SupportsPendingJobCursor;
+use Oeltima\SimpleQueue\Internal\ReconcileJobOutcome;
+use Oeltima\SimpleQueue\Internal\ReconciliationJobProcessor;
 
 /** Repairs storage-to-notifier divergence with explicit, bounded work. */
 final class QueueReconciler
@@ -38,30 +40,16 @@ final class QueueReconciler
         $restored = 0;
         $duplicates = 0;
         $invalid = 0;
+        $processor = new ReconciliationJobProcessor($this->driver, $this->clock);
         foreach ($jobs as $job) {
             if ($this->clock->monotonic() - $started >= $options->maxDurationSeconds) {
                 break;
             }
-            if ($job->id < 1) {
-                $invalid++;
-                continue;
-            }
-            $parsedAvailableAt = strtotime($job->availableAt ?? 'now');
-            $availableAt = $parsedAvailableAt === false ? $this->clock->timestamp() : $parsedAvailableAt;
-            $isDue = $availableAt <= $this->clock->timestamp();
-            $exists = $isDue
-                ? $this->driver->hasPendingJob($queue, $job->id, $options->membershipScanLimit)
-                : $this->driver->hasDelayedJob($queue, $job->id);
-            if ($exists) {
-                $duplicates++;
-                continue;
-            }
-            if ($isDue) {
-                $this->driver->enqueue($queue, $job->id);
-            } else {
-                $this->driver->nack($queue, $job->id, max(0, $availableAt - $this->clock->timestamp()));
-            }
-            $restored++;
+            match ($processor->process($queue, $job, $options)) {
+                ReconcileJobOutcome::Restored => $restored++,
+                ReconcileJobOutcome::Duplicate => $duplicates++,
+                ReconcileJobOutcome::Invalid => $invalid++,
+            };
         }
 
         $scanned = count($jobs);

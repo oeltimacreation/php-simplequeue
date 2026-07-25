@@ -205,18 +205,18 @@ final class InMemoryQueueDriver implements
             if ($recovered >= $limit) {
                 break;
             }
-            if ($startedAt <= $staleThreshold) {
-                if (isset($this->processing[$queue])) {
-                    $key = array_search($jobId, $this->processing[$queue], true);
-                    if ($key !== false) {
-                        unset($this->processing[$queue][$key]);
-                        $this->processing[$queue] = array_values($this->processing[$queue]);
-                    }
-                }
-                unset($this->processingStartedAt[$queue][$jobId]);
-                $this->enqueue($queue, $jobId);
-                $recovered++;
+            if ($startedAt > $staleThreshold) {
+                continue;
             }
+            $processing = $this->processing[$queue] ?? [];
+            $key = array_search($jobId, $processing, true);
+            if ($key !== false) {
+                unset($processing[$key]);
+                $this->processing[$queue] = array_values($processing);
+            }
+            unset($this->processingStartedAt[$queue][$jobId]);
+            $this->enqueue($queue, $jobId);
+            $recovered++;
         }
 
         return $recovered;
