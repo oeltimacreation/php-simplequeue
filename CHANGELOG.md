@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a reproducible, dependency-free quality inventory for production and test code covering method-level cognitive and cyclomatic complexity, nesting depth, class and method size, and normalized duplicated blocks.
 - Added a Composer quality ratchet that prevents baseline metrics from worsening or new duplicated blocks from appearing unless a narrow, documented exception is recorded.
 - Added characterization coverage for worker startup recovery failure, PDO claim rollback, real PDO and in-memory lost-lease fencing, and malformed blocking Redis dequeue cleanup.
+- Added an internal type-safety inventory documenting scalar, storage-row, Redis-response, timestamp, claim, and worker-event boundaries and the compatibility decisions applied to each.
 
 ### Changed
 
@@ -20,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Moved retry eligibility, exponential delay, infrastructure classification, and fenced-ownership decisions into an I/O-free internal worker policy with direct unit coverage.
 - Decomposed PDO claims into database-specific transaction handling and a guarded claim operation, and isolated Redis command-response normalization and malformed-notification cleanup from command orchestration.
 - Flattened in-memory stale recovery and separated bounded reconciliation orchestration from individual notification decisions, reducing production duplicated windows and bringing all Stage 2 targets within the 15/15/3 complexity goals.
+- Centralized raw PDO/object job-row hydration and positive job-ID validation behind internal boundaries while preserving public scalar signatures, serialized fields, and validation messages.
+- Replaced worker retry and lease-ownership booleans with exhaustive internal outcomes, and replaced in-memory status strings with `JobStatus` cases and a complete private row shape.
+- Removed redundant casts and numeric checks from trusted in-memory job state and centralized claim-release field clearing without changing fenced-write or acknowledgement behavior.
 
 ## [1.5.2] - 2026-07-16
 
