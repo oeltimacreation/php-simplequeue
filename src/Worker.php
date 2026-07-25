@@ -16,6 +16,8 @@ use Oeltima\SimpleQueue\Contract\SupportsTimeoutValidation;
 use Oeltima\SimpleQueue\Contract\SupportsClaimedDequeue;
 use Oeltima\SimpleQueue\Exception\HandlerNotFoundException;
 use Oeltima\SimpleQueue\Exception\SerializationException;
+use Oeltima\SimpleQueue\Internal\WorkerLoopFailureHandler;
+use Oeltima\SimpleQueue\Internal\WorkerPolicy;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
@@ -40,17 +42,15 @@ final class Worker
 
     private int $pollTimeout;
     private int $stuckJobTtl;
-    private int $retryBaseDelay;
-    private int $retryMaxDelay;
     private ClockInterface $clock;
-
+    private WorkerPolicy $policy;
+    private WorkerLoopFailureHandler $loopFailureHandler;
     private int $maxJobs;
     private int $maxTime;
     private int $memoryLimit;
     private bool $stopWhenEmpty;
     private int $processedJobsCount = 0;
     private float $startTime = 0.0;
-
     private float $promoteInterval;
     private float $recoveryInterval;
     private float $lastPromoteTime = 0.0;
@@ -93,8 +93,8 @@ final class Worker
         }
         $this->pollTimeout = $workerOptions->pollTimeout;
         $this->stuckJobTtl = $workerOptions->stuckJobTtl;
-        $this->retryBaseDelay = $workerOptions->retryBaseDelay;
-        $this->retryMaxDelay = $workerOptions->retryMaxDelay;
+        $this->policy = new WorkerPolicy($workerOptions->retryBaseDelay, $workerOptions->retryMaxDelay);
+        $this->loopFailureHandler = new WorkerLoopFailureHandler($this->logger, $this->policy);
         $this->clock = $workerOptions->clock ?? new SystemClock();
         $this->maxJobs = $workerOptions->maxJobs;
         $this->maxTime = $workerOptions->maxTime;
@@ -185,95 +185,8 @@ final class Worker
         }
 
         try {
-            $this->registerSignalHandlers();
-
-            // Run initial recovery and promotion immediately
-            $this->recoverStaleJobs();
-            $this->reconcileDbAndRedis();
-            $this->lastRecoveryTime = $this->clock->monotonic();
-
-            $this->promoteDelayedJobs();
-            $this->lastPromoteTime = $this->clock->monotonic();
-
-            $driverClass = get_class($this->queueManager->driver());
-            $this->logger->info('Using queue driver', ['driver' => $driverClass]);
-
-            $this->startTime = $this->clock->monotonic();
-            $this->processedJobsCount = 0;
-            $consecutiveErrors = 0;
-
-            while ($this->shouldRun) {
-                if ($this->limitsReached()) {
-                    break;
-                }
-
-                $this->runDueMaintenance();
-
-                $driver = $this->queueManager->driver();
-                try {
-                    $claim = $this->claimNextJob($this->pollTimeout);
-
-                    if ($claim === null) {
-                        $consecutiveErrors = 0;
-                        if ($this->stopWhenEmpty) {
-                            $this->logger->info('Queue is empty and stop_when_empty is enabled. Stopping worker.');
-                            break;
-                        }
-                        continue;
-                    }
-
-                    if (!$this->shouldRun) {
-                        $this->logger->info(
-                            'Worker shutting down, releasing claimed job',
-                            ['job_id' => $claim->job->id]
-                        );
-                        try {
-                            $this->storage->scheduleRetry($claim, $claim->job->attempts, 0, 'Worker shutting down');
-                            $driver->nack($this->queue, $claim->job->id, 0);
-                        } catch (\Throwable $releaseError) {
-                            $this->logger->error('Failed to release job during shutdown', [
-                                'job_id' => $claim->job->id,
-                                'error' => $releaseError->getMessage()
-                            ]);
-                        }
-                        break;
-                    }
-
-                    $this->processClaimedJob($claim, $driver);
-                    $consecutiveErrors = 0;
-                } catch (\Throwable $e) {
-                    if ($this->isInfrastructureException($e)) {
-                        $consecutiveErrors++;
-                        $delay = $this->calculateBackoff($consecutiveErrors);
-                        $jitterMs = random_int(0, 1000);
-                        $totalDelaySeconds = $delay + ($jitterMs / 1000.0);
-
-                        $this->logger->error('Infrastructure error encountered. Backing off.', [
-                            'error' => $e->getMessage(),
-                            'backoff_seconds' => round($totalDelaySeconds, 3),
-                            'consecutive_errors' => $consecutiveErrors,
-                        ]);
-
-                        $this->emit('infra_error', [
-                            'error' => $e->getMessage(),
-                            'exception' => $e,
-                        ]);
-
-                        $this->emit('backoff', [
-                            'error' => $e->getMessage(),
-                            'backoff_seconds' => $totalDelaySeconds,
-                        ]);
-
-                        $this->sleep($totalDelaySeconds);
-                    } else {
-                        $this->logger->error('Worker loop encountered an unexpected error', [
-                            'error' => $e->getMessage(),
-                            'trace' => $e->getTraceAsString(),
-                        ]);
-                        $this->sleep(1.0);
-                    }
-                }
-            }
+            $this->initializeRun();
+            $this->runLoop();
         } catch (\Throwable $e) {
             $this->logger->critical('Worker encountered a fatal error', [
                 'error' => $e->getMessage(),
@@ -286,6 +199,80 @@ final class Worker
 
         $this->logger->info('Worker stopped gracefully', ['worker_id' => $this->workerId]);
         return self::EXIT_SUCCESS;
+    }
+
+    private function initializeRun(): void
+    {
+        $this->registerSignalHandlers();
+        $this->recoverStaleJobs();
+        $this->reconcileDbAndRedis();
+        $this->lastRecoveryTime = $this->clock->monotonic();
+
+        $this->promoteDelayedJobs();
+        $this->lastPromoteTime = $this->clock->monotonic();
+
+        $driverClass = get_class($this->queueManager->driver());
+        $this->logger->info('Using queue driver', ['driver' => $driverClass]);
+
+        $this->startTime = $this->clock->monotonic();
+        $this->processedJobsCount = 0;
+    }
+
+    private function runLoop(): void
+    {
+        $consecutiveErrors = 0;
+        while ($this->shouldRun && !$this->limitsReached()) {
+            $this->runDueMaintenance();
+            $driver = $this->queueManager->driver();
+
+            try {
+                $shouldContinue = $this->runNextIteration($driver);
+                $consecutiveErrors = 0;
+                if (!$shouldContinue) {
+                    return;
+                }
+            } catch (\Throwable $exception) {
+                $consecutiveErrors = $this->loopFailureHandler->handle(
+                    $exception,
+                    $consecutiveErrors,
+                    $this->emit(...)
+                );
+            }
+        }
+    }
+
+    private function runNextIteration(QueueDriverInterface $driver): bool
+    {
+        $claim = $this->claimNextJob($this->pollTimeout);
+        if ($claim === null) {
+            if ($this->stopWhenEmpty) {
+                $this->logger->info('Queue is empty and stop_when_empty is enabled. Stopping worker.');
+                return false;
+            }
+            return true;
+        }
+
+        if (!$this->shouldRun) {
+            $this->releaseClaimForShutdown($claim, $driver);
+            return false;
+        }
+
+        $this->processClaimedJob($claim, $driver);
+        return true;
+    }
+
+    private function releaseClaimForShutdown(ClaimedJob $claim, QueueDriverInterface $driver): void
+    {
+        $this->logger->info('Worker shutting down, releasing claimed job', ['job_id' => $claim->job->id]);
+        try {
+            $this->storage->scheduleRetry($claim, $claim->job->attempts, 0, 'Worker shutting down');
+            $driver->nack($this->queue, $claim->job->id, 0);
+        } catch (\Throwable $exception) {
+            $this->logger->error('Failed to release job during shutdown', [
+                'job_id' => $claim->job->id,
+                'error' => $exception->getMessage(),
+            ]);
+        }
     }
 
     /**
@@ -396,31 +383,6 @@ final class Worker
         return $claim;
     }
 
-    private function isInfrastructureException(\Throwable $e): bool
-    {
-        if ($e instanceof \PDOException || $e instanceof \RedisException) {
-            return true;
-        }
-        $class = get_class($e);
-        if (str_starts_with($class, 'Predis\\')) {
-            return true;
-        }
-        return false;
-    }
-
-    private function calculateBackoff(int $errorCount): int
-    {
-        return min($this->retryMaxDelay, (int) pow($this->retryBaseDelay, $errorCount));
-    }
-
-    private function sleep(float $seconds): void
-    {
-        if ($seconds <= 0) {
-            return;
-        }
-        usleep((int) ($seconds * 1_000_000));
-    }
-
     private function limitsReached(): bool
     {
         if ($this->maxJobs > 0 && $this->processedJobsCount >= $this->maxJobs) {
@@ -489,52 +451,69 @@ final class Worker
         try {
             $completed = $this->executeJob($claim);
             $durationMs = ($this->clock->monotonic() - $startTime) * 1000.0;
-
-            if (!$completed) {
-                $this->logger->warning('Lost job ownership before completion ack', ['job_id' => $job->id]);
-                $this->emit('lost_ownership', [
-                    'job_id' => $job->id,
-                    'type' => $job->type,
-                    'context' => 'complete',
-                ]);
-                return;
-            }
-
-            $this->logger->info('Job completed', [
-                'job_id' => $job->id,
-                'type' => $job->type,
-                'duration_seconds' => round($durationMs / 1000.0, 3),
-            ]);
-
-            $this->emit('completed', [
-                'job_id' => $job->id,
-                'type' => $job->type,
-                'duration_ms' => $durationMs,
-            ]);
-
-            try {
-                $driver->ack($this->queue, $job->id);
-            } catch (\Throwable $e) {
-                $this->logger->error('Failed to ack completed job', [
-                    'job_id' => $job->id,
-                    'error' => $e->getMessage(),
-                ]);
-            }
-        } catch (SerializationException $e) {
+            $this->handleJobCompletion($claim, $driver, $completed, $durationMs);
+        } catch (SerializationException $exception) {
             $durationMs = ($this->clock->monotonic() - $startTime) * 1000.0;
-            $this->storage->markFailed($claim, $e->getMessage(), $this->truncateTrace($e));
-            $driver->ack($this->queue, $job->id);
-            $this->logger->error('Job result serialization failed after handler completion', [
-                'job_id' => $job->id,
-                'duration_ms' => $durationMs,
-                'error' => $e->getMessage(),
-            ]);
-        } catch (\Throwable $e) {
+            $this->handleSerializationFailure($claim, $driver, $exception, $durationMs);
+        } catch (\Throwable $exception) {
             $durationMs = ($this->clock->monotonic() - $startTime) * 1000.0;
-            $this->handleJobFailure($claim, $e, $driver, $durationMs);
+            $this->handleJobFailure($claim, $exception, $driver, $durationMs);
         } finally {
             $this->processedJobsCount++;
         }
+    }
+
+    private function handleJobCompletion(
+        ClaimedJob $claim,
+        QueueDriverInterface $driver,
+        bool $completed,
+        float $durationMs
+    ): void {
+        $job = $claim->job;
+        if ($this->policy->ownershipWasLost($completed)) {
+            $this->logger->warning('Lost job ownership before completion ack', ['job_id' => $job->id]);
+            $this->emit('lost_ownership', [
+                'job_id' => $job->id,
+                'type' => $job->type,
+                'context' => 'complete',
+            ]);
+            return;
+        }
+
+        $this->logger->info('Job completed', [
+            'job_id' => $job->id,
+            'type' => $job->type,
+            'duration_seconds' => round($durationMs / 1000.0, 3),
+        ]);
+        $this->emit('completed', [
+            'job_id' => $job->id,
+            'type' => $job->type,
+            'duration_ms' => $durationMs,
+        ]);
+
+        try {
+            $driver->ack($this->queue, $job->id);
+        } catch (\Throwable $exception) {
+            $this->logger->error('Failed to ack completed job', [
+                'job_id' => $job->id,
+                'error' => $exception->getMessage(),
+            ]);
+        }
+    }
+
+    private function handleSerializationFailure(
+        ClaimedJob $claim,
+        QueueDriverInterface $driver,
+        SerializationException $exception,
+        float $durationMs
+    ): void {
+        $this->storage->markFailed($claim, $exception->getMessage(), $this->truncateTrace($exception));
+        $driver->ack($this->queue, $claim->job->id);
+        $this->logger->error('Job result serialization failed after handler completion', [
+            'job_id' => $claim->job->id,
+            'duration_ms' => $durationMs,
+            'error' => $exception->getMessage(),
+        ]);
     }
 
     private function executeJob(ClaimedJob $claim): bool
@@ -579,7 +558,7 @@ final class Worker
 
     private function handleJobFailure(
         ClaimedJob $claim,
-        \Throwable $e,
+        \Throwable $exception,
         QueueDriverInterface $driver,
         float $durationMs
     ): void {
@@ -592,55 +571,82 @@ final class Worker
             'attempts' => $attempts,
             'max_attempts' => $job->maxAttempts,
             'duration_seconds' => round($durationMs / 1000.0, 3),
-            'error' => $e->getMessage(),
+            'error' => $exception->getMessage(),
         ]);
 
         try {
-            if ($attempts < $job->maxAttempts) {
-                $delay = $this->calculateRetryDelay($attempts);
-                if ($this->scheduleRetry($claim, $attempts, $delay, $e)) {
-                    $driver->nack($this->queue, $job->id, $delay);
-                    $this->emit('retried', [
-                        'job_id' => $job->id,
-                        'type' => $job->type,
-                        'duration_ms' => $durationMs,
-                        'attempts' => $attempts,
-                        'error' => $e->getMessage(),
-                    ]);
-                } else {
-                    $this->emit('lost_ownership', [
-                        'job_id' => $job->id,
-                        'type' => $job->type,
-                        'context' => 'retry',
-                    ]);
-                }
-            } else {
-                $marked = $this->storage->markFailed($claim, $e->getMessage(), $this->truncateTrace($e));
-                if ($marked) {
-                    $driver->ack($this->queue, $job->id);
-                    $this->emit('failed', [
-                        'job_id' => $job->id,
-                        'type' => $job->type,
-                        'duration_ms' => $durationMs,
-                        'error' => $e->getMessage(),
-                    ]);
-                } else {
-                    $this->logger->warning('Lost job ownership before marking failed', ['job_id' => $job->id]);
-                    $this->emit('lost_ownership', [
-                        'job_id' => $job->id,
-                        'type' => $job->type,
-                        'context' => 'fail',
-                    ]);
-                }
+            if ($this->policy->shouldRetry($attempts, $job->maxAttempts)) {
+                $this->retryFailedJob($claim, $exception, $driver, $attempts, $durationMs);
+                return;
             }
+
+            $this->failJobPermanently($claim, $exception, $driver, $durationMs);
         } catch (\Throwable $storageError) {
             $this->logger->error('Failed to update job status after failure', [
                 'job_id' => $job->id,
-                'original_error' => $e->getMessage(),
+                'original_error' => $exception->getMessage(),
                 'storage_error' => $storageError->getMessage(),
             ]);
             // Leave job in processing state - will be recovered as stale
         }
+    }
+
+    private function retryFailedJob(
+        ClaimedJob $claim,
+        \Throwable $exception,
+        QueueDriverInterface $driver,
+        int $attempts,
+        float $durationMs
+    ): void {
+        $delay = $this->policy->retryDelay($attempts);
+        $scheduled = $this->scheduleRetry($claim, $attempts, $delay, $exception);
+        if ($this->policy->ownershipWasLost($scheduled)) {
+            $this->emit('lost_ownership', [
+                'job_id' => $claim->job->id,
+                'type' => $claim->job->type,
+                'context' => 'retry',
+            ]);
+            return;
+        }
+
+        $driver->nack($this->queue, $claim->job->id, $delay);
+        $this->emit('retried', [
+            'job_id' => $claim->job->id,
+            'type' => $claim->job->type,
+            'duration_ms' => $durationMs,
+            'attempts' => $attempts,
+            'error' => $exception->getMessage(),
+        ]);
+    }
+
+    private function failJobPermanently(
+        ClaimedJob $claim,
+        \Throwable $exception,
+        QueueDriverInterface $driver,
+        float $durationMs
+    ): void {
+        $marked = $this->storage->markFailed(
+            $claim,
+            $exception->getMessage(),
+            $this->truncateTrace($exception)
+        );
+        if ($this->policy->ownershipWasLost($marked)) {
+            $this->logger->warning('Lost job ownership before marking failed', ['job_id' => $claim->job->id]);
+            $this->emit('lost_ownership', [
+                'job_id' => $claim->job->id,
+                'type' => $claim->job->type,
+                'context' => 'fail',
+            ]);
+            return;
+        }
+
+        $driver->ack($this->queue, $claim->job->id);
+        $this->emit('failed', [
+            'job_id' => $claim->job->id,
+            'type' => $claim->job->type,
+            'duration_ms' => $durationMs,
+            'error' => $exception->getMessage(),
+        ]);
     }
 
     private function scheduleRetry(ClaimedJob $claim, int $attempts, int $delay, \Throwable $e): bool
@@ -658,11 +664,6 @@ final class Worker
         }
 
         return $scheduled;
-    }
-
-    private function calculateRetryDelay(int $attempts): int
-    {
-        return min($this->retryMaxDelay, (int) pow($this->retryBaseDelay, $attempts));
     }
 
     private function recoverStaleJobs(): void
