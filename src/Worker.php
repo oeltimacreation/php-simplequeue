@@ -470,7 +470,7 @@ final class Worker
         float $durationMs
     ): void {
         $job = $claim->job;
-        if ($this->policy->ownershipWasLost($completed)) {
+        if ($this->policy->ownershipOutcome($completed)->isLost()) {
             $this->logger->warning('Lost job ownership before completion ack', ['job_id' => $job->id]);
             $this->emit('lost_ownership', [
                 'job_id' => $job->id,
@@ -575,7 +575,7 @@ final class Worker
         ]);
 
         try {
-            if ($this->policy->shouldRetry($attempts, $job->maxAttempts)) {
+            if ($this->policy->retryDecision($attempts, $job->maxAttempts)->shouldRetry()) {
                 $this->retryFailedJob($claim, $exception, $driver, $attempts, $durationMs);
                 return;
             }
@@ -600,7 +600,7 @@ final class Worker
     ): void {
         $delay = $this->policy->retryDelay($attempts);
         $scheduled = $this->scheduleRetry($claim, $attempts, $delay, $exception);
-        if ($this->policy->ownershipWasLost($scheduled)) {
+        if ($this->policy->ownershipOutcome($scheduled)->isLost()) {
             $this->emit('lost_ownership', [
                 'job_id' => $claim->job->id,
                 'type' => $claim->job->type,
@@ -630,7 +630,7 @@ final class Worker
             $exception->getMessage(),
             $this->truncateTrace($exception)
         );
-        if ($this->policy->ownershipWasLost($marked)) {
+        if ($this->policy->ownershipOutcome($marked)->isLost()) {
             $this->logger->warning('Lost job ownership before marking failed', ['job_id' => $claim->job->id]);
             $this->emit('lost_ownership', [
                 'job_id' => $claim->job->id,

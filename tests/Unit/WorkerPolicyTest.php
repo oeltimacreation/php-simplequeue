@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue\Tests\Unit;
 
+use Oeltima\SimpleQueue\Internal\OwnershipOutcome;
+use Oeltima\SimpleQueue\Internal\RetryDecision;
 use Oeltima\SimpleQueue\Internal\WorkerPolicy;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -41,15 +43,15 @@ final class WorkerPolicyTest extends TestCase
     {
         $policy = new WorkerPolicy(2, 30);
 
-        $this->assertTrue($policy->shouldRetry(2, 3));
-        $this->assertFalse($policy->shouldRetry(3, 3));
+        $this->assertSame(RetryDecision::Retry, $policy->retryDecision(2, 3));
+        $this->assertSame(RetryDecision::Fail, $policy->retryDecision(3, 3));
     }
 
     public function testTreatsRejectedFencedTransitionAsLostOwnership(): void
     {
         $policy = new WorkerPolicy(2, 30);
 
-        $this->assertTrue($policy->ownershipWasLost(false));
-        $this->assertFalse($policy->ownershipWasLost(true));
+        $this->assertSame(OwnershipOutcome::Lost, $policy->ownershipOutcome(false));
+        $this->assertSame(OwnershipOutcome::Owned, $policy->ownershipOutcome(true));
     }
 }

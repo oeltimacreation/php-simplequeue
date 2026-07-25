@@ -52,11 +52,11 @@ final readonly class WorkerPolicy
      *
      * @param int $attempts Number of attempts including the failed attempt
      * @param int $maxAttempts Maximum attempts allowed for the job
-     * @return bool True when the job should be scheduled for retry
+     * @return RetryDecision Exhaustive retry policy outcome
      */
-    public function shouldRetry(int $attempts, int $maxAttempts): bool
+    public function retryDecision(int $attempts, int $maxAttempts): RetryDecision
     {
-        return $attempts < $maxAttempts;
+        return $attempts < $maxAttempts ? RetryDecision::Retry : RetryDecision::Fail;
     }
 
     /**
@@ -74,11 +74,11 @@ final readonly class WorkerPolicy
      * Determine whether a fenced storage transition reports lost ownership.
      *
      * @param bool $transitionApplied Result of the fenced storage transition
-     * @return bool True when queue acknowledgement must be withheld
+     * @return OwnershipOutcome Exhaustive ownership outcome
      */
-    public function ownershipWasLost(bool $transitionApplied): bool
+    public function ownershipOutcome(bool $transitionApplied): OwnershipOutcome
     {
-        return !$transitionApplied;
+        return $transitionApplied ? OwnershipOutcome::Owned : OwnershipOutcome::Lost;
     }
 
     private function exponentialDelay(int $exponent): int
