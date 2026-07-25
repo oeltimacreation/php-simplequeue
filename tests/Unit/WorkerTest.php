@@ -650,6 +650,23 @@ class WorkerTest extends TestCase
         $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
     }
 
+    public function testRunReturnsErrorWhenInitialRecoveryFails(): void
+    {
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $this->storage->expects($this->once())
+            ->method('recoverStaleJobs')
+            ->willThrowException(new \RuntimeException('Recovery unavailable'));
+        $this->logger->expects($this->once())
+            ->method('critical')
+            ->with('Worker encountered a fatal error', $this->callback(
+                static fn(array $context): bool => $context['error'] === 'Recovery unavailable'
+            ));
+
+        $worker = $this->createWorkerWithDriver($driver);
+
+        $this->assertSame(Worker::EXIT_ERROR, $worker->run());
+    }
+
     public function testRunRetriesWithBackoffOnInfrastructureError(): void
     {
         $driver = $this->createMock(QueueDriverInterface::class);

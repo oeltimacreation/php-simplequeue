@@ -188,6 +188,19 @@ class InMemoryStorageTest extends TestCase
         $this->assertNull($this->storage->claimById($id, 'worker-2'));
     }
 
+    public function testReclaimFencesThePreviousLease(): void
+    {
+        $id = $this->storage->createJob('test.job', []);
+        $firstClaim = $this->storage->claimById($id, 'worker-1');
+        $this->assertNotNull($firstClaim);
+        $secondClaim = $this->storage->claimById($id, 'worker-1');
+        $this->assertNotNull($secondClaim);
+
+        $this->assertFalse($this->storage->markCompleted($firstClaim));
+        $this->assertTrue($this->storage->markCompleted($secondClaim));
+        $this->assertSame(JobStatus::Completed, $this->storage->find($id)?->status);
+    }
+
     public function testMarkCompletedSetsStatusAndResult(): void
     {
         $id = $this->storage->createJob('test.job', []);

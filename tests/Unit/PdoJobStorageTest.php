@@ -275,6 +275,46 @@ class PdoJobStorageTest extends TestCase
         $this->assertNotEquals($claim1->leaseToken, $claim2->leaseToken);
     }
 
+    public function testReclaimFencesThePreviousLease(): void
+    {
+        $pdo = $this->createSqlitePdo();
+        $storage = new PdoJobStorage($pdo);
+        $id = $storage->createJob('test.job', []);
+
+        $firstClaim = $storage->claimById($id, 'worker-1');
+        $this->assertNotNull($firstClaim);
+        $secondClaim = $storage->claimById($id, 'worker-1');
+        $this->assertNotNull($secondClaim);
+
+        $this->assertFalse($storage->markCompleted($firstClaim));
+        $this->assertTrue($storage->markCompleted($secondClaim));
+        $this->assertSame(JobStatus::Completed, $storage->find($id)?->status);
+    }
+
+    public function testClaimTransactionRollsBackWhenClaimUpdateFails(): void
+    {
+        $pdo = $this->createSqlitePdo();
+        $storage = new PdoJobStorage($pdo);
+        $id = $storage->createJob('test.job', []);
+        $pdo->exec(
+            "CREATE TRIGGER reject_claim BEFORE UPDATE OF status ON background_jobs " .
+            "WHEN NEW.status = 'running' BEGIN SELECT RAISE(ABORT, 'claim rejected'); END"
+        );
+
+        try {
+            $storage->claimById($id, 'worker-1');
+            $this->fail('Expected the failed claim update to be reported');
+        } catch (\PDOException $exception) {
+            $this->assertStringContainsString('claim rejected', $exception->getMessage());
+        }
+
+        $this->assertFalse($pdo->inTransaction());
+        $job = $storage->find($id);
+        $this->assertNotNull($job);
+        $this->assertSame(JobStatus::Pending, $job->status);
+        $this->assertNull($job->leaseToken);
+    }
+
     public function testClaimNextAvailableReturnsClaimedJob(): void
     {
         $pdo = $this->createSqlitePdo();

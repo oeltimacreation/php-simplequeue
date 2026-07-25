@@ -153,6 +153,24 @@ class RedisQueueDriverTest extends TestCase
         }
     }
 
+    public function testBlockingDequeueDiscardsMalformedNonScalarResponse(): void
+    {
+        $this->redis->returns['blmove'] = ['unexpected'];
+
+        $this->expectException(QueueException::class);
+        try {
+            $this->driver->dequeue('default', 5);
+        } finally {
+            $cleanupCalls = array_values(array_filter(
+                $this->redis->calls,
+                static fn(array $call): bool => in_array($call['method'], ['lrem', 'zrem'], true)
+            ));
+            $this->assertCount(2, $cleanupCalls);
+            $this->assertSame('', $cleanupCalls[0]['args'][2]);
+            $this->assertSame('', $cleanupCalls[1]['args'][1]);
+        }
+    }
+
     public function testStaleRecoveryRepairsUnscoredProcessingInBoundedSlice(): void
     {
         $this->redis->returns['lrange'] = ['123'];
