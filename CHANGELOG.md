@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Enabled PHPStan unmatched-ignore reporting and removed five stale configuration and inline suppressions while retaining the active optional-Predis and legacy test-mock baselines.
+- Split worker-loop orchestration into explicit initialization, maintenance, claim, execution, result, failure, and shutdown-cleanup phases while preserving event payloads, log context, acknowledgement ordering, and public APIs.
+- Moved retry eligibility, exponential delay, infrastructure classification, and fenced-ownership decisions into an I/O-free internal worker policy with direct unit coverage.
+- Decomposed PDO claims into database-specific transaction handling and a guarded claim operation, and isolated Redis command-response normalization and malformed-notification cleanup from command orchestration.
+- Flattened in-memory stale recovery and separated bounded reconciliation orchestration from individual notification decisions, reducing production duplicated windows and bringing all Stage 2 targets within the 15/15/3 complexity goals.
 
 ## [1.5.2] - 2026-07-16
 
