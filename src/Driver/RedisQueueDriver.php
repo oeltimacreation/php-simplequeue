@@ -114,7 +114,6 @@ LUA;
 
             // @phpstan-ignore-next-line
             if (method_exists($connection, 'getParameters')) {
-                // @phpstan-ignore-next-line
                 $parameters = $connection->getParameters();
                 if (isset($parameters->read_write_timeout)) {
                     $rwTimeout = $parameters->read_write_timeout;

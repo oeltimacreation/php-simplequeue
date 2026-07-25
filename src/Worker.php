@@ -222,7 +222,6 @@ final class Worker
                         continue;
                     }
 
-                    // @phpstan-ignore-next-line
                     if (!$this->shouldRun) {
                         $this->logger->info(
                             'Worker shutting down, releasing claimed job',

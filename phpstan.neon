@@ -3,7 +3,7 @@ parameters:
     paths:
         - src
         - tests
-    reportUnmatchedIgnoredErrors: false
+    reportUnmatchedIgnoredErrors: true
     ignoreErrors:
         # Predis is optional dependency
         - '#Predis\\ClientInterface#'
@@ -17,14 +17,6 @@ parameters:
         -
             message: '#Call to deprecated method isType\(\) of class PHPUnit\\Framework\\Assert#'
             path: tests
-
-        # Ignore Predis blmove/lmove return type mismatches in RedisQueueDriver
-        -
-            message: '#Strict comparison using === between string and (false|null) will always evaluate to false\.#'
-            path: src/Driver/RedisQueueDriver.php
-        -
-            message: '#Result of \|\| is always false\.#'
-            path: src/Driver/RedisQueueDriver.php
 
         # Ignore strict level 9 type-hint and mock object warnings in test files
         -
@@ -65,9 +57,6 @@ parameters:
             path: tests
         -
             identifier: cast.string
-            path: tests
-        -
-            identifier: cast.int
             path: tests
         -
             identifier: booleanNot.exprNotBoolean
