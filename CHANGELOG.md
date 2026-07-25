@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added a reproducible, dependency-free quality inventory for production and test code covering method-level cognitive and cyclomatic complexity, nesting depth, class and method size, and normalized duplicated blocks.
+- Added a Composer quality ratchet that prevents baseline metrics from worsening or new duplicated blocks from appearing unless a narrow, documented exception is recorded.
+- Added characterization coverage for worker startup recovery failure, PDO claim rollback, real PDO and in-memory lost-lease fencing, and malformed blocking Redis dequeue cleanup.
+
+### Changed
+
+- Enabled PHPStan unmatched-ignore reporting and removed five stale configuration and inline suppressions while retaining the active optional-Predis and legacy test-mock baselines.
+
 ## [1.5.2] - 2026-07-16
 
 ### Fixed
