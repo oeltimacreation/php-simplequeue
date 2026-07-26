@@ -25,6 +25,12 @@ class MockRedisClient implements ClientInterface
 
     public ?MockRedisPipeline $pipeline = null;
 
+    /** @var list<MockRedisPipeline> */
+    public array $pipelines = [];
+
+    /** @var list<list<mixed>> */
+    public array $pipelineReturns = [];
+
     public function getCommandFactory()
     {
         return null;
@@ -68,7 +74,7 @@ class MockRedisClient implements ClientInterface
 
     public function pipeline()
     {
-        $this->pipeline = new MockRedisPipeline();
+        $this->pipelines[] = $this->pipeline = MockRedisPipeline::fromReturns(array_shift($this->pipelineReturns));
         return $this->pipeline;
     }
 }
@@ -79,6 +85,17 @@ class MockRedisPipeline
     public array $calls = [];
     public bool $executed = false;
 
+    /** @param list<mixed> $returns */
+    public function __construct(private readonly array $returns = [])
+    {
+    }
+
+    /** @param list<mixed>|null $returns */
+    public static function fromReturns(?array $returns): self
+    {
+        return new self($returns ?? []);
+    }
+
     public function __call($method, $arguments)
     {
         $this->calls[] = ['method' => $method, 'args' => $arguments];
@@ -88,7 +105,7 @@ class MockRedisPipeline
     public function execute(): array
     {
         $this->executed = true;
-        return [];
+        return $this->returns;
     }
 }
 
@@ -174,15 +191,27 @@ class RedisQueueDriverTest extends TestCase
     public function testStaleRecoveryRepairsUnscoredProcessingInBoundedSlice(): void
     {
         $this->redis->returns['lrange'] = ['123'];
-        $this->redis->returns['zscore'] = null;
+        $this->redis->pipelineReturns = [[null]];
         $this->redis->returns['eval'] = 0;
 
         $this->assertSame(0, $this->driver->recoverStaleProcessing('default', 60, 1));
 
         $methods = array_column($this->redis->calls, 'method');
         $this->assertContains('lrange', $methods);
-        $this->assertContains('zscore', $methods);
-        $this->assertContains('zadd', $methods);
+        $this->assertSame(['zscore'], array_column($this->redis->pipelines[0]->calls, 'method'));
+        $this->assertSame(['zadd'], array_column($this->redis->pipelines[1]->calls, 'method'));
+    }
+
+    public function testStaleRecoveryPipelinesScoreChecksWithoutUnneededWrites(): void
+    {
+        $this->redis->returns['lrange'] = ['123', '456'];
+        $this->redis->pipelineReturns = [['1700000000', '1700000001']];
+        $this->redis->returns['eval'] = 0;
+
+        $this->assertSame(0, $this->driver->recoverStaleProcessing('default', 60, 2));
+
+        $this->assertCount(1, $this->redis->pipelines);
+        $this->assertSame(['zscore', 'zscore'], array_column($this->redis->pipelines[0]->calls, 'method'));
     }
 
     public function testAckRemovesFromProcessingListAndZset(): void

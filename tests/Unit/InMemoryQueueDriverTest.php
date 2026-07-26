@@ -35,6 +35,19 @@ class InMemoryQueueDriverTest extends TestCase
         $this->assertContains(3, $pending);
     }
 
+    public function testBatchEnqueuePreservesExistingFifoOrder(): void
+    {
+        $this->driver->enqueue('default', 1);
+        $this->driver->enqueueBatch('default', [2, 3, 4]);
+
+        $this->assertSame([1, 2, 3, 4], [
+            $this->driver->dequeue('default', 0),
+            $this->driver->dequeue('default', 0),
+            $this->driver->dequeue('default', 0),
+            $this->driver->dequeue('default', 0),
+        ]);
+    }
+
     public function testDequeueReturnsJobIdAndMovesToProcessing(): void
     {
         $this->driver->enqueue('default', 1);

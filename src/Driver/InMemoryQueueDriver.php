@@ -310,9 +310,7 @@ final class InMemoryQueueDriver implements
             $this->pending[$queue] = [];
         }
 
-        foreach ($jobIds as $jobId) {
-            array_unshift($this->pending[$queue], $jobId);
-        }
+        $this->pending[$queue] = array_merge(array_reverse($jobIds), $this->pending[$queue]);
     }
 
     /**

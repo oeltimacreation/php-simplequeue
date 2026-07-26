@@ -16,6 +16,7 @@ use Oeltima\SimpleQueue\Contract\SupportsProcessingHeartbeat;
 use Oeltima\SimpleQueue\Contract\SupportsBoundedQueueMembership;
 use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Internal\PositiveJobId;
+use Oeltima\SimpleQueue\Internal\RedisProcessingRepair;
 use Oeltima\SimpleQueue\Internal\RedisResponseNormalizer;
 use Oeltima\SimpleQueue\SystemClock;
 use Predis\ClientInterface;
@@ -431,15 +432,13 @@ LUA;
         $cursor = $this->repairCursors[$queue] ?? 0;
         $ids = $this->redis->lrange($this->processingKey($queue), $cursor, $cursor + $limit - 1);
         $this->repairCursors[$queue] = count($ids) < $limit ? 0 : $cursor + count($ids);
-        foreach ($ids as $id) {
-            if (!RedisResponseNormalizer::isValidJobId($id)) {
-                $this->discardMalformedProcessingNotification($queue, $id);
-                continue;
-            }
-            if ($this->redis->zscore($this->processingZKey($queue), $id) === null) {
-                $this->redis->zadd($this->processingZKey($queue), [(int) $id => $this->clock->timestamp()]);
-            }
-        }
+        RedisProcessingRepair::repair(
+            $this->redis,
+            $this->clock,
+            $this->processingKey($queue),
+            $this->processingZKey($queue),
+            array_values($ids)
+        );
     }
 
     private function discardMalformedProcessingNotification(string $queue, string $value): void
