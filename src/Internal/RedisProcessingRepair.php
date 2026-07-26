@@ -19,28 +19,17 @@ final class RedisProcessingRepair
      *
      * @param ClientInterface $redis Predis client
      * @param ClockInterface $clock Visibility timestamp source
-     * @param string $processingKey Processing list key
-     * @param string $processingZKey Processing timestamp sorted-set key
+     * @param array{processing: string, scores: string} $keys Processing list and score keys
      * @param list<string> $ids Bounded processing-list slice
      */
     public static function repair(
         ClientInterface $redis,
         ClockInterface $clock,
-        string $processingKey,
-        string $processingZKey,
+        array $keys,
         array $ids
     ): void {
-        $validIds = [];
-        $invalidIds = [];
-        foreach ($ids as $id) {
-            if (RedisResponseNormalizer::isValidJobId($id)) {
-                $validIds[] = $id;
-            } else {
-                $invalidIds[] = $id;
-            }
-        }
-
-        $scores = self::scores($redis, $processingZKey, $validIds);
+        [$validIds, $invalidIds] = self::partitionIds($ids);
+        $scores = self::scores($redis, $keys['scores'], $validIds);
         $missingScores = count($scores) < count($validIds) || in_array(null, $scores, true);
         if ($invalidIds === [] && !$missingScores) {
             return;
@@ -48,17 +37,61 @@ final class RedisProcessingRepair
 
         /** @var \Predis\Pipeline\Pipeline $pipeline */
         $pipeline = $redis->pipeline();
-        foreach ($invalidIds as $id) {
-            $pipeline->lrem($processingKey, 0, $id);
-            $pipeline->zrem($processingZKey, $id);
-        }
+        self::removeInvalid($pipeline, $keys, $invalidIds);
         $timestamp = $missingScores ? $clock->timestamp() : 0;
-        foreach ($validIds as $index => $id) {
-            if (($scores[$index] ?? null) === null) {
-                $pipeline->zadd($processingZKey, [(int) $id => $timestamp]);
+        self::addMissingScores($pipeline, $keys['scores'], [
+            'ids' => $validIds,
+            'scores' => $scores,
+            'timestamp' => $timestamp,
+        ]);
+        $pipeline->execute();
+    }
+
+    /**
+     * @param list<string> $ids
+     * @return array{list<string>, list<string>}
+     */
+    private static function partitionIds(array $ids): array
+    {
+        $valid = [];
+        $invalid = [];
+        foreach ($ids as $id) {
+            if (RedisResponseNormalizer::isValidJobId($id)) {
+                $valid[] = $id;
+                continue;
+            }
+            $invalid[] = $id;
+        }
+        return [$valid, $invalid];
+    }
+
+    /**
+     * @param \Predis\Pipeline\Pipeline $pipeline
+     * @param array{processing: string, scores: string} $keys
+     * @param list<string> $invalidIds
+     */
+    private static function removeInvalid(object $pipeline, array $keys, array $invalidIds): void
+    {
+        foreach ($invalidIds as $id) {
+            $pipeline->lrem($keys['processing'], 0, $id);
+            $pipeline->zrem($keys['scores'], $id);
+        }
+    }
+
+    /**
+     * @param \Predis\Pipeline\Pipeline $pipeline
+     * @param array{ids: list<string>, scores: list<mixed>, timestamp: int} $repair
+     */
+    private static function addMissingScores(
+        object $pipeline,
+        string $scoresKey,
+        array $repair
+    ): void {
+        foreach ($repair['ids'] as $index => $id) {
+            if (($repair['scores'][$index] ?? null) === null) {
+                $pipeline->zadd($scoresKey, [(int) $id => $repair['timestamp']]);
             }
         }
-        $pipeline->execute();
     }
 
     /**

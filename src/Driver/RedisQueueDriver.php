@@ -435,8 +435,10 @@ LUA;
         RedisProcessingRepair::repair(
             $this->redis,
             $this->clock,
-            $this->processingKey($queue),
-            $this->processingZKey($queue),
+            [
+                'processing' => $this->processingKey($queue),
+                'scores' => $this->processingZKey($queue),
+            ],
             array_values($ids)
         );
     }

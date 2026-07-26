@@ -17,35 +17,47 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Predis\Client;
 
+enum QueueBackend
+{
+    case Memory;
+    case Database;
+    case Redis;
+
+    public function invalidJobIdMessage(): string
+    {
+        return $this === self::Database
+            ? 'jobId must be a positive integer'
+            : 'Job ID must be a positive integer';
+    }
+}
+
 final class QueueDriverContractTest extends TestCase
 {
     private ?InMemoryJobStorage $databaseStorage = null;
 
-    /** @return iterable<string, array{string}> */
+    /** @return iterable<string, array{QueueBackend}> */
     public static function queueBackends(): iterable
     {
-        yield 'in-memory' => ['memory'];
-        yield 'database' => ['database'];
-        yield 'Redis' => ['redis'];
+        yield 'in-memory' => [QueueBackend::Memory];
+        yield 'database' => [QueueBackend::Database];
+        yield 'Redis' => [QueueBackend::Redis];
     }
 
-    /** @return iterable<string, array{string}> */
+    /** @return iterable<string, array{QueueBackend}> */
     public static function notificationBackends(): iterable
     {
-        yield 'in-memory' => ['memory'];
-        yield 'Redis' => ['redis'];
+        yield 'in-memory' => [QueueBackend::Memory];
+        yield 'Redis' => [QueueBackend::Redis];
     }
 
-    /** @return iterable<string, array{string, string}> */
+    /** @return iterable<string, array{QueueBackend}> */
     public static function jobIdBackends(): iterable
     {
-        yield 'in-memory' => ['memory', 'Job ID must be a positive integer'];
-        yield 'database' => ['database', 'jobId must be a positive integer'];
-        yield 'Redis' => ['redis', 'Job ID must be a positive integer'];
+        yield from self::queueBackends();
     }
 
     #[DataProvider('queueBackends')]
-    public function testLifecyclePreservesQueueIsolationAndAcknowledgement(string $backend): void
+    public function testLifecyclePreservesQueueIsolationAndAcknowledgement(QueueBackend $backend): void
     {
         $driver = $this->driver($backend);
         try {
@@ -63,7 +75,7 @@ final class QueueDriverContractTest extends TestCase
     }
 
     #[DataProvider('notificationBackends')]
-    public function testBatchOrderingAndCountsMatch(string $backend): void
+    public function testBatchOrderingAndCountsMatch(QueueBackend $backend): void
     {
         $driver = $this->driver($backend);
         self::assertInstanceOf(SupportsBatchEnqueue::class, $driver);
@@ -83,7 +95,7 @@ final class QueueDriverContractTest extends TestCase
     }
 
     #[DataProvider('notificationBackends')]
-    public function testImmediateAndDelayedRetriesMatch(string $backend): void
+    public function testImmediateAndDelayedRetriesMatch(QueueBackend $backend): void
     {
         $driver = $this->driver($backend);
         self::assertInstanceOf(SupportsDelayedJobs::class, $driver);
@@ -103,16 +115,16 @@ final class QueueDriverContractTest extends TestCase
     }
 
     #[DataProvider('jobIdBackends')]
-    public function testInvalidJobIdMessageIsPreserved(string $backend, string $message): void
+    public function testInvalidJobIdMessageIsPreserved(QueueBackend $backend): void
     {
         $driver = $this->driver($backend);
         $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage($message);
+        $this->expectExceptionMessage($backend->invalidJobIdMessage());
         $driver->enqueue('default', 0);
     }
 
     #[DataProvider('notificationBackends')]
-    public function testInvalidRetryDelayMessageMatches(string $backend): void
+    public function testInvalidRetryDelayMessageMatches(QueueBackend $backend): void
     {
         $driver = $this->driver($backend);
         $this->expectException(\InvalidArgumentException::class);
@@ -120,12 +132,12 @@ final class QueueDriverContractTest extends TestCase
         $driver->nack('default', 1, -1);
     }
 
-    private function driver(string $backend): QueueDriverInterface
+    private function driver(QueueBackend $backend): QueueDriverInterface
     {
-        if ($backend === 'memory') {
+        if ($backend === QueueBackend::Memory) {
             return new InMemoryQueueDriver();
         }
-        if ($backend === 'database') {
+        if ($backend === QueueBackend::Database) {
             $clock = new FrozenClock();
             $this->databaseStorage = new InMemoryJobStorage($clock);
             return new DatabaseQueueDriver($this->databaseStorage, 50, $clock);
@@ -146,12 +158,12 @@ final class QueueDriverContractTest extends TestCase
     }
 
     private function enqueueJob(
-        string $backend,
+        QueueBackend $backend,
         QueueDriverInterface $driver,
         string $queue,
         int $notificationId
     ): int {
-        if ($backend === 'database') {
+        if ($backend === QueueBackend::Database) {
             if ($this->databaseStorage === null) {
                 throw new \LogicException('Database storage was not initialized');
             }

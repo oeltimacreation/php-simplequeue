@@ -24,7 +24,7 @@ final class RedisResponseNormalizer
      */
     public static function dequeuedJobId(string $queue, mixed $result, callable $discardMalformed): ?int
     {
-        if ($result === null || $result === false || $result === '') {
+        if (self::isEmptyDequeueResult($result)) {
             return null;
         }
         if (is_string($result) && self::isValidJobId($result)) {
@@ -34,6 +34,11 @@ final class RedisResponseNormalizer
         $value = is_scalar($result) ? (string) $result : '';
         $discardMalformed($queue, $value);
         throw new QueueException('Redis returned a malformed queue job ID');
+    }
+
+    private static function isEmptyDequeueResult(mixed $result): bool
+    {
+        return in_array($result, [null, false, ''], true);
     }
 
     /**

@@ -91,7 +91,7 @@ final class WorkerSoakTest extends TestCase
 
     public function testSigtermStopsLongRunningWorkerGracefully(): void
     {
-        if (!function_exists('pcntl_fork') || !function_exists('posix_kill') || PHP_OS_FAMILY === 'Windows') {
+        if (!$this->supportsProcessControl()) {
             self::markTestSkipped('Process control is unavailable.');
         }
         $readyFile = tempnam(sys_get_temp_dir(), 'sq_signal_');
@@ -116,6 +116,15 @@ final class WorkerSoakTest extends TestCase
                 unlink($readyFile);
             }
         }
+    }
+
+    private function supportsProcessControl(): bool
+    {
+        return !in_array(false, [
+            function_exists('pcntl_fork'),
+            function_exists('posix_kill'),
+            PHP_OS_FAMILY !== 'Windows',
+        ], true);
     }
 
     private function registry(): JobRegistry

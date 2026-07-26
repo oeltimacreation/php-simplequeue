@@ -96,15 +96,15 @@ final class ConcurrencyTest extends TestCase
         foreach ($this->contractStorages($clock) as $name => $storage) {
             $id = $storage->createJob('poison.job', [], 'default', 3); // Max attempts = 3
 
-            $job = $this->recoverCrashedJob($storage, $clock, $id, 'worker-1', $name);
+            $job = $this->recoverCrashedJob($storage, $clock, $id, 'worker-1');
             $this->assertSame(JobStatus::Pending, $job->status, "$name: job should be pending");
             $this->assertSame(1, $job->attempts, "$name: attempts should be 1");
 
-            $job = $this->recoverCrashedJob($storage, $clock, $id, 'worker-2', $name);
+            $job = $this->recoverCrashedJob($storage, $clock, $id, 'worker-2');
             $this->assertSame(JobStatus::Pending, $job->status, "$name: job should be pending");
             $this->assertSame(2, $job->attempts, "$name: attempts should be 2");
 
-            $job = $this->recoverCrashedJob($storage, $clock, $id, 'worker-3', $name);
+            $job = $this->recoverCrashedJob($storage, $clock, $id, 'worker-3');
             $this->assertSame(JobStatus::Failed, $job->status, "$name: job should be failed");
             $this->assertStringContainsString('stale recovery', $job->errorMessage, "$name: error message should match");
         }
@@ -114,12 +114,11 @@ final class ConcurrencyTest extends TestCase
         \Oeltima\SimpleQueue\Contract\JobStorageInterface $storage,
         FrozenClock $clock,
         int $id,
-        string $workerId,
-        string $name
+        string $workerId
     ): JobData {
-        self::assertNotNull($storage->claimById($id, $workerId), "{$name}: {$workerId} claim failed");
+        self::assertNotNull($storage->claimById($id, $workerId), "{$workerId} claim failed");
         $clock->advance(600);
-        self::assertSame(1, $storage->recoverStaleJobs(300), "{$name}: {$workerId} recovery failed");
+        self::assertSame(1, $storage->recoverStaleJobs(300), "{$workerId} recovery failed");
         $job = $storage->find($id);
         self::assertNotNull($job);
         return $job;

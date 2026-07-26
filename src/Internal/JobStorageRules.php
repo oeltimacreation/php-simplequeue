@@ -21,7 +21,13 @@ final class JobStorageRules
      */
     public static function validateProgress(?int $progress): void
     {
-        if ($progress !== null && ($progress < 0 || $progress > 100)) {
+        if ($progress === null) {
+            return;
+        }
+        if ($progress < 0) {
+            throw new \InvalidArgumentException('Progress must be null or an integer between 0 and 100');
+        }
+        if ($progress > 100) {
             throw new \InvalidArgumentException('Progress must be null or an integer between 0 and 100');
         }
     }

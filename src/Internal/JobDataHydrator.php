@@ -86,23 +86,31 @@ final class JobDataHydrator
     private static function payload(mixed $payload): array
     {
         if (is_string($payload)) {
-            try {
-                $payload = json_decode($payload, true, 512, JSON_THROW_ON_ERROR);
-            } catch (\JsonException $exception) {
-                throw new SerializationException('Stored job payload contains invalid JSON', 0, $exception);
-            }
+            $payload = self::decodePayload($payload);
         }
         if (!is_array($payload)) {
             throw new SerializationException('Stored job payload must decode to an object');
         }
-        $normalized = [];
         foreach ($payload as $key => $value) {
             if (!is_string($key)) {
                 throw new SerializationException('Stored job payload must decode to an object');
             }
-            $normalized[$key] = $value;
         }
-        return $normalized;
+        return $payload;
+    }
+
+    /** @return array<mixed> */
+    private static function decodePayload(string $payload): array
+    {
+        try {
+            $decoded = json_decode($payload, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException $exception) {
+            throw new SerializationException('Stored job payload contains invalid JSON', 0, $exception);
+        }
+        if (!is_array($decoded)) {
+            throw new SerializationException('Stored job payload must decode to an object');
+        }
+        return $decoded;
     }
 
     private static function result(mixed $result): mixed
