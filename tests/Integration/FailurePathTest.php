@@ -94,17 +94,7 @@ final class FailurePathTest extends TestCase
         $clock = new FrozenClock();
         $storage = new InMemoryJobStorage($clock);
         $driver = new FaultInjectingQueueDriver(new InMemoryQueueDriver($clock), ['nack' => 1]);
-        $registry = new JobRegistry();
-        $handler = new class implements JobHandlerInterface {
-            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): never
-            {
-                throw new \RuntimeException('Temporary failure');
-            }
-        };
-        $registry->register('test.retry', $handler::class);
-        $dispatcher = new JobDispatcher($storage, new QueueManager($driver));
-        $worker = $this->worker($storage, $driver, $registry);
-        $jobId = $dispatcher->dispatch('test.retry', []);
+        [$jobId, $worker] = $this->retryJob($storage, $driver);
 
         self::assertTrue($worker->processOne());
         $job = $storage->find($jobId);
@@ -133,17 +123,7 @@ final class FailurePathTest extends TestCase
             }
         };
         $driver = new InMemoryQueueDriver($clock);
-        $registry = new JobRegistry();
-        $handler = new class implements JobHandlerInterface {
-            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): never
-            {
-                throw new \RuntimeException('Temporary failure');
-            }
-        };
-        $registry->register('test.retry', $handler::class);
-        $dispatcher = new JobDispatcher($storage, new QueueManager($driver));
-        $worker = $this->worker($storage, $driver, $registry);
-        $jobId = $dispatcher->dispatch('test.retry', []);
+        [$jobId, $worker] = $this->retryJob($storage, $driver);
 
         self::assertTrue($worker->processOne());
         self::assertSame(JobStatus::Running, $storage->find($jobId)?->status);
@@ -258,5 +238,32 @@ final class FailurePathTest extends TestCase
             'retry_base_delay' => 1,
             'retry_max_delay' => 1,
         ]);
+    }
+
+    private function failingRegistry(): JobRegistry
+    {
+        $registry = new JobRegistry();
+        $handler = new class implements JobHandlerInterface {
+            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): never
+            {
+                throw new \RuntimeException('Temporary failure');
+            }
+        };
+        $registry->register('test.retry', $handler::class);
+
+        return $registry;
+    }
+
+    /** @return array{int, Worker} */
+    private function retryJob(
+        InMemoryJobStorage $storage,
+        \Oeltima\SimpleQueue\Contract\QueueDriverInterface $driver
+    ): array {
+        $dispatcher = new JobDispatcher($storage, new QueueManager($driver));
+
+        return [
+            $dispatcher->dispatch('test.retry', []),
+            $this->worker($storage, $driver, $this->failingRegistry()),
+        ];
     }
 }

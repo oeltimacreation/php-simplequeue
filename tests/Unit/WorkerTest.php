@@ -659,7 +659,7 @@ class WorkerTest extends TestCase
         $this->logger->expects($this->once())
             ->method('critical')
             ->with('Worker encountered a fatal error', $this->callback(
-                static fn(array $context): bool => $context['error'] === 'Recovery unavailable'
+                static fn(array $context): bool => $context === ['error' => 'Recovery unavailable']
             ));
 
         $worker = $this->createWorkerWithDriver($driver);

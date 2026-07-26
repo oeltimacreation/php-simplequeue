@@ -190,7 +190,6 @@ final class Worker
         } catch (\Throwable $e) {
             $this->logger->critical('Worker encountered a fatal error', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
             ]);
             return self::EXIT_ERROR;
         } finally {
@@ -718,7 +717,6 @@ final class Worker
         } catch (\Throwable $e) {
             $this->logger->error('Failed to run DB-Redis reconciliation sweep', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
             ]);
         }
     }

@@ -36,7 +36,6 @@ final class WorkerLoopFailureHandler
         if (!$this->policy->isInfrastructureException($exception)) {
             $this->logger->error('Worker loop encountered an unexpected error', [
                 'error' => $exception->getMessage(),
-                'trace' => $exception->getTraceAsString(),
             ]);
             $this->sleep(1.0);
             return $consecutiveErrors;
@@ -50,7 +49,10 @@ final class WorkerLoopFailureHandler
             'backoff_seconds' => round($totalDelaySeconds, 3),
             'consecutive_errors' => $consecutiveErrors,
         ]);
-        $emit('infra_error', ['error' => $exception->getMessage(), 'exception' => $exception]);
+        $emit('infra_error', [
+            'error' => $exception->getMessage(),
+            'exception_class' => $exception::class,
+        ]);
         $emit('backoff', [
             'error' => $exception->getMessage(),
             'backoff_seconds' => $totalDelaySeconds,
