@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added characterization coverage for worker startup recovery failure, PDO claim rollback, real PDO and in-memory lost-lease fencing, and malformed blocking Redis dequeue cleanup.
 - Added an internal type-safety inventory documenting scalar, storage-row, Redis-response, timestamp, claim, and worker-event boundaries and the compatibility decisions applied to each.
 - Added shared storage and queue contract suites plus a backend parity map covering lifecycle transitions, validation errors, timestamps, attempt counts, acknowledgement behavior, and lease fencing.
+- Added a reproducible performance harness and Stage 5 profile covering dispatch, batch, claim, worker completion, retry, reconciliation, idle maintenance, PDO operation counts, Redis roundtrips, and memory.
 
 ### Changed
 
@@ -28,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Centralized storage validation, JSON encoding, timestamp offsets, retry terminality, and status/queue filtering while keeping PDO SQL and in-memory state transitions persistence-specific.
 - Consolidated repeated PDO preparation, bounded queries, hydration, and fenced claim predicates, and centralized Redis queue-key construction without changing transaction boundaries, command atomicity, or backend-specific SQL.
 - Replaced repeated clocks and real-service setup in storage, concurrency, Redis, Valkey, MySQL, and PostgreSQL tests with focused fixtures and data providers while preserving each scenario's assertions.
+- Replaced quadratic in-memory batch insertion with one order-preserving merge, reducing the 10,000-job benchmark median by 80.9% without changing FIFO behavior.
+- Pipelined Redis processing-score checks and repairs, reducing the 100-entry crash-window repair from 202 to 4 roundtrips while preserving its command count, bounded limit, atomic recovery script, and malformed-notification cleanup.
 
 ## [1.5.2] - 2026-07-16
 
