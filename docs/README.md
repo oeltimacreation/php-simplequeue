@@ -17,6 +17,5 @@ Reference material:
 - [Backend parity map](backend-parity.md)
 - [Failure and recovery matrix](failure-matrix.md)
 - [v1.6 performance profile](performance.md)
-- [v1.6 roadmap](v1.6.0-plan.md)
 
 Runnable code lives in [examples/](../examples/README.md).

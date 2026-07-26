@@ -1,5 +1,13 @@
 # Upgrading
 
+## To v1.6.x
+
+v1.6 is a consolidation release focused on code quality, type safety, performance, and stability hardening. It is 100% backward compatible with v1.5.x and requires no database schema or public API changes.
+
+- Public APIs, interfaces, data serialization formats, and backend schemas remain unchanged from v1.5.2.
+- Performance improvements for batch in-memory operations and Redis blocking dequeue score repair take effect automatically.
+- Logging and event context remain informative while omitting raw stack traces from log contexts.
+
 ## To v1.5.x
 
 v1.5 is a reliability release. It does not require an offline schema migration

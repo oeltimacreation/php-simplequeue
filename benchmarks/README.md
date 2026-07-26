@@ -1,6 +1,6 @@
 # Performance benchmarks
 
-The Stage 5 harness measures queue-library work rather than application handler
+The performance harness measures queue-library work rather than application handler
 work. Each scenario performs one warmup by default and reports all five measured
 samples plus medians, peak incremental memory, retained memory, PDO statement
 and transaction counts, and Redis command and network-roundtrip counts.

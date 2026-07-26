@@ -1,6 +1,6 @@
 # v1.6 performance profile
 
-This report records the Stage 5 profile captured on 2026-07-26. The benchmark
+This report records the performance profile captured on 2026-07-26. The benchmark
 harness is [`benchmarks/run.php`](../benchmarks/run.php); it emits JSON with all
 samples so results can be compared without parsing display-oriented output.
 

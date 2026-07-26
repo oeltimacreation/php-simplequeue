@@ -38,9 +38,9 @@ and queue-statistics cases run only against drivers that expose those optional
 capabilities. Real-service providers retain separate Redis and Valkey cases
 while sharing only connection and lifecycle setup.
 
-## Stage 4 result
+## Deduplication and parity results
 
-The Stage 3 starting inventory contained 128 production duplicated windows and
+The pre-consolidation starting inventory contained 128 production duplicated windows and
 1,424 test duplicated windows. After this consolidation, the same analyzer
 reports 37 production duplicated windows and 1,107 test duplicated windows.
 No quality-ratchet exception, public API change, extra backend command, or

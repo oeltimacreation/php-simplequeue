@@ -1,6 +1,6 @@
 # Internal type-safety boundaries
 
-This document records the Stage 3 primitive and array-shape inventory for
+This document records the primitive and array-shape inventory for
 v1.6.0. Public scalar signatures and serialized job data remain compatible;
 normalization happens after values enter the library.
 
@@ -58,7 +58,7 @@ when failure occurs before a claim exists.
 
 ## Compatibility constraints
 
-Stage 3 deliberately does not change public method signatures, named
+Type-safety refactoring deliberately does not change public method signatures, named
 arguments, serialized array keys, queue key construction, timestamp formats,
 exception messages, or listener payloads. Internal wrappers were introduced
 only where they enforce an invariant or make an outcome exhaustive. PHPStan

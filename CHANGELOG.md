@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-07-26
+
 ### Added
 
 - Added a reproducible, dependency-free quality inventory for production and test code covering method-level cognitive and cyclomatic complexity, nesting depth, class and method size, and normalized duplicated blocks.
@@ -14,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added characterization coverage for worker startup recovery failure, PDO claim rollback, real PDO and in-memory lost-lease fencing, and malformed blocking Redis dequeue cleanup.
 - Added an internal type-safety inventory documenting scalar, storage-row, Redis-response, timestamp, claim, and worker-event boundaries and the compatibility decisions applied to each.
 - Added shared storage and queue contract suites plus a backend parity map covering lifecycle transitions, validation errors, timestamps, attempt counts, acknowledgement behavior, and lease fencing.
-- Added a reproducible performance harness and Stage 5 profile covering dispatch, batch, claim, worker completion, retry, reconciliation, idle maintenance, PDO operation counts, Redis roundtrips, and memory.
+- Added a reproducible performance harness and performance profile covering dispatch, batch, claim, worker completion, retry, reconciliation, idle maintenance, PDO operation counts, Redis roundtrips, and memory.
 - Added a failure and recovery matrix with deterministic fault-injection coverage for storage, notification, ACK/NACK, serialization, stale-lease, interruption, duplicate-delivery, and cancellation-cleanup boundaries.
 - Added worker soak coverage for recycling, repeated PDO reconnects, bounded memory growth, long infrastructure-failure sequences, and real SIGTERM shutdown.
 - Added concurrent real-database checks for idempotent creation, lease fencing, and SKIP LOCKED claim distribution across the supported PHP and service matrix.
@@ -25,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Split worker-loop orchestration into explicit initialization, maintenance, claim, execution, result, failure, and shutdown-cleanup phases while preserving event payloads, log context, acknowledgement ordering, and public APIs.
 - Moved retry eligibility, exponential delay, infrastructure classification, and fenced-ownership decisions into an I/O-free internal worker policy with direct unit coverage.
 - Decomposed PDO claims into database-specific transaction handling and a guarded claim operation, and isolated Redis command-response normalization and malformed-notification cleanup from command orchestration.
-- Flattened in-memory stale recovery and separated bounded reconciliation orchestration from individual notification decisions, reducing production duplicated windows and bringing all Stage 2 targets within the 15/15/3 complexity goals.
+- Flattened in-memory stale recovery and separated bounded reconciliation orchestration from individual notification decisions, reducing production duplicated windows and bringing all refactored targets within the 15/15/3 complexity goals.
 - Centralized raw PDO/object job-row hydration and positive job-ID validation behind internal boundaries while preserving public scalar signatures, serialized fields, and validation messages.
 - Replaced worker retry and lease-ownership booleans with exhaustive internal outcomes, and replaced in-memory status strings with `JobStatus` cases and a complete private row shape.
 - Removed redundant casts and numeric checks from trusted in-memory job state and centralized claim-release field clearing without changing fenced-write or acknowledgement behavior.

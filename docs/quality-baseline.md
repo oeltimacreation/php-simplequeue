@@ -1,15 +1,15 @@
 # v1.6 quality baseline
 
-This report records the Stage 1 baseline captured on 2026-07-26. It measures
-the repository after the Stage 1 characterization tests were added and before
-the v1.6 structural refactors begin. The machine-readable inventory is stored
+This report records the quality baseline captured on 2026-07-26. It measures
+the repository after characterization tests were added and before
+the v1.6 structural refactors. The machine-readable inventory is stored
 in [`quality/quality-baseline.json`](../quality/quality-baseline.json).
 
 ## Reproduce the inventory
 
 The project uses a dependency-free analyzer built on PHP's `token_get_all()`.
 Adding a third-party cognitive-complexity or copy/paste detector was rejected
-for this stage because the existing PHP quality dependencies do not provide
+for this baseline because the existing PHP quality dependencies do not provide
 both measures and an additional development dependency was not justified for
 an internal ratchet.
 
@@ -47,7 +47,7 @@ exception must be narrowly recorded with its metric and reason in
 
 The high test duplication count is dominated by repeated worker mock setup.
 Because windows overlap, a single long repeated fixture produces several
-fingerprints. Stage 4 should replace that setup with focused fixtures while
+fingerprints. Deduplication refactoring replaces that setup with focused fixtures while
 keeping scenario intent visible.
 
 ### Method hotspots
@@ -70,8 +70,8 @@ Raw score alone does not set the priority. The worker and queue/storage claim
 paths are P0 because they are frequently changed and a regression can lose
 ownership, duplicate delivery, or strand a notification. `JobData::fromRaw()`
 has the second-highest raw scores, but its control flow is flat and its
-normalization behavior is already isolated, so it is deferred to the Stage 3
-type-safety work. The measurements confirm all four initial candidate classes:
+normalization behavior is already isolated, so it was addressed during
+type-safety normalization. The measurements confirm all four initial candidate classes:
 `Worker`, `PdoJobStorage`, `InMemoryJobStorage`, and `RedisQueueDriver`.
 
 The largest production classes are `PdoJobStorage` (1,115 lines), `Worker`
@@ -84,7 +84,7 @@ The first structural targets are `Worker::run()`/`claimNextJob()`, the PDO
 transactional claim and fenced mutations, the matching in-memory claim
 semantics, and `RedisQueueDriver::dequeue()`. Existing lifecycle, crash
 recovery, and worker failure tests remain part of their characterization map.
-Stage 1 added these missing edge cases:
+Initial characterization work added these missing edge cases:
 
 - `WorkerTest::testRunReturnsErrorWhenInitialRecoveryFails()` protects fatal
   startup recovery and the worker exit code;
@@ -116,7 +116,7 @@ explicitly baselined for the optional Predis boundary and legacy test mocks:
 
 PHPCS currently warns at cyclomatic complexity 25 and nesting depth 5, with
 absolute limits of 35 and 8. Tightening those global thresholds to the desired
-15/3 targets would fail existing hotspots before Stage 2 addresses them, so the
+15/3 targets would fail existing hotspots before control-flow refactoring addressed them, so the
 thresholds are retained for now. The quality ratchet immediately enforces
 cyclomatic and cognitive complexity 15, nesting 3, method size 100, and class
 size 500 for new code while preventing any baseline metric from worsening.
