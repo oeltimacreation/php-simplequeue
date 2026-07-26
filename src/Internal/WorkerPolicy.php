@@ -56,7 +56,7 @@ final readonly class WorkerPolicy
      */
     public function retryDecision(int $attempts, int $maxAttempts): RetryDecision
     {
-        return $attempts < $maxAttempts ? RetryDecision::Retry : RetryDecision::Fail;
+        return RetryDecision::forAttempt($attempts, $maxAttempts);
     }
 
     /**

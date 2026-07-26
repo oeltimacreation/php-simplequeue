@@ -364,22 +364,27 @@ LUA;
 
     private function pendingKey(string $queue): string
     {
-        return sprintf('%s:queue:%s:pending', $this->prefix, $queue);
+        return $this->queueKey($queue, 'pending');
     }
 
     private function processingKey(string $queue): string
     {
-        return sprintf('%s:queue:%s:processing', $this->prefix, $queue);
+        return $this->queueKey($queue, 'processing');
     }
 
     private function processingZKey(string $queue): string
     {
-        return sprintf('%s:queue:%s:processing_z', $this->prefix, $queue);
+        return $this->queueKey($queue, 'processing_z');
     }
 
     private function delayedKey(string $queue): string
     {
-        return sprintf('%s:queue:%s:delayed', $this->prefix, $queue);
+        return $this->queueKey($queue, 'delayed');
+    }
+
+    private function queueKey(string $queue, string $suffix): string
+    {
+        return sprintf('%s:queue:%s:%s', $this->prefix, $queue, $suffix);
     }
 
     private function validateJobId(int $jobId): void

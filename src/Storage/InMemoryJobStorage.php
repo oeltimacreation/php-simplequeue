@@ -14,7 +14,9 @@ use Oeltima\SimpleQueue\Contract\IdempotentJobResult;
 use Oeltima\SimpleQueue\Contract\SupportsIdempotentJobCreation;
 use Oeltima\SimpleQueue\Contract\SupportsPendingJobCursor;
 use Oeltima\SimpleQueue\Contract\SupportsQueueScopedStaleRecovery;
-use Oeltima\SimpleQueue\Exception\SerializationException;
+use Oeltima\SimpleQueue\Internal\JobFilter;
+use Oeltima\SimpleQueue\Internal\JobStorageRules;
+use Oeltima\SimpleQueue\Internal\RetryDecision;
 use Oeltima\SimpleQueue\SystemClock;
 
 /**
@@ -68,7 +70,7 @@ class InMemoryJobStorage implements
             'queue' => $queue,
             'type' => $type,
             'status' => JobStatus::Pending,
-            'payload' => $this->encodeJson($payload, 'job payload'),
+            'payload' => JobStorageRules::encodeJson($payload, 'job payload'),
             'attempts' => 0,
             'max_attempts' => $maxAttempts,
             'available_at' => $now,
@@ -218,7 +220,7 @@ class InMemoryJobStorage implements
         $now = $this->now();
         $job = &$this->jobs[$claim->job->id];
         $job['status'] = JobStatus::Completed;
-        $job['result'] = $result === null ? null : $this->encodeJson($result, 'job result');
+        $job['result'] = $result === null ? null : JobStorageRules::encodeJson($result, 'job result');
         $job['completed_at'] = $now;
         $this->releaseClaim($job, $now);
 
@@ -244,9 +246,7 @@ class InMemoryJobStorage implements
 
     public function updateProgress(ClaimedJob $claim, ?int $progress = null, ?string $message = null): bool
     {
-        if ($progress !== null && ($progress < 0 || $progress > 100)) {
-            throw new \InvalidArgumentException('Progress must be null or an integer between 0 and 100');
-        }
+        JobStorageRules::validateProgress($progress);
         if (!$this->ownsClaim($claim)) {
             return false;
         }
@@ -266,15 +266,13 @@ class InMemoryJobStorage implements
         int $delaySeconds,
         ?string $errorMessage = null
     ): bool {
-        if ($attempts < 1 || $delaySeconds < 0) {
-            throw new \InvalidArgumentException('Attempts must be positive and retry delay must not be negative');
-        }
+        JobStorageRules::validateRetry($attempts, $delaySeconds);
         if (!$this->ownsClaim($claim)) {
             return false;
         }
 
         $now = $this->now();
-        $availableAt = gmdate($this->dateFormat, $this->clock->timestamp() + $delaySeconds);
+        $availableAt = JobStorageRules::timestamp($this->clock, $this->dateFormat, $delaySeconds);
 
         $job = &$this->jobs[$claim->job->id];
         $job['status'] = JobStatus::Pending;
@@ -303,7 +301,7 @@ class InMemoryJobStorage implements
     public function recoverStaleJobs(int $ttlSeconds): int
     {
         $now = $this->now();
-        $staleThreshold = gmdate($this->dateFormat, $this->clock->timestamp() - $ttlSeconds);
+        $staleThreshold = JobStorageRules::timestamp($this->clock, $this->dateFormat, -$ttlSeconds);
         $count = 0;
 
         foreach ($this->jobs as &$job) {
@@ -317,7 +315,7 @@ class InMemoryJobStorage implements
             $attempts = $job['attempts'];
             $maxAttempts = $job['max_attempts'];
             $nextAttempts = $attempts + 1;
-            if ($nextAttempts >= $maxAttempts) {
+            if (!RetryDecision::forAttempt($nextAttempts, $maxAttempts)->shouldRetry()) {
                 $job['status'] = JobStatus::Failed;
                 $job['error_message'] = 'Job timed out / worker crashed (stale recovery)';
                 $job['completed_at'] = $now;
@@ -336,11 +334,9 @@ class InMemoryJobStorage implements
 
     public function recoverStaleJobsForQueue(string $queue, int $ttlSeconds, int $limit): int
     {
-        if ($ttlSeconds < 1 || $limit < 1) {
-            throw new \InvalidArgumentException('Stale recovery TTL and limit must be positive');
-        }
+        JobStorageRules::validateStaleRecovery($ttlSeconds, $limit);
         $now = $this->now();
-        $threshold = gmdate($this->dateFormat, $this->clock->timestamp() - $ttlSeconds);
+        $threshold = JobStorageRules::timestamp($this->clock, $this->dateFormat, -$ttlSeconds);
         $recovered = 0;
         foreach ($this->jobs as &$job) {
             if (
@@ -372,15 +368,11 @@ class InMemoryJobStorage implements
      */
     public function list(?JobStatus $status = null, ?string $queue = null, int $limit = 100, int $offset = 0): array
     {
-        $filtered = array_filter($this->jobs, function (array $job) use ($status, $queue): bool {
-            if ($status !== null && $job['status'] !== $status) {
-                return false;
-            }
-            if ($queue !== null && $job['queue'] !== $queue) {
-                return false;
-            }
-            return true;
-        });
+        $filter = new JobFilter($status, $queue);
+        $filtered = array_filter(
+            $this->jobs,
+            static fn (array $job): bool => $filter->matches($job['status'], $job['queue'])
+        );
 
         $filtered = array_reverse($filtered, true);
         $filtered = array_slice($filtered, $offset, $limit, true);
@@ -411,13 +403,11 @@ class InMemoryJobStorage implements
 
     public function count(?JobStatus $status = null, ?string $queue = null): int
     {
+        $filter = new JobFilter($status, $queue);
         $count = 0;
 
         foreach ($this->jobs as $job) {
-            if ($status !== null && $job['status'] !== $status) {
-                continue;
-            }
-            if ($queue !== null && $job['queue'] !== $queue) {
+            if (!$filter->matches($job['status'], $job['queue'])) {
                 continue;
             }
             $count++;
@@ -428,10 +418,7 @@ class InMemoryJobStorage implements
 
     public function pruneCompleted(int $days = 7): int
     {
-        $threshold = gmdate(
-            $this->dateFormat,
-            $this->clock->timestamp() - ($days * 86400)
-        );
+        $threshold = JobStorageRules::timestamp($this->clock, $this->dateFormat, -$days * 86400);
         $count = 0;
 
         foreach ($this->jobs as $id => $job) {
@@ -489,15 +476,6 @@ class InMemoryJobStorage implements
     private function now(): string
     {
         return $this->clock->now();
-    }
-
-    private function encodeJson(mixed $value, string $context): string
-    {
-        try {
-            return json_encode($value, JSON_THROW_ON_ERROR);
-        } catch (\JsonException $exception) {
-            throw new SerializationException(sprintf('Unable to encode %s as JSON', $context), 0, $exception);
-        }
     }
 
     private function claimAvailableJob(int $id, string $workerId, string $now): ?ClaimedJob
