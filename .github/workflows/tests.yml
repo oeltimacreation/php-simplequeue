@@ -66,6 +66,9 @@ jobs:
           POSTGRES_DSN: pgsql:host=127.0.0.1;port=5432;dbname=test_simplequeue
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ''
+          DB_DSN: ${{ matrix.service == 'redis' && 'mysql:host=127.0.0.1;port=3306;dbname=test_simplequeue' || 'pgsql:host=127.0.0.1;port=5432;dbname=test_simplequeue' }}
+          DB_USER: ${{ matrix.service == 'redis' && 'root' || 'postgres' }}
+          DB_PASSWORD: ''
 
   quality:
     name: Quality gates

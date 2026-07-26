@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue\Tests\Unit;
 
-use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Storage\PdoJobStorage;
+use Oeltima\SimpleQueue\Tests\Support\FrozenClock;
 use PDO;
 use PDOStatement;
 use PHPUnit\Framework\TestCase;
@@ -184,22 +184,7 @@ class PdoJobStorageTest extends TestCase
     public function testCreateJobUsesInjectedClock(): void
     {
         $pdo = $this->createSqlitePdo();
-        $clock = new class implements ClockInterface {
-            public function now(): string
-            {
-                return '2026-01-02 03:04:05';
-            }
-
-            public function timestamp(): int
-            {
-                return 1767323045;
-            }
-
-            public function monotonic(): float
-            {
-                return 1.0;
-            }
-        };
+        $clock = new FrozenClock(1_767_323_045);
         $storage = new PdoJobStorage($pdo, 'background_jobs', $clock);
 
         $id = $storage->createJob('test.job', []);
@@ -213,22 +198,7 @@ class PdoJobStorageTest extends TestCase
     public function testScheduleRetryUsesInjectedClock(): void
     {
         $pdo = $this->createSqlitePdo();
-        $clock = new class implements ClockInterface {
-            public function now(): string
-            {
-                return '2026-01-02 03:04:05';
-            }
-
-            public function timestamp(): int
-            {
-                return 1767323045;
-            }
-
-            public function monotonic(): float
-            {
-                return 1.0;
-            }
-        };
+        $clock = new FrozenClock(1_767_323_045);
         $storage = new PdoJobStorage($pdo, 'background_jobs', $clock);
 
         $id = $storage->createJob('test.job', []);
@@ -273,6 +243,46 @@ class PdoJobStorageTest extends TestCase
         $this->assertNotNull($claim2);
         $this->assertEquals($id, $claim2->job->id);
         $this->assertNotEquals($claim1->leaseToken, $claim2->leaseToken);
+    }
+
+    public function testReclaimFencesThePreviousLease(): void
+    {
+        $pdo = $this->createSqlitePdo();
+        $storage = new PdoJobStorage($pdo);
+        $id = $storage->createJob('test.job', []);
+
+        $firstClaim = $storage->claimById($id, 'worker-1');
+        $this->assertNotNull($firstClaim);
+        $secondClaim = $storage->claimById($id, 'worker-1');
+        $this->assertNotNull($secondClaim);
+
+        $this->assertFalse($storage->markCompleted($firstClaim));
+        $this->assertTrue($storage->markCompleted($secondClaim));
+        $this->assertSame(JobStatus::Completed, $storage->find($id)?->status);
+    }
+
+    public function testClaimTransactionRollsBackWhenClaimUpdateFails(): void
+    {
+        $pdo = $this->createSqlitePdo();
+        $storage = new PdoJobStorage($pdo);
+        $id = $storage->createJob('test.job', []);
+        $pdo->exec(
+            "CREATE TRIGGER reject_claim BEFORE UPDATE OF status ON background_jobs " .
+            "WHEN NEW.status = 'running' BEGIN SELECT RAISE(ABORT, 'claim rejected'); END"
+        );
+
+        try {
+            $storage->claimById($id, 'worker-1');
+            $this->fail('Expected the failed claim update to be reported');
+        } catch (\PDOException $exception) {
+            $this->assertStringContainsString('claim rejected', $exception->getMessage());
+        }
+
+        $this->assertFalse($pdo->inTransaction());
+        $job = $storage->find($id);
+        $this->assertNotNull($job);
+        $this->assertSame(JobStatus::Pending, $job->status);
+        $this->assertNull($job->leaseToken);
     }
 
     public function testClaimNextAvailableReturnsClaimedJob(): void

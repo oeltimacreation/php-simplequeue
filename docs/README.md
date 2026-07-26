@@ -13,6 +13,9 @@ Reference material:
 - [Extending SimpleQueue](extending.md)
 - [Upgrading](upgrading.md)
 - [Maintainer notes](maintainer-notes.md)
-- [v1.6 roadmap](v1.6.0-plan.md)
+- [v1.6 quality baseline](quality-baseline.md)
+- [Backend parity map](backend-parity.md)
+- [Failure and recovery matrix](failure-matrix.md)
+- [v1.6 performance profile](performance.md)
 
 Runnable code lives in [examples/](../examples/README.md).

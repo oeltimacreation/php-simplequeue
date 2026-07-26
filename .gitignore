@@ -31,3 +31,5 @@ composer.lock
 
 # PHPStan
 phpstan.neon.local
+
+/internal_docs/

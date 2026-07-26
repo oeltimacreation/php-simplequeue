@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue\Contract;
 
-use Oeltima\SimpleQueue\Exception\SerializationException;
+use Oeltima\SimpleQueue\Internal\JobDataHydrator;
 
 /**
  * Value object representing job data.
@@ -46,39 +46,7 @@ final readonly class JobData
      */
     public static function fromRaw(array|object $data): self
     {
-        if (is_object($data)) {
-            $data = (array) $data;
-        }
-
-        $payload = self::parsePayload($data['payload'] ?? '[]');
-        $result = self::parseResult($data['result'] ?? null);
-
-        $statusRaw = $data['status'] ?? 'pending';
-        $status = $statusRaw instanceof JobStatus ? $statusRaw : JobStatus::from($statusRaw);
-
-        return new self(
-            id: (int) ($data['id'] ?? 0),
-            queue: (string) ($data['queue'] ?? 'default'),
-            type: (string) ($data['type'] ?? ''),
-            status: $status,
-            payload: $payload,
-            attempts: (int) ($data['attempts'] ?? 0),
-            maxAttempts: (int) ($data['max_attempts'] ?? 3),
-            availableAt: $data['available_at'] ?? null,
-            startedAt: $data['started_at'] ?? null,
-            completedAt: $data['completed_at'] ?? null,
-            lockedBy: $data['locked_by'] ?? null,
-            lockedAt: $data['locked_at'] ?? null,
-            leaseToken: $data['lease_token'] ?? null,
-            errorMessage: $data['error_message'] ?? null,
-            errorTrace: $data['error_trace'] ?? null,
-            progress: isset($data['progress']) ? (int) $data['progress'] : null,
-            progressMessage: $data['progress_message'] ?? null,
-            result: $result,
-            requestId: $data['request_id'] ?? null,
-            createdAt: $data['created_at'] ?? null,
-            updatedAt: $data['updated_at'] ?? null,
-        );
+        return JobDataHydrator::hydrate($data);
     }
 
     /**
@@ -127,50 +95,5 @@ final readonly class JobData
             'created_at' => $this->createdAt,
             'updated_at' => $this->updatedAt,
         ];
-    }
-
-    /**
-     * Parse raw payload into array.
-     *
-     * @param mixed $payload Raw payload
-     * @return array<string, mixed>
-     */
-    private static function parsePayload(mixed $payload): array
-    {
-        if (is_string($payload)) {
-            try {
-                $payload = json_decode($payload, true, 512, JSON_THROW_ON_ERROR);
-            } catch (\JsonException $exception) {
-                throw new SerializationException('Stored job payload contains invalid JSON', 0, $exception);
-            }
-        }
-        if (!is_array($payload)) {
-            throw new SerializationException('Stored job payload must decode to an object');
-        }
-        $normalized = [];
-        foreach ($payload as $key => $value) {
-            if (!is_string($key)) {
-                throw new SerializationException('Stored job payload must decode to an object');
-            }
-            $normalized[$key] = $value;
-        }
-        return $normalized;
-    }
-
-    /**
-     * Parse raw result into mixed structure.
-     *
-     * @param mixed $result Raw result
-     */
-    private static function parseResult(mixed $result): mixed
-    {
-        if (is_string($result) && $result !== '') {
-            try {
-                return json_decode($result, true, 512, JSON_THROW_ON_ERROR);
-            } catch (\JsonException $exception) {
-                throw new SerializationException('Stored job result contains invalid JSON', 0, $exception);
-            }
-        }
-        return $result;
     }
 }

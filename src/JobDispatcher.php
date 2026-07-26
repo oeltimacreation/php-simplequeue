@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue;
 
 use Oeltima\SimpleQueue\Contract\JobData;
+use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\SupportsBatchEnqueue;
 use Oeltima\SimpleQueue\Contract\SupportsIdempotentJobCreation;
 use Oeltima\SimpleQueue\Contract\SupportsJobRemoval;
 use Oeltima\SimpleQueue\Exception\QueueException;
+use Oeltima\SimpleQueue\Internal\PositiveJobId;
 
 /**
  * Service for dispatching jobs to the queue.
@@ -162,12 +164,10 @@ final class JobDispatcher
      */
     public function cancelJob(int $jobId): bool
     {
-        if ($jobId < 1) {
-            throw new \InvalidArgumentException('Job ID must be a positive integer');
-        }
+        $jobId = PositiveJobId::fromInt($jobId)->value;
         $job = $this->storage->find($jobId);
         $cancelled = $this->storage->cancel($jobId);
-        if (($cancelled || $job?->status->value === 'cancelled') && $job !== null) {
+        if (($cancelled || $job?->status === JobStatus::Cancelled) && $job !== null) {
             $driver = $this->queueManager->driver();
             if ($driver instanceof SupportsJobRemoval) {
                 try {

@@ -9,6 +9,8 @@ use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Contract\SupportsBoundedQueueMembership;
 use Oeltima\SimpleQueue\Contract\SupportsPendingJobCursor;
+use Oeltima\SimpleQueue\Internal\ReconcileJobOutcome;
+use Oeltima\SimpleQueue\Internal\ReconciliationJobProcessor;
 
 /** Repairs storage-to-notifier divergence with explicit, bounded work. */
 final class QueueReconciler
@@ -30,42 +32,33 @@ final class QueueReconciler
         }
 
         $started = $this->clock->monotonic();
-        $jobs = $this->storage->scanPending($queue, $options->cursor, $options->pageSize);
+        $pageCursor = $options->cursor;
+        $jobs = $this->storage->scanPending($queue, $pageCursor, $options->pageSize);
         if ($jobs === [] && $options->cursor !== null) {
+            $pageCursor = null;
             $jobs = $this->storage->scanPending($queue, null, $options->pageSize);
         }
-
         $restored = 0;
         $duplicates = 0;
         $invalid = 0;
+        $scanned = 0;
+        $nextCursor = $pageCursor;
+        $processor = new ReconciliationJobProcessor($this->driver, $this->clock);
         foreach ($jobs as $job) {
             if ($this->clock->monotonic() - $started >= $options->maxDurationSeconds) {
                 break;
             }
-            if ($job->id < 1) {
-                $invalid++;
-                continue;
-            }
-            $parsedAvailableAt = strtotime($job->availableAt ?? 'now');
-            $availableAt = $parsedAvailableAt === false ? $this->clock->timestamp() : $parsedAvailableAt;
-            $isDue = $availableAt <= $this->clock->timestamp();
-            $exists = $isDue
-                ? $this->driver->hasPendingJob($queue, $job->id, $options->membershipScanLimit)
-                : $this->driver->hasDelayedJob($queue, $job->id);
-            if ($exists) {
-                $duplicates++;
-                continue;
-            }
-            if ($isDue) {
-                $this->driver->enqueue($queue, $job->id);
-            } else {
-                $this->driver->nack($queue, $job->id, max(0, $availableAt - $this->clock->timestamp()));
-            }
-            $restored++;
+            match ($processor->process($queue, $job, $options)) {
+                ReconcileJobOutcome::Restored => $restored++,
+                ReconcileJobOutcome::Duplicate => $duplicates++,
+                ReconcileJobOutcome::Invalid => $invalid++,
+            };
+            $scanned++;
+            $nextCursor = $job->id;
         }
-
-        $scanned = count($jobs);
-        $nextCursor = $scanned < $options->pageSize || $jobs === [] ? null : $jobs[$scanned - 1]->id;
+        if ($scanned === count($jobs) && $scanned < $options->pageSize) {
+            $nextCursor = null;
+        }
         return new ReconcileResult(
             $nextCursor,
             $scanned,

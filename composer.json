@@ -62,10 +62,14 @@
         "phpstan": "phpstan analyse",
         "cs-check": "phpcs",
         "cs-fix": "phpcbf",
+        "quality-report": "php scripts/quality-metrics.php report",
+        "quality-ratchet": "php scripts/quality-metrics.php check",
+        "benchmark": "php benchmarks/run.php",
         "check": [
             "@test",
             "@phpstan",
-            "@cs-check"
+            "@cs-check",
+            "@quality-ratchet"
         ]
     },
     "config": {

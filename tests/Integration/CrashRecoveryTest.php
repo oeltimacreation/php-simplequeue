@@ -40,7 +40,7 @@ class CrashRecoveryTest extends TestCase
         $jobsProp = $storageReflection->getProperty('jobs');
         $jobs = $jobsProp->getValue($this->storage);
         $jobs[$jobId]['locked_at'] = date('Y-m-d H:i:s', time() - 700);
-        $jobs[$jobId]['status'] = 'running';
+        $jobs[$jobId]['status'] = JobStatus::Running;
         $jobsProp->setValue($this->storage, $jobs);
 
         $driverReflection = new \ReflectionClass($this->driver);

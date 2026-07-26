@@ -15,7 +15,9 @@ use Oeltima\SimpleQueue\Contract\SupportsJobRemoval;
 use Oeltima\SimpleQueue\Contract\SupportsProcessingHeartbeat;
 use Oeltima\SimpleQueue\Contract\SupportsBoundedQueueMembership;
 use Oeltima\SimpleQueue\Contract\ClockInterface;
-use Oeltima\SimpleQueue\Exception\QueueException;
+use Oeltima\SimpleQueue\Internal\PositiveJobId;
+use Oeltima\SimpleQueue\Internal\RedisProcessingRepair;
+use Oeltima\SimpleQueue\Internal\RedisResponseNormalizer;
 use Oeltima\SimpleQueue\SystemClock;
 use Predis\ClientInterface;
 
@@ -110,28 +112,19 @@ LUA;
     public function validateTimeout(int $pollTimeout): void
     {
         try {
-            $connection = $this->redis->getConnection();
-
-            // @phpstan-ignore-next-line
-            if (method_exists($connection, 'getParameters')) {
-                // @phpstan-ignore-next-line
-                $parameters = $connection->getParameters();
-                if (isset($parameters->read_write_timeout)) {
-                    $rwTimeout = $parameters->read_write_timeout;
-                    if ($rwTimeout > 0) {
-                        if ($pollTimeout >= $rwTimeout) {
-                            throw new \InvalidArgumentException(sprintf(
-                                'Unsafe timeout configuration: poll_timeout (%ds) must be strictly less than ' .
-                                'Predis read_write_timeout (%ds) to prevent connection dropped errors.',
-                                $pollTimeout,
-                                $rwTimeout
-                            ));
-                        }
-                    }
-                }
+            $readWriteTimeout = $this->readWriteTimeout();
+            if ($readWriteTimeout === null || $readWriteTimeout <= 0 || $pollTimeout < $readWriteTimeout) {
+                return;
             }
-        } catch (\InvalidArgumentException $e) {
-            throw $e;
+
+            throw new \InvalidArgumentException(sprintf(
+                'Unsafe timeout configuration: poll_timeout (%ds) must be strictly less than ' .
+                'Predis read_write_timeout (%ds) to prevent connection dropped errors.',
+                $pollTimeout,
+                $readWriteTimeout
+            ));
+        } catch (\InvalidArgumentException $exception) {
+            throw $exception;
         } catch (\Throwable) {
             // Fallback for custom/mock connections
         }
@@ -148,38 +141,13 @@ LUA;
         if ($timeoutSeconds < 0) {
             throw new \InvalidArgumentException('Dequeue timeout must not be negative');
         }
-        if ($timeoutSeconds <= 0) {
-            $result = $this->redis->eval(
-                self::DEQUEUE_LUA,
-                3,
-                $this->pendingKey($queue),
-                $this->processingKey($queue),
-                $this->processingZKey($queue),
-                (string) $this->clock->timestamp()
-            );
-        } else {
-            // Blocking with timeout
-            $result = $this->redis->blmove(
-                $this->pendingKey($queue),
-                $this->processingKey($queue),
-                'RIGHT',
-                'LEFT',
-                $timeoutSeconds
-            );
-        }
-
-        if ($result === null || $result === false || $result === '') {
-            return null;
-        }
-
-        if (!is_string($result) || !$this->isValidRedisJobId($result)) {
-            $this->discardMalformedProcessingNotification($queue, is_scalar($result) ? (string) $result : '');
-            throw new QueueException('Redis returned a malformed queue job ID');
-        }
-
-        $jobId = (int) $result;
-
-        if ($timeoutSeconds > 0) {
+        $result = $this->dequeueResponse($queue, $timeoutSeconds);
+        $jobId = RedisResponseNormalizer::dequeuedJobId(
+            $queue,
+            $result,
+            $this->discardMalformedProcessingNotification(...)
+        );
+        if ($jobId !== null && $timeoutSeconds > 0) {
             // BLMOVE cannot be wrapped in Lua; repair handles its crash window.
             $this->redis->zadd($this->processingZKey($queue), [$jobId => $this->clock->timestamp()]);
         }
@@ -275,7 +243,7 @@ LUA;
             (string) $limit
         );
 
-        return is_int($result) ? $result : (is_numeric($result) ? (int) $result : 0);
+        return RedisResponseNormalizer::integer($result);
     }
 
     /**
@@ -304,7 +272,7 @@ LUA;
             (string) $limit
         );
 
-        return is_int($result) ? $result : (is_numeric($result) ? (int) $result : 0);
+        return RedisResponseNormalizer::integer($result);
     }
 
     /**
@@ -397,29 +365,66 @@ LUA;
 
     private function pendingKey(string $queue): string
     {
-        return sprintf('%s:queue:%s:pending', $this->prefix, $queue);
+        return $this->queueKey($queue, 'pending');
     }
 
     private function processingKey(string $queue): string
     {
-        return sprintf('%s:queue:%s:processing', $this->prefix, $queue);
+        return $this->queueKey($queue, 'processing');
     }
 
     private function processingZKey(string $queue): string
     {
-        return sprintf('%s:queue:%s:processing_z', $this->prefix, $queue);
+        return $this->queueKey($queue, 'processing_z');
     }
 
     private function delayedKey(string $queue): string
     {
-        return sprintf('%s:queue:%s:delayed', $this->prefix, $queue);
+        return $this->queueKey($queue, 'delayed');
+    }
+
+    private function queueKey(string $queue, string $suffix): string
+    {
+        return sprintf('%s:queue:%s:%s', $this->prefix, $queue, $suffix);
     }
 
     private function validateJobId(int $jobId): void
     {
-        if ($jobId < 1) {
-            throw new \InvalidArgumentException('Job ID must be a positive integer');
+        PositiveJobId::fromInt($jobId);
+    }
+
+    private function readWriteTimeout(): ?float
+    {
+        $connection = $this->redis->getConnection();
+        // @phpstan-ignore-next-line Optional/custom Predis connections are accepted at this boundary.
+        if (!method_exists($connection, 'getParameters')) {
+            return null;
         }
+
+        $parameters = $connection->getParameters();
+        return $parameters->read_write_timeout ?? null;
+    }
+
+    private function dequeueResponse(string $queue, int $timeoutSeconds): mixed
+    {
+        if ($timeoutSeconds <= 0) {
+            return $this->redis->eval(
+                self::DEQUEUE_LUA,
+                3,
+                $this->pendingKey($queue),
+                $this->processingKey($queue),
+                $this->processingZKey($queue),
+                (string) $this->clock->timestamp()
+            );
+        }
+
+        return $this->redis->blmove(
+            $this->pendingKey($queue),
+            $this->processingKey($queue),
+            'RIGHT',
+            'LEFT',
+            $timeoutSeconds
+        );
     }
 
     private function repairUnscoredProcessing(string $queue, int $limit): void
@@ -427,27 +432,20 @@ LUA;
         $cursor = $this->repairCursors[$queue] ?? 0;
         $ids = $this->redis->lrange($this->processingKey($queue), $cursor, $cursor + $limit - 1);
         $this->repairCursors[$queue] = count($ids) < $limit ? 0 : $cursor + count($ids);
-        foreach ($ids as $id) {
-            if (!$this->isValidRedisJobId($id)) {
-                $this->discardMalformedProcessingNotification($queue, $id);
-                continue;
-            }
-            if ($this->redis->zscore($this->processingZKey($queue), $id) === null) {
-                $this->redis->zadd($this->processingZKey($queue), [(int) $id => $this->clock->timestamp()]);
-            }
-        }
+        RedisProcessingRepair::repair(
+            $this->redis,
+            $this->clock,
+            [
+                'processing' => $this->processingKey($queue),
+                'scores' => $this->processingZKey($queue),
+            ],
+            array_values($ids)
+        );
     }
 
     private function discardMalformedProcessingNotification(string $queue, string $value): void
     {
         $this->redis->lrem($this->processingKey($queue), 0, $value);
         $this->redis->zrem($this->processingZKey($queue), $value);
-    }
-
-    private function isValidRedisJobId(string $value): bool
-    {
-        return preg_match('/^[1-9][0-9]*$/', $value) === 1
-            && (strlen($value) < strlen((string) PHP_INT_MAX)
-                || (strlen($value) === strlen((string) PHP_INT_MAX) && $value <= (string) PHP_INT_MAX));
     }
 }

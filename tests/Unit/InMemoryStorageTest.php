@@ -8,6 +8,7 @@ use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
 use Oeltima\SimpleQueue\Exception\SerializationException;
+use Oeltima\SimpleQueue\Tests\Support\FrozenClock;
 use PHPUnit\Framework\TestCase;
 
 class InMemoryStorageTest extends TestCase
@@ -80,22 +81,7 @@ class InMemoryStorageTest extends TestCase
 
     public function testCreateJobUsesInjectedClock(): void
     {
-        $clock = new class implements ClockInterface {
-            public function now(): string
-            {
-                return '2026-01-02 03:04:05';
-            }
-
-            public function timestamp(): int
-            {
-                return 1767323045;
-            }
-
-            public function monotonic(): float
-            {
-                return 1.0;
-            }
-        };
+        $clock = new FrozenClock(1_767_323_045);
         $storage = new InMemoryJobStorage($clock);
 
         $id = $storage->createJob('test.job', []);
@@ -186,6 +172,19 @@ class InMemoryStorageTest extends TestCase
 
         $this->assertNotNull($this->storage->claimById($id, 'worker-1'));
         $this->assertNull($this->storage->claimById($id, 'worker-2'));
+    }
+
+    public function testReclaimFencesThePreviousLease(): void
+    {
+        $id = $this->storage->createJob('test.job', []);
+        $firstClaim = $this->storage->claimById($id, 'worker-1');
+        $this->assertNotNull($firstClaim);
+        $secondClaim = $this->storage->claimById($id, 'worker-1');
+        $this->assertNotNull($secondClaim);
+
+        $this->assertFalse($this->storage->markCompleted($firstClaim));
+        $this->assertTrue($this->storage->markCompleted($secondClaim));
+        $this->assertSame(JobStatus::Completed, $this->storage->find($id)?->status);
     }
 
     public function testMarkCompletedSetsStatusAndResult(): void
