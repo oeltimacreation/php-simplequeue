@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue\Tests\Unit;
 
-use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Storage\PdoJobStorage;
+use Oeltima\SimpleQueue\Tests\Support\FrozenClock;
 use PDO;
 use PDOStatement;
 use PHPUnit\Framework\TestCase;
@@ -184,22 +184,7 @@ class PdoJobStorageTest extends TestCase
     public function testCreateJobUsesInjectedClock(): void
     {
         $pdo = $this->createSqlitePdo();
-        $clock = new class implements ClockInterface {
-            public function now(): string
-            {
-                return '2026-01-02 03:04:05';
-            }
-
-            public function timestamp(): int
-            {
-                return 1767323045;
-            }
-
-            public function monotonic(): float
-            {
-                return 1.0;
-            }
-        };
+        $clock = new FrozenClock(1_767_323_045);
         $storage = new PdoJobStorage($pdo, 'background_jobs', $clock);
 
         $id = $storage->createJob('test.job', []);
@@ -213,22 +198,7 @@ class PdoJobStorageTest extends TestCase
     public function testScheduleRetryUsesInjectedClock(): void
     {
         $pdo = $this->createSqlitePdo();
-        $clock = new class implements ClockInterface {
-            public function now(): string
-            {
-                return '2026-01-02 03:04:05';
-            }
-
-            public function timestamp(): int
-            {
-                return 1767323045;
-            }
-
-            public function monotonic(): float
-            {
-                return 1.0;
-            }
-        };
+        $clock = new FrozenClock(1_767_323_045);
         $storage = new PdoJobStorage($pdo, 'background_jobs', $clock);
 
         $id = $storage->createJob('test.job', []);

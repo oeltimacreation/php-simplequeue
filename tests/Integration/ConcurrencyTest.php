@@ -4,10 +4,11 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue\Tests\Integration;
 
-use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\JobStatus;
+use Oeltima\SimpleQueue\Contract\JobData;
 use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
 use Oeltima\SimpleQueue\Storage\PdoJobStorage;
+use Oeltima\SimpleQueue\Tests\Support\FrozenClock;
 use PDO;
 use PHPUnit\Framework\TestCase;
 
@@ -30,40 +31,29 @@ final class ConcurrencyTest extends TestCase
         return $pdo;
     }
 
+    /** @return array<string, \Oeltima\SimpleQueue\Contract\JobStorageInterface> */
+    private function contractStorages(FrozenClock $clock): array
+    {
+        $dbFile = tempnam(sys_get_temp_dir(), 'sq_test_');
+        if ($dbFile === false) {
+            throw new \RuntimeException('Could not create temporary SQLite database');
+        }
+        $this->dbFile = $dbFile;
+        return [
+            'InMemory' => new InMemoryJobStorage($clock),
+            'Pdo' => new PdoJobStorage($this->createSqlitePdo($dbFile), 'background_jobs', $clock),
+        ];
+    }
+
     /**
      * Test fencing and lost ownership prevention.
      * Ensure that if a job's lease has expired/been taken over, the original worker cannot modify the job.
      */
     public function testFencingAndLostOwnership(): void
     {
-        $clock = new class implements ClockInterface {
-            public int $time = 1700000000;
+        $clock = new FrozenClock();
 
-            public function now(): string
-            {
-                return gmdate('Y-m-d H:i:s', $this->time);
-            }
-
-            public function timestamp(): int
-            {
-                return $this->time;
-            }
-
-            public function monotonic(): float
-            {
-                return (float) $this->time;
-            }
-        };
-
-        $this->dbFile = tempnam(sys_get_temp_dir(), 'sq_test_');
-        $pdo = $this->createSqlitePdo($this->dbFile);
-
-        $storages = [
-            'InMemory' => new InMemoryJobStorage($clock),
-            'Pdo' => new PdoJobStorage($pdo, 'background_jobs', $clock)
-        ];
-
-        foreach ($storages as $name => $storage) {
+        foreach ($this->contractStorages($clock) as $name => $storage) {
             $id = $storage->createJob('test.job', []);
 
             // Worker 1 claims job
@@ -71,7 +61,7 @@ final class ConcurrencyTest extends TestCase
             $this->assertNotNull($claim1, "$name: worker-1 should claim");
 
             // Simulate worker 1 crashing/stale recovery running
-            $clock->time += 600;
+            $clock->advance(600);
             $recovered = $storage->recoverStaleJobs(300); // recover jobs locked for more than 300s
             $this->assertSame(1, $recovered, "$name: recover should find 1 job");
 
@@ -101,73 +91,38 @@ final class ConcurrencyTest extends TestCase
      */
     public function testPoisonJobRecovery(): void
     {
-        // Custom clock to control time and mock stale recovery thresholds
-        $clock = new class implements ClockInterface {
-            public int $time = 1700000000;
+        $clock = new FrozenClock();
 
-            public function now(): string
-            {
-                return gmdate('Y-m-d H:i:s', $this->time);
-            }
-
-            public function timestamp(): int
-            {
-                return $this->time;
-            }
-
-            public function monotonic(): float
-            {
-                return (float) $this->time;
-            }
-        };
-
-        $this->dbFile = tempnam(sys_get_temp_dir(), 'sq_test_');
-        $pdo = $this->createSqlitePdo($this->dbFile);
-
-        $storages = [
-            'InMemory' => new InMemoryJobStorage($clock),
-            'Pdo' => new PdoJobStorage($pdo, 'background_jobs', $clock)
-        ];
-
-        foreach ($storages as $name => $storage) {
+        foreach ($this->contractStorages($clock) as $name => $storage) {
             $id = $storage->createJob('poison.job', [], 'default', 3); // Max attempts = 3
 
-            // Attempt 1: claim & crash (stale recovery)
-            $claim1 = $storage->claimById($id, 'worker-1');
-            $this->assertNotNull($claim1, "$name: claim 1 failed");
-
-            $clock->time += 600; // Move forward past TTL
-            $recovered = $storage->recoverStaleJobs(300);
-            $this->assertSame(1, $recovered, "$name: recover 1 failed");
-
-            $job = $storage->find($id);
+            $job = $this->recoverCrashedJob($storage, $clock, $id, 'worker-1', $name);
             $this->assertSame(JobStatus::Pending, $job->status, "$name: job should be pending");
             $this->assertSame(1, $job->attempts, "$name: attempts should be 1");
 
-            // Attempt 2: claim & crash again
-            $claim2 = $storage->claimById($id, 'worker-2');
-            $this->assertNotNull($claim2, "$name: claim 2 failed");
-
-            $clock->time += 600;
-            $recovered = $storage->recoverStaleJobs(300);
-            $this->assertSame(1, $recovered, "$name: recover 2 failed");
-
-            $job = $storage->find($id);
+            $job = $this->recoverCrashedJob($storage, $clock, $id, 'worker-2', $name);
             $this->assertSame(JobStatus::Pending, $job->status, "$name: job should be pending");
             $this->assertSame(2, $job->attempts, "$name: attempts should be 2");
 
-            // Attempt 3: claim & crash again. Attempts (3) matches max_attempts (3), should fail
-            $claim3 = $storage->claimById($id, 'worker-3');
-            $this->assertNotNull($claim3, "$name: claim 3 failed");
-
-            $clock->time += 600;
-            $recovered = $storage->recoverStaleJobs(300);
-            $this->assertSame(1, $recovered, "$name: recover 3 failed");
-
-            $job = $storage->find($id);
+            $job = $this->recoverCrashedJob($storage, $clock, $id, 'worker-3', $name);
             $this->assertSame(JobStatus::Failed, $job->status, "$name: job should be failed");
             $this->assertStringContainsString('stale recovery', $job->errorMessage, "$name: error message should match");
         }
+    }
+
+    private function recoverCrashedJob(
+        \Oeltima\SimpleQueue\Contract\JobStorageInterface $storage,
+        FrozenClock $clock,
+        int $id,
+        string $workerId,
+        string $name
+    ): JobData {
+        self::assertNotNull($storage->claimById($id, $workerId), "{$name}: {$workerId} claim failed");
+        $clock->advance(600);
+        self::assertSame(1, $storage->recoverStaleJobs(300), "{$name}: {$workerId} recovery failed");
+        $job = $storage->find($id);
+        self::assertNotNull($job);
+        return $job;
     }
 
     /**

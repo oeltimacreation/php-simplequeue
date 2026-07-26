@@ -9,95 +9,60 @@ use Oeltima\SimpleQueue\Storage\PdoJobStorage;
 use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Tests\DbHelper;
 use PDO;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Predis\Client;
 
 final class RealServicesTest extends TestCase
 {
-    public function testRealRedisDriver(): void
+    /** @return iterable<string, array{string, string, string, string, bool}> */
+    public static function queueServices(): iterable
     {
-        $redisHost = getenv('REDIS_HOST');
-        if (!$redisHost) {
-            $this->markTestSkipped('REDIS_HOST is not set. Skipping real Redis integration test.');
-        }
-
-        $redisPort = getenv('REDIS_PORT') ?: '6379';
-        $client = new Client([
-            'scheme' => 'tcp',
-            'host' => $redisHost,
-            'port' => (int) $redisPort,
-        ]);
-
-        try {
-            $client->connect();
-        } catch (\Exception $e) {
-            $this->markTestSkipped('Could not connect to Redis: ' . $e->getMessage());
-        }
-
-        $driver = new RedisQueueDriver($client, 'integration-test');
-        $driver->clear('default');
-
-        // Test Enqueue
-        $driver->enqueue('default', 42);
-        $this->assertSame(1, $driver->getPendingCount('default'));
-
-        // Test Dequeue
-        $jobId = $driver->dequeue('default', 0);
-        $this->assertSame(42, $jobId);
-        $this->assertSame(0, $driver->getPendingCount('default'));
-        $this->assertSame(1, $driver->getProcessingCount('default'));
-
-        // Test Ack
-        $driver->ack('default', 42);
-        $this->assertSame(0, $driver->getProcessingCount('default'));
-
-        $driver->clear('default');
+        yield 'Redis' => ['Redis', 'REDIS_HOST', 'REDIS_PORT', 'integration-test', false];
+        yield 'Valkey' => ['Valkey', 'VALKEY_HOST', 'VALKEY_PORT', 'integration-test-valkey', true];
     }
 
-    public function testRealValkeyDriver(): void
-    {
-        $valkeyHost = getenv('VALKEY_HOST');
-        if (!$valkeyHost) {
-            $this->markTestSkipped('VALKEY_HOST is not set. Skipping real Valkey integration test.');
+    #[DataProvider('queueServices')]
+    public function testRealQueueDriver(
+        string $service,
+        string $hostVariable,
+        string $portVariable,
+        string $prefix,
+        bool $extended
+    ): void {
+        $host = getenv($hostVariable);
+        if (!$host) {
+            $this->markTestSkipped("{$hostVariable} is not set. Skipping real {$service} integration test.");
         }
-
-        $valkeyPort = getenv('VALKEY_PORT') ?: '6379';
+        $port = getenv($portVariable) ?: '6379';
         $client = new Client([
             'scheme' => 'tcp',
-            'host' => $valkeyHost,
-            'port' => (int) $valkeyPort,
+            'host' => $host,
+            'port' => (int) $port,
         ]);
-
         try {
             $client->connect();
         } catch (\Exception $e) {
-            $this->markTestSkipped('Could not connect to Valkey: ' . $e->getMessage());
+            $this->markTestSkipped("Could not connect to {$service}: " . $e->getMessage());
         }
-
-        $driver = new RedisQueueDriver($client, 'integration-test-valkey');
+        $driver = new RedisQueueDriver($client, $prefix);
         $driver->clear('default');
-
-        // Test Enqueue
         $driver->enqueue('default', 42);
         $this->assertSame(1, $driver->getPendingCount('default'));
-
-        // Test Dequeue
         $jobId = $driver->dequeue('default', 0);
         $this->assertSame(42, $jobId);
         $this->assertSame(0, $driver->getPendingCount('default'));
         $this->assertSame(1, $driver->getProcessingCount('default'));
-
-        // Test Ack
         $driver->ack('default', 42);
         $this->assertSame(0, $driver->getProcessingCount('default'));
-
-        // Test blocking dequeue (valkey-specific or shared validation)
+        if (!$extended) {
+            $driver->clear('default');
+            return;
+        }
         $driver->enqueue('default', 99);
         $jobId = $driver->dequeue('default', 1);
         $this->assertSame(99, $jobId);
         $driver->ack('default', 99);
-
-        // Test Lua promotion/recovery
         $driver->nack('default', 101, 1);
         $this->assertSame(1, $driver->getDelayedCount('default'));
         sleep(2);
@@ -106,44 +71,40 @@ final class RealServicesTest extends TestCase
         $driver->clear('default');
     }
 
-    public function testRealMySqlStorage(): void
+    /** @return iterable<string, array{string, string, string, string, string}> */
+    public static function databaseServices(): iterable
     {
-        $dsn = getenv('MYSQL_DSN');
-        if (!$dsn) {
-            $this->markTestSkipped('MYSQL_DSN is not set. Skipping real MySQL integration test.');
-        }
-
-        $user = getenv('MYSQL_USER') ?: '';
-        $password = getenv('MYSQL_PASSWORD') ?: '';
-
-        try {
-            $pdo = new PDO($dsn, $user, $password);
-            $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        } catch (\Exception $e) {
-            $this->markTestSkipped('Could not connect to MySQL: ' . $e->getMessage());
-        }
-
-        $this->runStorageTests($pdo, 'test_mysql_jobs');
+        yield 'MySQL' => ['MySQL', 'MYSQL_DSN', 'MYSQL_USER', 'MYSQL_PASSWORD', 'test_mysql_jobs'];
+        yield 'PostgreSQL' => [
+            'PostgreSQL',
+            'POSTGRES_DSN',
+            'POSTGRES_USER',
+            'POSTGRES_PASSWORD',
+            'test_postgres_jobs',
+        ];
     }
 
-    public function testRealPostgresStorage(): void
-    {
-        $dsn = getenv('POSTGRES_DSN');
+    #[DataProvider('databaseServices')]
+    public function testRealStorage(
+        string $service,
+        string $dsnVariable,
+        string $userVariable,
+        string $passwordVariable,
+        string $table
+    ): void {
+        $dsn = getenv($dsnVariable);
         if (!$dsn) {
-            $this->markTestSkipped('POSTGRES_DSN is not set. Skipping real PostgreSQL integration test.');
+            $this->markTestSkipped("{$dsnVariable} is not set. Skipping real {$service} integration test.");
         }
-
-        $user = getenv('POSTGRES_USER') ?: '';
-        $password = getenv('POSTGRES_PASSWORD') ?: '';
-
+        $user = getenv($userVariable) ?: '';
+        $password = getenv($passwordVariable) ?: '';
         try {
             $pdo = new PDO($dsn, $user, $password);
             $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         } catch (\Exception $e) {
-            $this->markTestSkipped('Could not connect to PostgreSQL: ' . $e->getMessage());
+            $this->markTestSkipped("Could not connect to {$service}: " . $e->getMessage());
         }
-
-        $this->runStorageTests($pdo, 'test_postgres_jobs');
+        $this->runStorageTests($pdo, $table);
     }
 
     private function runStorageTests(PDO $pdo, string $tableName): void
