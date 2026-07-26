@@ -422,12 +422,15 @@ function findDuplicateWindows(array $methods): array
 {
     $windows = [];
     foreach ($methods as $methodKey => $method) {
-        $windows = array_merge_recursive($windows, duplicateWindowsForMethod($methodKey, $method));
+        $windows = array_merge_recursive($windows, duplicateWindowsForMethod([
+            'key' => $methodKey,
+            'method' => $method,
+        ]));
     }
 
     $duplicates = [];
     foreach ($windows as $fingerprint => $occurrences) {
-        $duplicate = duplicateSummary($fingerprint, $occurrences);
+        $duplicate = duplicateSummary(['fingerprint' => $fingerprint, 'occurrences' => $occurrences]);
         if ($duplicate !== null) {
             $duplicates[] = $duplicate;
         }
@@ -438,36 +441,40 @@ function findDuplicateWindows(array $methods): array
 }
 
 /**
- * @param array<string, mixed> $method
+ * @param array{key: string, method: array<string, mixed>} $input
  * @return array<string, array<string, array<string, int|string>>>
  */
-function duplicateWindowsForMethod(string $methodKey, array $method): array
+function duplicateWindowsForMethod(array $input): array
 {
     $windows = [];
-    $tokens = $method['normalized_tokens'];
+    $tokens = $input['method']['normalized_tokens'];
     $limit = count($tokens) - DUPLICATE_WINDOW_TOKENS;
     for ($offset = 0; $offset <= $limit; $offset++) {
         $values = array_column(array_slice($tokens, $offset, DUPLICATE_WINDOW_TOKENS), 'value');
         $fingerprint = hash('sha256', implode("\0", $values));
-        $windows[$fingerprint][$methodKey . ':' . $offset] = [
-            'method' => $methodKey,
-            'scope' => $method['scope'],
+        $windows[$fingerprint][$input['key'] . ':' . $offset] = [
+            'method' => $input['key'],
+            'scope' => $input['method']['scope'],
             'line' => $tokens[$offset]['line'],
         ];
     }
     return $windows;
 }
 
-/** @param array<string, array<string, int|string>> $occurrences @return array<string, mixed>|null */
-function duplicateSummary(string $fingerprint, array $occurrences): ?array
+/**
+ * @param array{fingerprint: string, occurrences: array<string, array<string, int|string>>} $input
+ * @return array<string, mixed>|null
+ */
+function duplicateSummary(array $input): ?array
 {
+    $occurrences = $input['occurrences'];
     if (count(array_unique(array_column($occurrences, 'method'))) < 2) {
         return null;
     }
     $scopes = array_values(array_unique(array_column($occurrences, 'scope')));
     sort($scopes);
     return [
-        'fingerprint' => $fingerprint,
+        'fingerprint' => $input['fingerprint'],
         'scope' => implode('+', $scopes),
         'token_count' => DUPLICATE_WINDOW_TOKENS,
         'occurrence_count' => count($occurrences),

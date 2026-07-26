@@ -613,24 +613,29 @@ function redisMetrics(array $fixture, array $operation): array
     ];
 }
 
-$options = BenchmarkOptions::fromCli();
-$results = localBenchmarks($options);
-if ($options->redisHost !== null) {
-    $results = array_merge($results, redisBenchmarks($options));
+function runBenchmarks(): void
+{
+    $options = BenchmarkOptions::fromCli();
+    $results = localBenchmarks($options);
+    if ($options->redisHost !== null) {
+        $results = array_merge($results, redisBenchmarks($options));
+    }
+
+    echo json_encode([
+        'environment' => [
+            'php' => PHP_VERSION,
+            'platform' => php_uname('s') . ' ' . php_uname('m'),
+            'pdo_drivers' => \PDO::getAvailableDrivers(),
+            'redis' => $options->redisHost === null ? null : "{$options->redisHost}:{$options->redisPort}",
+        ],
+        'configuration' => [
+            'jobs' => $options->jobs,
+            'iterations' => $options->iterations,
+            'warmup' => $options->warmup,
+            'idle_cycles' => $options->idleCycles,
+        ],
+        'results' => $results,
+    ], JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR) . PHP_EOL;
 }
 
-echo json_encode([
-    'environment' => [
-        'php' => PHP_VERSION,
-        'platform' => php_uname('s') . ' ' . php_uname('m'),
-        'pdo_drivers' => \PDO::getAvailableDrivers(),
-        'redis' => $options->redisHost === null ? null : "{$options->redisHost}:{$options->redisPort}",
-    ],
-    'configuration' => [
-        'jobs' => $options->jobs,
-        'iterations' => $options->iterations,
-        'warmup' => $options->warmup,
-        'idle_cycles' => $options->idleCycles,
-    ],
-    'results' => $results,
-], JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR) . PHP_EOL;
+runBenchmarks();

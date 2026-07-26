@@ -22,70 +22,32 @@ use Oeltima\SimpleQueue\Tests\Support\FrozenClock;
 use Oeltima\SimpleQueue\Worker;
 use PHPUnit\Framework\TestCase;
 
-final class FaultInjectingQueueDriver implements
-    QueueDriverInterface,
-    SupportsBoundedQueueMembership,
-    SupportsJobRemoval
+enum QueueFailureOperation: string
 {
-    /** @param array<string, int> $failures Number of failures remaining per operation */
-    public function __construct(
-        public readonly InMemoryQueueDriver $inner,
-        private array $failures = []
-    ) {
+    case Enqueue = 'enqueue';
+    case Acknowledge = 'ack';
+    case Reject = 'nack';
+    case Remove = 'remove';
+}
+
+final class QueueFailurePlan
+{
+    private bool $pending = true;
+
+    public function __construct(private readonly QueueFailureOperation $failure)
+    {
     }
 
-    public function isAvailable(): bool
+    public function run(QueueFailureOperation $operation, \Closure $delegate): mixed
     {
-        return $this->inner->isAvailable();
-    }
-
-    public function enqueue(string $queue, int $jobId): void
-    {
-        $this->failIfConfigured('enqueue');
-        $this->inner->enqueue($queue, $jobId);
-    }
-
-    public function dequeue(string $queue, int $timeoutSeconds): ?int
-    {
-        return $this->inner->dequeue($queue, $timeoutSeconds);
-    }
-
-    public function ack(string $queue, int $jobId): void
-    {
-        $this->failIfConfigured('ack');
-        $this->inner->ack($queue, $jobId);
-    }
-
-    public function nack(string $queue, int $jobId, int $delaySeconds = 0): void
-    {
-        $this->failIfConfigured('nack');
-        $this->inner->nack($queue, $jobId, $delaySeconds);
-    }
-
-    public function remove(string $queue, int $jobId): void
-    {
-        $this->failIfConfigured('remove');
-        $this->inner->remove($queue, $jobId);
-    }
-
-    public function hasPendingJob(string $queue, int $jobId, int $maxElements): bool
-    {
-        return $this->inner->hasPendingJob($queue, $jobId, $maxElements);
-    }
-
-    public function hasDelayedJob(string $queue, int $jobId): bool
-    {
-        return $this->inner->hasDelayedJob($queue, $jobId);
-    }
-
-    private function failIfConfigured(string $operation): void
-    {
-        $remaining = $this->failures[$operation] ?? 0;
-        if ($remaining < 1) {
-            return;
+        if ($operation !== $this->failure) {
+            return $delegate();
         }
-        $this->failures[$operation] = $remaining - 1;
-        throw new \RuntimeException("Injected {$operation} failure");
+        if (!$this->pending) {
+            return $delegate();
+        }
+        $this->pending = false;
+        throw new \RuntimeException('Injected ' . $operation->value . ' failure');
     }
 }
 
@@ -121,7 +83,8 @@ final class FailurePathTest extends TestCase
     public function testNotificationFailureLeavesPendingJobForReconciliation(): void
     {
         $storage = new InMemoryJobStorage();
-        $driver = new FaultInjectingQueueDriver(new InMemoryQueueDriver(), ['enqueue' => 1]);
+        $inner = new InMemoryQueueDriver();
+        $driver = $this->faultInjectingDriver($inner, QueueFailureOperation::Enqueue);
         $dispatcher = new JobDispatcher($storage, new QueueManager($driver));
 
         try {
@@ -133,48 +96,50 @@ final class FailurePathTest extends TestCase
 
         $jobs = $storage->list(JobStatus::Pending);
         self::assertCount(1, $jobs);
-        self::assertSame([], $driver->inner->getPending('default'));
+        self::assertSame([], $inner->getPending('default'));
         $result = (new QueueReconciler($storage, $driver))->reconcile('default', new ReconcileOptions());
         self::assertSame(1, $result->restored);
-        self::assertSame([$jobs[0]->id], $driver->inner->getPending('default'));
+        self::assertSame([$jobs[0]->id], $inner->getPending('default'));
     }
 
     public function testAckFailureRecoversTerminalDuplicateWithoutReexecution(): void
     {
         $clock = new FrozenClock();
         $storage = new InMemoryJobStorage($clock);
-        $driver = new FaultInjectingQueueDriver(new InMemoryQueueDriver($clock), ['ack' => 1]);
+        $inner = new InMemoryQueueDriver($clock);
+        $driver = $this->faultInjectingDriver($inner, QueueFailureOperation::Acknowledge);
         [$dispatcher, $worker] = $this->successfulWorker($storage, $driver);
         $jobId = $dispatcher->dispatch('test.success', []);
 
         self::assertTrue($worker->processOne());
         self::assertSame(JobStatus::Completed, $storage->find($jobId)->status);
-        self::assertSame([$jobId], $driver->inner->getProcessing('default'));
+        self::assertSame([$jobId], $inner->getProcessing('default'));
 
         $clock->advance(61);
-        self::assertSame(1, $driver->inner->recoverStaleProcessing('default', 60));
+        self::assertSame(1, $inner->recoverStaleProcessing('default', 60));
         self::assertFalse($worker->processOne());
         self::assertSame(JobStatus::Completed, $storage->find($jobId)?->status);
-        self::assertSame([], $driver->inner->getProcessing('default'));
+        self::assertSame([], $inner->getProcessing('default'));
     }
 
     public function testNackFailureLeavesRetryDurableUntilQueueRecovery(): void
     {
         $clock = new FrozenClock();
         $storage = new InMemoryJobStorage($clock);
-        $driver = new FaultInjectingQueueDriver(new InMemoryQueueDriver($clock), ['nack' => 1]);
+        $inner = new InMemoryQueueDriver($clock);
+        $driver = $this->faultInjectingDriver($inner, QueueFailureOperation::Reject);
         [$jobId, $worker] = $this->retryJob($storage, $driver);
 
         self::assertTrue($worker->processOne());
         $job = $storage->find($jobId);
         self::assertSame(JobStatus::Pending, $job?->status);
         self::assertSame(1, $job->attempts);
-        self::assertSame([$jobId], $driver->inner->getProcessing('default'));
-        self::assertSame([], $driver->inner->getDelayed('default'));
+        self::assertSame([$jobId], $inner->getProcessing('default'));
+        self::assertSame([], $inner->getDelayed('default'));
 
         $clock->advance(61);
-        self::assertSame(1, $driver->inner->recoverStaleProcessing('default', 60));
-        self::assertSame($jobId, $driver->inner->dequeue('default', 0));
+        self::assertSame(1, $inner->recoverStaleProcessing('default', 60));
+        self::assertSame($jobId, $inner->dequeue('default', 0));
         self::assertNotNull($storage->claimById($jobId, 'recovery-worker'));
     }
 
@@ -259,7 +224,8 @@ final class FailurePathTest extends TestCase
     public function testCleanupFailureKeepsCancellationDurableAndRetryable(): void
     {
         $storage = new InMemoryJobStorage();
-        $driver = new FaultInjectingQueueDriver(new InMemoryQueueDriver(), ['remove' => 1]);
+        $inner = new InMemoryQueueDriver();
+        $driver = $this->faultInjectingDriver($inner, QueueFailureOperation::Remove);
         $dispatcher = new JobDispatcher($storage, new QueueManager($driver));
         $jobId = $dispatcher->dispatch('test.cancel', []);
 
@@ -271,15 +237,49 @@ final class FailurePathTest extends TestCase
         }
 
         self::assertSame(JobStatus::Cancelled, $storage->find($jobId)?->status);
-        self::assertSame([$jobId], $driver->inner->getPending('default'));
+        self::assertSame([$jobId], $inner->getPending('default'));
         self::assertFalse($dispatcher->cancelJob($jobId));
-        self::assertSame([], $driver->inner->getPending('default'));
+        self::assertSame([], $inner->getPending('default'));
+    }
+
+    /**
+     * @return QueueDriverInterface&SupportsBoundedQueueMembership&SupportsJobRemoval&\PHPUnit\Framework\MockObject\MockObject
+     */
+    private function faultInjectingDriver(
+        InMemoryQueueDriver $inner,
+        QueueFailureOperation $failure
+    ): QueueDriverInterface {
+        $driver = $this->createMockForIntersectionOfInterfaces([
+            QueueDriverInterface::class,
+            SupportsBoundedQueueMembership::class,
+            SupportsJobRemoval::class,
+        ]);
+        $plan = new QueueFailurePlan($failure);
+        $driver->method('isAvailable')->willReturnCallback($inner->isAvailable(...));
+        $driver->method('dequeue')->willReturnCallback($inner->dequeue(...));
+        $driver->method('hasPendingJob')->willReturnCallback($inner->hasPendingJob(...));
+        $driver->method('hasDelayedJob')->willReturnCallback($inner->hasDelayedJob(...));
+        $faultableOperations = [
+            'enqueue' => [QueueFailureOperation::Enqueue, $inner->enqueue(...)],
+            'ack' => [QueueFailureOperation::Acknowledge, $inner->ack(...)],
+            'nack' => [QueueFailureOperation::Reject, $inner->nack(...)],
+            'remove' => [QueueFailureOperation::Remove, $inner->remove(...)],
+        ];
+        foreach ($faultableOperations as $method => [$operation, $delegate]) {
+            $driver->method($method)->willReturnCallback(
+                static fn(mixed ...$arguments): mixed => $plan->run(
+                    $operation,
+                    static fn(): mixed => call_user_func_array($delegate, $arguments)
+                )
+            );
+        }
+        return $driver;
     }
 
     /** @return array{JobDispatcher, Worker} */
     private function successfulWorker(
         InMemoryJobStorage $storage,
-        FaultInjectingQueueDriver $driver
+        QueueDriverInterface $driver
     ): array {
         $registry = new JobRegistry();
         $handler = new class implements JobHandlerInterface {

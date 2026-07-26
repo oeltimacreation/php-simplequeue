@@ -347,14 +347,29 @@ final class RealServicesTest extends TestCase
         if (!is_array($result)) {
             throw new \RuntimeException('Concurrent child returned an invalid result.');
         }
+        return [
+            'job_id' => $this->concurrentJobId($result),
+            'created' => $this->concurrentCreationState($result),
+        ];
+    }
+
+    /** @param array<mixed> $result */
+    private function concurrentJobId(array $result): int
+    {
         $jobId = $result['job_id'] ?? null;
         if (!is_int($jobId)) {
             throw new \RuntimeException('Concurrent child returned an invalid job ID.');
         }
+        return $jobId;
+    }
+
+    /** @param array<mixed> $result */
+    private function concurrentCreationState(array $result): bool
+    {
         $created = $result['created'] ?? null;
         if (!is_bool($created)) {
             throw new \RuntimeException('Concurrent child returned an invalid creation state.');
         }
-        return ['job_id' => $jobId, 'created' => $created];
+        return $created;
     }
 }
