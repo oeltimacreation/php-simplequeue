@@ -32,14 +32,17 @@ final class QueueReconciler
         }
 
         $started = $this->clock->monotonic();
-        $jobs = $this->storage->scanPending($queue, $options->cursor, $options->pageSize);
+        $pageCursor = $options->cursor;
+        $jobs = $this->storage->scanPending($queue, $pageCursor, $options->pageSize);
         if ($jobs === [] && $options->cursor !== null) {
+            $pageCursor = null;
             $jobs = $this->storage->scanPending($queue, null, $options->pageSize);
         }
-
         $restored = 0;
         $duplicates = 0;
         $invalid = 0;
+        $scanned = 0;
+        $nextCursor = $pageCursor;
         $processor = new ReconciliationJobProcessor($this->driver, $this->clock);
         foreach ($jobs as $job) {
             if ($this->clock->monotonic() - $started >= $options->maxDurationSeconds) {
@@ -50,10 +53,12 @@ final class QueueReconciler
                 ReconcileJobOutcome::Duplicate => $duplicates++,
                 ReconcileJobOutcome::Invalid => $invalid++,
             };
+            $scanned++;
+            $nextCursor = $job->id;
         }
-
-        $scanned = count($jobs);
-        $nextCursor = $scanned < $options->pageSize || $jobs === [] ? null : $jobs[$scanned - 1]->id;
+        if ($scanned === count($jobs) && $scanned < $options->pageSize) {
+            $nextCursor = null;
+        }
         return new ReconcileResult(
             $nextCursor,
             $scanned,
