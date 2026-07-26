@@ -1,0 +1,31 @@
+# Performance benchmarks
+
+The Stage 5 harness measures queue-library work rather than application handler
+work. Each scenario performs one warmup by default and reports all five measured
+samples plus medians, peak incremental memory, retained memory, PDO statement
+and transaction counts, and Redis command and network-roundtrip counts.
+
+Run the reproducible local SQLite and in-memory suite:
+
+```bash
+composer benchmark -- --jobs=1000 --iterations=5 --warmup=1 --idle-cycles=500
+```
+
+Add real Redis or Valkey measurements by starting an isolated instance and
+setting `REDIS_HOST` and `REDIS_PORT`. The harness uses unique key prefixes and
+removes them after each sample.
+
+```bash
+REDIS_HOST=127.0.0.1 REDIS_PORT=6379 composer benchmark -- --jobs=1000
+```
+
+Results are JSON so benchmark invocations can be archived and compared without
+parsing terminal formatting. Compare medians across multiple samples; individual
+microbenchmark timings are affected by CPU scheduling, allocator state, PHP
+version, database server latency, and Redis/Valkey transport latency.
+
+The scenarios cover repeated single dispatch, one batch dispatch, storage
+claims, worker execution and acknowledgement, worker retry scheduling, bounded
+reconciliation, deterministic idle-worker maintenance, Redis batch enqueue,
+Redis dequeue/ACK, Redis retry, and repair of blocking-dequeue notifications
+that are missing processing scores.
