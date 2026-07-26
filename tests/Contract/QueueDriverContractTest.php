@@ -8,40 +8,61 @@ use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Contract\QueueStatsInterface;
 use Oeltima\SimpleQueue\Contract\SupportsBatchEnqueue;
 use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
+use Oeltima\SimpleQueue\Driver\DatabaseQueueDriver;
 use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
 use Oeltima\SimpleQueue\Driver\RedisQueueDriver;
+use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
+use Oeltima\SimpleQueue\Tests\Support\FrozenClock;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Predis\Client;
 
 final class QueueDriverContractTest extends TestCase
 {
+    private ?InMemoryJobStorage $databaseStorage = null;
+
     /** @return iterable<string, array{string}> */
-    public static function backends(): iterable
+    public static function queueBackends(): iterable
+    {
+        yield 'in-memory' => ['memory'];
+        yield 'database' => ['database'];
+        yield 'Redis' => ['redis'];
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function notificationBackends(): iterable
     {
         yield 'in-memory' => ['memory'];
         yield 'Redis' => ['redis'];
     }
 
-    #[DataProvider('backends')]
+    /** @return iterable<string, array{string, string}> */
+    public static function jobIdBackends(): iterable
+    {
+        yield 'in-memory' => ['memory', 'Job ID must be a positive integer'];
+        yield 'database' => ['database', 'jobId must be a positive integer'];
+        yield 'Redis' => ['redis', 'Job ID must be a positive integer'];
+    }
+
+    #[DataProvider('queueBackends')]
     public function testLifecyclePreservesQueueIsolationAndAcknowledgement(string $backend): void
     {
         $driver = $this->driver($backend);
         try {
-            $driver->enqueue('alpha', 11);
-            $driver->enqueue('beta', 22);
-            self::assertSame(11, $driver->dequeue('alpha', 0));
-            $driver->ack('alpha', 11);
+            $alphaId = $this->enqueueJob($backend, $driver, 'alpha', 11);
+            $betaId = $this->enqueueJob($backend, $driver, 'beta', 22);
+            self::assertSame($alphaId, $driver->dequeue('alpha', 0));
+            $driver->ack('alpha', $alphaId);
             self::assertNull($driver->dequeue('alpha', 0));
-            self::assertSame(22, $driver->dequeue('beta', 0));
-            $driver->ack('beta', 22);
+            self::assertSame($betaId, $driver->dequeue('beta', 0));
+            $driver->ack('beta', $betaId);
         } finally {
             $this->clear($driver, 'alpha');
             $this->clear($driver, 'beta');
         }
     }
 
-    #[DataProvider('backends')]
+    #[DataProvider('notificationBackends')]
     public function testBatchOrderingAndCountsMatch(string $backend): void
     {
         $driver = $this->driver($backend);
@@ -61,7 +82,7 @@ final class QueueDriverContractTest extends TestCase
         }
     }
 
-    #[DataProvider('backends')]
+    #[DataProvider('notificationBackends')]
     public function testImmediateAndDelayedRetriesMatch(string $backend): void
     {
         $driver = $this->driver($backend);
@@ -81,16 +102,16 @@ final class QueueDriverContractTest extends TestCase
         }
     }
 
-    #[DataProvider('backends')]
-    public function testInvalidJobIdMessageMatches(string $backend): void
+    #[DataProvider('jobIdBackends')]
+    public function testInvalidJobIdMessageIsPreserved(string $backend, string $message): void
     {
         $driver = $this->driver($backend);
         $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('Job ID must be a positive integer');
+        $this->expectExceptionMessage($message);
         $driver->enqueue('default', 0);
     }
 
-    #[DataProvider('backends')]
+    #[DataProvider('notificationBackends')]
     public function testInvalidRetryDelayMessageMatches(string $backend): void
     {
         $driver = $this->driver($backend);
@@ -103,6 +124,11 @@ final class QueueDriverContractTest extends TestCase
     {
         if ($backend === 'memory') {
             return new InMemoryQueueDriver();
+        }
+        if ($backend === 'database') {
+            $clock = new FrozenClock();
+            $this->databaseStorage = new InMemoryJobStorage($clock);
+            return new DatabaseQueueDriver($this->databaseStorage, 50, $clock);
         }
 
         $host = getenv('REDIS_HOST');
@@ -117,6 +143,24 @@ final class QueueDriverContractTest extends TestCase
             self::markTestSkipped('Could not connect to Redis: ' . $exception->getMessage());
         }
         return new RedisQueueDriver($client, 'contract-' . bin2hex(random_bytes(8)));
+    }
+
+    private function enqueueJob(
+        string $backend,
+        QueueDriverInterface $driver,
+        string $queue,
+        int $notificationId
+    ): int {
+        if ($backend === 'database') {
+            if ($this->databaseStorage === null) {
+                throw new \LogicException('Database storage was not initialized');
+            }
+            $jobId = $this->databaseStorage->createJob('contract.job', [], $queue);
+            $driver->enqueue($queue, $jobId);
+            return $jobId;
+        }
+        $driver->enqueue($queue, $notificationId);
+        return $notificationId;
     }
 
     private function clear(QueueDriverInterface $driver, string $queue): void

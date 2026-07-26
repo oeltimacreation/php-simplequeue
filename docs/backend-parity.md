@@ -30,11 +30,13 @@ database-specific claim SQL remain separate.
 | Redis queue key format | `RedisQueueDriver::queueKey()` | Each operation still selects its pending, processing, timestamp, or delayed key | Redis unit tests and the shared queue contract cover queue isolation and counts |
 | Redis response normalization | `Internal\RedisResponseNormalizer` | Redis commands and Lua scripts remain visible in the driver | Unit tests cover malformed dequeue cleanup and integer-like script results |
 | Positive job IDs | `Internal\PositiveJobId` | Each driver retains its public error context | Queue contract tests assert validation behavior across drivers |
-| Queue lifecycle | `QueueDriverInterface` | In-memory collections and Redis atomic commands remain independent | One contract suite covers enqueue, dequeue, ACK, NACK, delay, ordering, and queue isolation |
+| Queue lifecycle | `QueueDriverInterface` | Database polling, in-memory collections, and Redis atomic commands remain independent | One contract suite covers base lifecycle and queue isolation for every driver, with capability cases for ACK/NACK state, delay, ordering, and counts |
 
-The queue contract always runs against the in-memory driver and also runs against
-Redis when `REDIS_HOST` is configured. Real-service providers retain separate
-Redis and Valkey cases while sharing only connection and lifecycle setup.
+The base queue contract runs against database polling and the in-memory driver,
+and also runs against Redis when `REDIS_HOST` is configured. Batch, delayed-job,
+and queue-statistics cases run only against drivers that expose those optional
+capabilities. Real-service providers retain separate Redis and Valkey cases
+while sharing only connection and lifecycle setup.
 
 ## Stage 4 result
 
