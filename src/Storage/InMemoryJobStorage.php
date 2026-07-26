@@ -217,10 +217,11 @@ class InMemoryJobStorage implements
             return false;
         }
 
+        $encodedResult = $result === null ? null : JobStorageRules::encodeJson($result, 'job result');
         $now = $this->now();
         $job = &$this->jobs[$claim->job->id];
         $job['status'] = JobStatus::Completed;
-        $job['result'] = $result === null ? null : JobStorageRules::encodeJson($result, 'job result');
+        $job['result'] = $encodedResult;
         $job['completed_at'] = $now;
         $this->releaseClaim($job, $now);
 
