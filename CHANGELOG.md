@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a Composer quality ratchet that prevents baseline metrics from worsening or new duplicated blocks from appearing unless a narrow, documented exception is recorded.
 - Added characterization coverage for worker startup recovery failure, PDO claim rollback, real PDO and in-memory lost-lease fencing, and malformed blocking Redis dequeue cleanup.
 - Added an internal type-safety inventory documenting scalar, storage-row, Redis-response, timestamp, claim, and worker-event boundaries and the compatibility decisions applied to each.
+- Added shared storage and queue contract suites plus a backend parity map covering lifecycle transitions, validation errors, timestamps, attempt counts, acknowledgement behavior, and lease fencing.
 
 ### Changed
 
@@ -24,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Centralized raw PDO/object job-row hydration and positive job-ID validation behind internal boundaries while preserving public scalar signatures, serialized fields, and validation messages.
 - Replaced worker retry and lease-ownership booleans with exhaustive internal outcomes, and replaced in-memory status strings with `JobStatus` cases and a complete private row shape.
 - Removed redundant casts and numeric checks from trusted in-memory job state and centralized claim-release field clearing without changing fenced-write or acknowledgement behavior.
+- Centralized storage validation, JSON encoding, timestamp offsets, retry terminality, and status/queue filtering while keeping PDO SQL and in-memory state transitions persistence-specific.
+- Consolidated repeated PDO preparation, bounded queries, hydration, and fenced claim predicates, and centralized Redis queue-key construction without changing transaction boundaries, command atomicity, or backend-specific SQL.
+- Replaced repeated clocks and real-service setup in storage, concurrency, Redis, Valkey, MySQL, and PostgreSQL tests with focused fixtures and data providers while preserving each scenario's assertions.
 
 ## [1.5.2] - 2026-07-16
 

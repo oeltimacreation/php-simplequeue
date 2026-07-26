@@ -14,6 +14,7 @@ Reference material:
 - [Upgrading](upgrading.md)
 - [Maintainer notes](maintainer-notes.md)
 - [v1.6 quality baseline](quality-baseline.md)
+- [Backend parity map](backend-parity.md)
 - [v1.6 roadmap](v1.6.0-plan.md)
 
 Runnable code lives in [examples/](../examples/README.md).
