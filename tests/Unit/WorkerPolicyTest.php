@@ -39,6 +39,13 @@ final class WorkerPolicyTest extends TestCase
         $this->assertSame(8, $policy->backoffDelay(3));
     }
 
+    public function testLargeConsecutiveFailureCountCannotOverflowBackoff(): void
+    {
+        $policy = new WorkerPolicy(2, 30);
+
+        $this->assertSame(30, $policy->backoffDelay(10_000));
+    }
+
     public function testDecidesRetryEligibilityWithoutStorageIo(): void
     {
         $policy = new WorkerPolicy(2, 30);

@@ -83,6 +83,11 @@ final readonly class WorkerPolicy
 
     private function exponentialDelay(int $exponent): int
     {
-        return min($this->retryMaxDelay, (int) pow($this->retryBaseDelay, $exponent));
+        $delay = pow($this->retryBaseDelay, $exponent);
+        if (!is_finite($delay) || $delay >= $this->retryMaxDelay) {
+            return $this->retryMaxDelay;
+        }
+
+        return (int) $delay;
     }
 }
