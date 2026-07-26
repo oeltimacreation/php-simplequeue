@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added an internal type-safety inventory documenting scalar, storage-row, Redis-response, timestamp, claim, and worker-event boundaries and the compatibility decisions applied to each.
 - Added shared storage and queue contract suites plus a backend parity map covering lifecycle transitions, validation errors, timestamps, attempt counts, acknowledgement behavior, and lease fencing.
 - Added a reproducible performance harness and Stage 5 profile covering dispatch, batch, claim, worker completion, retry, reconciliation, idle maintenance, PDO operation counts, Redis roundtrips, and memory.
+- Added a failure and recovery matrix with deterministic fault-injection coverage for storage, notification, ACK/NACK, serialization, stale-lease, interruption, duplicate-delivery, and cancellation-cleanup boundaries.
+- Added worker soak coverage for recycling, repeated PDO reconnects, bounded memory growth, long infrastructure-failure sequences, and real SIGTERM shutdown.
+- Added concurrent real-database checks for idempotent creation, lease fencing, and SKIP LOCKED claim distribution across the supported PHP and service matrix.
 
 ### Changed
 
@@ -31,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replaced repeated clocks and real-service setup in storage, concurrency, Redis, Valkey, MySQL, and PostgreSQL tests with focused fixtures and data providers while preserving each scenario's assertions.
 - Replaced quadratic in-memory batch insertion with one order-preserving merge, reducing the 10,000-job benchmark median by 80.9% without changing FIFO behavior.
 - Pipelined Redis processing-score checks and repairs, reducing the 100-entry crash-window repair from 202 to 4 roundtrips while preserving its command count, bounded limit, atomic recovery script, and malformed-notification cleanup.
+- Removed stack traces and throwable objects from worker log/listener contexts while retaining job identifiers, transition context, error messages, exception class names, timing, and backoff details.
+
+### Fixed
+
+- Bounded reconciliation now advances its cursor only through jobs actually processed before the time budget expires, so a partial page resumes without skipping pending jobs.
+- In-memory result completion now encodes JSON before changing durable state, matching PDO atomicity when result serialization fails.
+- Infrastructure backoff now saturates at its configured maximum instead of overflowing after an extreme consecutive-failure sequence.
 
 ## [1.5.2] - 2026-07-16
 
