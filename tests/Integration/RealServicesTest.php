@@ -92,12 +92,12 @@ final class RealServicesTest extends TestCase
         string $passwordVariable,
         string $table
     ): void {
-        $dsn = getenv($dsnVariable);
-        if (!$dsn) {
-            $this->markTestSkipped("{$dsnVariable} is not set. Skipping real {$service} integration test.");
-        }
-        $user = getenv($userVariable) ?: '';
-        $password = getenv($passwordVariable) ?: '';
+        [$dsn, $user, $password] = $this->databaseConfiguration(
+            $service,
+            $dsnVariable,
+            $userVariable,
+            $passwordVariable
+        );
         try {
             $pdo = new PDO($dsn, $user, $password);
             $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
@@ -105,6 +105,66 @@ final class RealServicesTest extends TestCase
             $this->markTestSkipped("Could not connect to {$service}: " . $e->getMessage());
         }
         $this->runStorageTests($pdo, $table);
+    }
+
+    #[DataProvider('databaseServices')]
+    public function testConcurrentIdempotentStorageCreation(
+        string $service,
+        string $dsnVariable,
+        string $userVariable,
+        string $passwordVariable,
+        string $table
+    ): void {
+        if (!function_exists('pcntl_fork')) {
+            $this->markTestSkipped('Process control is unavailable.');
+        }
+        [$dsn, $user, $password] = $this->databaseConfiguration(
+            $service,
+            $dsnVariable,
+            $userVariable,
+            $passwordVariable
+        );
+        $table .= '_idempotent';
+        $setup = $this->connect($dsn, $user, $password);
+        $setup->exec("DROP TABLE IF EXISTS {$table}");
+        DbHelper::createSchema($setup, $table);
+        unset($setup);
+        $barrier = tempnam(sys_get_temp_dir(), 'sq_barrier_');
+        self::assertNotFalse($barrier);
+        unlink($barrier);
+        $resultFiles = $this->temporaryResultFiles(2);
+        $processIds = [];
+
+        try {
+            foreach ($resultFiles as $resultFile) {
+                $processId = pcntl_fork();
+                self::assertNotSame(-1, $processId);
+                if ($processId === 0) {
+                    $this->runIdempotentChild($dsn, $user, $password, $table, $barrier, $resultFile);
+                }
+                $processIds[] = $processId;
+            }
+            touch($barrier);
+            foreach ($processIds as $processId) {
+                self::assertSame($processId, pcntl_waitpid($processId, $status));
+                self::assertTrue(pcntl_wifexited($status));
+                self::assertSame(0, pcntl_wexitstatus($status));
+            }
+            $results = array_map($this->readConcurrentResult(...), $resultFiles);
+            self::assertCount(1, array_filter($results, static fn(array $result): bool => $result['created']));
+            self::assertCount(1, array_unique(array_column($results, 'job_id')));
+            $verification = $this->connect($dsn, $user, $password);
+            $countStatement = $verification->query("SELECT COUNT(*) FROM {$table}");
+            self::assertInstanceOf(\PDOStatement::class, $countStatement);
+            self::assertSame(1, (int) $countStatement->fetchColumn());
+        } finally {
+            $this->connect($dsn, $user, $password)->exec("DROP TABLE IF EXISTS {$table}");
+            foreach ([$barrier, ...$resultFiles] as $file) {
+                if (file_exists($file)) {
+                    unlink($file);
+                }
+            }
+        }
     }
 
     private function runStorageTests(PDO $pdo, string $tableName): void
@@ -141,7 +201,101 @@ final class RealServicesTest extends TestCase
         $job = $storage->find($jobId);
         $this->assertSame(JobStatus::Completed, $job->status);
         $this->assertSame(['res' => 'ok'], $job->result);
-
+        $this->verifyStorageSafety($storage);
         $pdo->exec("DROP TABLE IF EXISTS {$tableName}");
+    }
+
+    private function verifyStorageSafety(PdoJobStorage $storage): void
+    {
+        $first = $storage->createIdempotentJob('test.idempotent', [], 'request-1', 'default', 3);
+        $second = $storage->createIdempotentJob('test.idempotent', [], 'request-1', 'default', 3);
+        $this->assertTrue($first->created);
+        $this->assertFalse($second->created);
+        $this->assertSame($first->jobId, $second->jobId);
+
+        $fencedId = $storage->createJob('test.fenced', []);
+        $oldClaim = $storage->claimById($fencedId, 'worker-old');
+        $this->assertNotNull($oldClaim);
+        $this->assertTrue($storage->scheduleRetry($oldClaim, 1, 0));
+        $replacementClaim = $storage->claimById($fencedId, 'worker-new');
+        $this->assertNotNull($replacementClaim);
+        $this->assertNotSame($oldClaim->leaseToken, $replacementClaim->leaseToken);
+        $this->assertFalse($storage->heartbeat($oldClaim));
+        $this->assertFalse($storage->markCompleted($oldClaim));
+        $this->assertTrue($storage->markCompleted($replacementClaim));
+    }
+
+    /** @return array{string, string, string} */
+    private function databaseConfiguration(
+        string $service,
+        string $dsnVariable,
+        string $userVariable,
+        string $passwordVariable
+    ): array {
+        $dsn = getenv($dsnVariable);
+        if (!$dsn) {
+            $this->markTestSkipped("{$dsnVariable} is not set. Skipping real {$service} integration test.");
+        }
+        return [$dsn, getenv($userVariable) ?: '', getenv($passwordVariable) ?: ''];
+    }
+
+    private function connect(string $dsn, string $user, string $password): PDO
+    {
+        $pdo = new PDO($dsn, $user, $password);
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        return $pdo;
+    }
+
+    /** @return list<string> */
+    private function temporaryResultFiles(int $count): array
+    {
+        $files = [];
+        for ($index = 0; $index < $count; $index++) {
+            $file = tempnam(sys_get_temp_dir(), 'sq_result_');
+            if ($file === false) {
+                throw new \RuntimeException('Could not create concurrency result file.');
+            }
+            $files[] = $file;
+        }
+        return $files;
+    }
+
+    private function runIdempotentChild(
+        string $dsn,
+        string $user,
+        string $password,
+        string $table,
+        string $barrier,
+        string $resultFile
+    ): never {
+        while (!file_exists($barrier)) {
+            usleep(1_000);
+        }
+        try {
+            $storage = new PdoJobStorage($this->connect($dsn, $user, $password), $table);
+            $result = $storage->createIdempotentJob('test.concurrent', [], 'shared-request', 'default', 3);
+            file_put_contents($resultFile, json_encode([
+                'job_id' => $result->jobId,
+                'created' => $result->created,
+            ], JSON_THROW_ON_ERROR));
+            exit(0);
+        } catch (\Throwable $exception) {
+            file_put_contents($resultFile, $exception->getMessage());
+            exit(1);
+        }
+    }
+
+    /** @return array{job_id: int, created: bool} */
+    private function readConcurrentResult(string $file): array
+    {
+        $contents = file_get_contents($file);
+        if ($contents === false) {
+            throw new \RuntimeException('Could not read concurrency result.');
+        }
+        $result = json_decode($contents, true, 512, JSON_THROW_ON_ERROR);
+        if (!is_array($result) || !is_int($result['job_id'] ?? null) || !is_bool($result['created'] ?? null)) {
+            throw new \RuntimeException('Concurrent child returned an invalid result.');
+        }
+        return ['job_id' => $result['job_id'], 'created' => $result['created']];
     }
 }
