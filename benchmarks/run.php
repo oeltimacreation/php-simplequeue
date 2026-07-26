@@ -188,20 +188,31 @@ final class FailingBenchmarkHandler implements JobHandlerInterface
     }
 }
 
-enum BenchmarkScenario: string
+final class BenchmarkScenario
 {
-    case MemoryBatch = 'memory.dispatch_batch';
-    case SqliteSingle = 'sqlite.dispatch_single';
-    case SqliteBatch = 'sqlite.dispatch_batch';
-    case SqliteClaim = 'sqlite.claim';
-    case WorkerExecute = 'worker.execute_ack';
-    case WorkerRetry = 'worker.retry';
-    case SqliteReconcile = 'sqlite.reconcile';
-    case IdleMaintenance = 'worker.idle_maintenance';
-    case RedisBatch = 'redis.dispatch_batch';
-    case RedisAck = 'redis.dequeue_ack';
-    case RedisRetry = 'redis.retry';
-    case RedisRepair = 'redis.repair_unscored';
+    public readonly string $value;
+
+    /** @param array{value: string} $definition */
+    private function __construct(array $definition)
+    {
+        $this->value = $definition['value'];
+    }
+
+    /** @param array{value: string} $definition */
+    public static function named(array $definition): self
+    {
+        return new self($definition);
+    }
+
+    public function isWorkerRetry(): bool
+    {
+        return $this->value === 'worker.retry';
+    }
+
+    public function key(): string
+    {
+        return str_replace('.', '-', $this->value);
+    }
 }
 
 final class BenchmarkOptions
@@ -357,7 +368,8 @@ function localBenchmarks(BenchmarkOptions $options): array
 function memoryBatchBenchmark(BenchmarkOptions $options): array
 {
     $payloads = payloads($options);
-    return benchmark(BenchmarkScenario::MemoryBatch, $options, static function () use ($payloads): Closure {
+    $scenario = BenchmarkScenario::named(['value' => 'memory.dispatch_batch']);
+    return benchmark($scenario, $options, static function () use ($payloads): Closure {
         $dispatcher = new JobDispatcher(new InMemoryJobStorage(), new QueueManager(new InMemoryQueueDriver()));
         return static function () use ($dispatcher, $payloads): array {
             return ['operations' => count($dispatcher->dispatchBatch('benchmark.noop', $payloads))];
@@ -368,7 +380,8 @@ function memoryBatchBenchmark(BenchmarkOptions $options): array
 /** @return array<string, mixed> */
 function sqliteSingleBenchmark(BenchmarkOptions $options): array
 {
-    return benchmark(BenchmarkScenario::SqliteSingle, $options, static function () use ($options): Closure {
+    $scenario = BenchmarkScenario::named(['value' => 'sqlite.dispatch_single']);
+    return benchmark($scenario, $options, static function () use ($options): Closure {
         [$pdo, $storage] = sqliteStorage();
         $dispatcher = new JobDispatcher($storage, QueueManager::database($storage));
         return static function () use ($dispatcher, $pdo, $options): array {
@@ -384,7 +397,8 @@ function sqliteSingleBenchmark(BenchmarkOptions $options): array
 function sqliteBatchBenchmark(BenchmarkOptions $options): array
 {
     $payloads = payloads($options);
-    return benchmark(BenchmarkScenario::SqliteBatch, $options, static function () use ($payloads, $options): Closure {
+    $scenario = BenchmarkScenario::named(['value' => 'sqlite.dispatch_batch']);
+    return benchmark($scenario, $options, static function () use ($payloads, $options): Closure {
         [$pdo, $storage] = sqliteStorage();
         $dispatcher = new JobDispatcher($storage, QueueManager::database($storage));
         return static function () use ($dispatcher, $pdo, $payloads, $options): array {
@@ -397,7 +411,8 @@ function sqliteBatchBenchmark(BenchmarkOptions $options): array
 /** @return array<string, mixed> */
 function sqliteClaimBenchmark(BenchmarkOptions $options): array
 {
-    return benchmark(BenchmarkScenario::SqliteClaim, $options, static function () use ($options): Closure {
+    $scenario = BenchmarkScenario::named(['value' => 'sqlite.claim']);
+    return benchmark($scenario, $options, static function () use ($options): Closure {
         [$pdo, $storage] = sqliteStorage();
         (new JobDispatcher($storage, QueueManager::database($storage)))->dispatchBatch('benchmark.noop', payloads($options));
         $pdo->resetCounts();
@@ -414,19 +429,19 @@ function sqliteClaimBenchmark(BenchmarkOptions $options): array
 /** @return array<string, mixed> */
 function workerExecutionBenchmark(BenchmarkOptions $options): array
 {
-    return workerBenchmark($options, BenchmarkScenario::WorkerExecute);
+    return workerBenchmark($options, BenchmarkScenario::named(['value' => 'worker.execute_ack']));
 }
 
 /** @return array<string, mixed> */
 function workerRetryBenchmark(BenchmarkOptions $options): array
 {
-    return workerBenchmark($options, BenchmarkScenario::WorkerRetry);
+    return workerBenchmark($options, BenchmarkScenario::named(['value' => 'worker.retry']));
 }
 
 /** @return array<string, mixed> */
 function workerBenchmark(BenchmarkOptions $options, BenchmarkScenario $scenario): array
 {
-    $retry = $scenario === BenchmarkScenario::WorkerRetry;
+    $retry = $scenario->isWorkerRetry();
     $handler = $retry ? FailingBenchmarkHandler::class : NoopBenchmarkHandler::class;
     $jobType = $retry ? 'benchmark.fail' : 'benchmark.noop';
     $workerOptions = $retry ? ['retry_base_delay' => 60, 'retry_max_delay' => 60] : [];
@@ -458,7 +473,8 @@ function workerBenchmark(BenchmarkOptions $options, BenchmarkScenario $scenario)
 /** @return array<string, mixed> */
 function sqliteReconcileBenchmark(BenchmarkOptions $options): array
 {
-    return benchmark(BenchmarkScenario::SqliteReconcile, $options, static function () use ($options): Closure {
+    $scenario = BenchmarkScenario::named(['value' => 'sqlite.reconcile']);
+    return benchmark($scenario, $options, static function () use ($options): Closure {
         [$pdo, $storage] = sqliteStorage();
         (new JobDispatcher($storage, QueueManager::database($storage)))->dispatchBatch('benchmark.noop', payloads($options));
         $reconciler = new QueueReconciler($storage, new InMemoryQueueDriver());
@@ -477,7 +493,8 @@ function sqliteReconcileBenchmark(BenchmarkOptions $options): array
 /** @return array<string, mixed> */
 function idleMaintenanceBenchmark(BenchmarkOptions $options): array
 {
-    return benchmark(BenchmarkScenario::IdleMaintenance, $options, static function () use ($options): Closure {
+    $scenario = BenchmarkScenario::named(['value' => 'worker.idle_maintenance']);
+    return benchmark($scenario, $options, static function () use ($options): Closure {
         $clock = new BenchmarkClock($options);
         [$pdo, $storage] = sqliteStorage($clock);
         $worker = new Worker($storage, new QueueManager(new InMemoryQueueDriver($clock)), new JobRegistry(), options: [
@@ -513,7 +530,7 @@ function redisSetup(BenchmarkOptions $options, BenchmarkScenario $scenario): arr
     $inner = new Client(['scheme' => 'tcp', 'host' => $options->redisHost, 'port' => $options->redisPort]);
     $inner->connect();
     $client = new BenchmarkRedisClient($inner);
-    $prefix = sprintf('sq-benchmark:%s:%s', $scenario->name, bin2hex(random_bytes(6)));
+    $prefix = sprintf('sq-benchmark:%s:%s', $scenario->key(), bin2hex(random_bytes(6)));
     return ['inner' => $inner, 'client' => $client, 'driver' => new RedisQueueDriver($client, $prefix), 'prefix' => $prefix];
 }
 
@@ -531,8 +548,9 @@ function redisCleanup(array $fixture): Closure
 /** @return array<string, mixed> */
 function redisBatchBenchmark(BenchmarkOptions $options): array
 {
-    return benchmark(BenchmarkScenario::RedisBatch, $options, static function () use ($options): Closure {
-        $fixture = redisSetup($options, BenchmarkScenario::RedisBatch);
+    $scenario = BenchmarkScenario::named(['value' => 'redis.dispatch_batch']);
+    return benchmark($scenario, $options, static function () use ($options, $scenario): Closure {
+        $fixture = redisSetup($options, $scenario);
         $fixture['client']->resetCounts();
         return static function () use ($fixture, $options): array {
             $jobs = min($options->jobs, 100);
@@ -545,8 +563,9 @@ function redisBatchBenchmark(BenchmarkOptions $options): array
 /** @return array<string, mixed> */
 function redisAckBenchmark(BenchmarkOptions $options): array
 {
-    return benchmark(BenchmarkScenario::RedisAck, $options, static function () use ($options): Closure {
-        $fixture = redisSetup($options, BenchmarkScenario::RedisAck);
+    $scenario = BenchmarkScenario::named(['value' => 'redis.dequeue_ack']);
+    return benchmark($scenario, $options, static function () use ($options, $scenario): Closure {
+        $fixture = redisSetup($options, $scenario);
         $fixture['driver']->enqueueBatch('default', range(1, min($options->jobs, 100)));
         $fixture['client']->resetCounts();
         return static function () use ($fixture): array {
@@ -563,8 +582,9 @@ function redisAckBenchmark(BenchmarkOptions $options): array
 /** @return array<string, mixed> */
 function redisRetryBenchmark(BenchmarkOptions $options): array
 {
-    return benchmark(BenchmarkScenario::RedisRetry, $options, static function () use ($options): Closure {
-        $fixture = redisSetup($options, BenchmarkScenario::RedisRetry);
+    $scenario = BenchmarkScenario::named(['value' => 'redis.retry']);
+    return benchmark($scenario, $options, static function () use ($options, $scenario): Closure {
+        $fixture = redisSetup($options, $scenario);
         $jobs = min($options->jobs, 100);
         $fixture['driver']->enqueueBatch('default', range(1, $jobs));
         $fixture['client']->resetCounts();
@@ -585,8 +605,9 @@ function redisRetryBenchmark(BenchmarkOptions $options): array
 /** @return array<string, mixed> */
 function redisRepairBenchmark(BenchmarkOptions $options): array
 {
-    return benchmark(BenchmarkScenario::RedisRepair, $options, static function () use ($options): Closure {
-        $fixture = redisSetup($options, BenchmarkScenario::RedisRepair);
+    $scenario = BenchmarkScenario::named(['value' => 'redis.repair_unscored']);
+    return benchmark($scenario, $options, static function () use ($options, $scenario): Closure {
+        $fixture = redisSetup($options, $scenario);
         $jobs = min($options->jobs, 100);
         $processing = $fixture['prefix'] . ':queue:default:processing';
         $fixture['inner']->lpush($processing, array_map('strval', range(1, $jobs)));

@@ -31,7 +31,7 @@ if ($command === 'write-baseline') {
         $storedInventory['duplicates']
     );
     writeJson($baselinePath, $storedInventory);
-    printf("Quality baseline written to %s\n", relativePath($root, $baselinePath));
+    printf("Quality baseline written to %s\n", relativePath(['root' => $root, 'path' => $baselinePath]));
     exit(0);
 }
 
@@ -57,7 +57,7 @@ function buildInventory(string $root): array
     $methods = [];
 
     foreach ($files as $file) {
-        $relative = relativePath($root, $file);
+        $relative = relativePath(['root' => $root, 'path' => $file]);
         $scope = str_starts_with($relative, 'src/') ? 'production' : 'tests';
         $parsed = parseFile(['path' => $file, 'relative' => $relative, 'scope' => $scope]);
         $classes = array_merge($classes, $parsed['classes']);
@@ -493,7 +493,9 @@ function summarize(array $input): array
         'tests' => ['files' => 0, 'classes' => 0, 'methods' => 0, 'lines' => 0, 'duplicate_windows' => 0],
     ];
     foreach ($input['files'] as $file) {
-        $scope = str_starts_with(relativePath($input['root'], $file), 'src/') ? 'production' : 'tests';
+        $scope = str_starts_with(relativePath(['root' => $input['root'], 'path' => $file]), 'src/')
+            ? 'production'
+            : 'tests';
         $summary[$scope]['files']++;
         $lineCount = count(file($file) ?: []);
         $summary[$scope]['lines'] += $lineCount;
@@ -593,7 +595,10 @@ function checkRatchet(array $input): int
     if ($failures !== []) {
         return 1;
     }
-    printf("Quality ratchet passed against %s\n", relativePath($input['root'], $input['baseline_path']));
+    printf(
+        "Quality ratchet passed against %s\n",
+        relativePath(['root' => $input['root'], 'path' => $input['baseline_path']])
+    );
     return 0;
 }
 
@@ -954,9 +959,10 @@ function normalizeTokenData(array $rawTokens): array
     return $tokens;
 }
 
-function relativePath(string $root, string $path): string
+/** @param array{root: string, path: string} $input */
+function relativePath(array $input): string
 {
-    $root = rtrim(str_replace('\\', '/', $root), '/');
-    $path = str_replace('\\', '/', $path);
+    $root = rtrim(str_replace('\\', '/', $input['root']), '/');
+    $path = str_replace('\\', '/', $input['path']);
     return str_starts_with($path, $root . '/') ? substr($path, strlen($root) + 1) : $path;
 }
