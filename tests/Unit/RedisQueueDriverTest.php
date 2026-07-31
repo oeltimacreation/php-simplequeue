@@ -9,6 +9,7 @@ use Oeltima\SimpleQueue\Exception\QueueException;
 use PHPUnit\Framework\TestCase;
 use Predis\ClientInterface;
 use Predis\Command\CommandInterface;
+use Predis\Response\ServerException;
 
 /**
  * Mock Redis client for testing.
@@ -22,6 +23,9 @@ class MockRedisClient implements ClientInterface
 
     /** @var array<string, mixed> */
     public array $returns = [];
+
+    /** @var array<string, \Throwable> */
+    public array $throws = [];
 
     public ?MockRedisPipeline $pipeline = null;
 
@@ -69,6 +73,9 @@ class MockRedisClient implements ClientInterface
     public function __call($commandID, $arguments)
     {
         $this->calls[] = ['method' => $commandID, 'args' => $arguments];
+        if (isset($this->throws[$commandID])) {
+            throw $this->throws[$commandID];
+        }
         return $this->returns[$commandID] ?? null;
     }
 
@@ -122,6 +129,21 @@ class RedisQueueDriverTest extends TestCase
 
     public function testDequeueNonBlockingWhenTimeoutZero(): void
     {
+        $this->redis->returns['evalsha'] = '123';
+
+        $jobId = $this->driver->dequeue('default', 0);
+
+        $this->assertEquals(123, $jobId);
+
+        $callMethods = array_column($this->redis->calls, 'method');
+        $this->assertContains('evalsha', $callMethods, 'Should use cached atomic Lua dequeue');
+        $this->assertNotContains('lmove', $callMethods, 'Lua owns the non-blocking move');
+        $this->assertNotContains('blmove', $callMethods, 'Should not use blocking blmove');
+    }
+
+    public function testDequeueFallsBackToEvalWhenScriptCacheIsCold(): void
+    {
+        $this->redis->throws['evalsha'] = new ServerException('NOSCRIPT No matching script. Please use EVAL.');
         $this->redis->returns['eval'] = '123';
 
         $jobId = $this->driver->dequeue('default', 0);
@@ -129,9 +151,23 @@ class RedisQueueDriverTest extends TestCase
         $this->assertEquals(123, $jobId);
 
         $callMethods = array_column($this->redis->calls, 'method');
-        $this->assertContains('eval', $callMethods, 'Should use atomic Lua dequeue');
-        $this->assertNotContains('lmove', $callMethods, 'Lua owns the non-blocking move');
-        $this->assertNotContains('blmove', $callMethods, 'Should not use blocking blmove');
+        $this->assertContains('evalsha', $callMethods);
+        $this->assertContains('eval', $callMethods, 'NOSCRIPT should fall back to EVAL');
+        $this->assertNotContains('lmove', $callMethods);
+    }
+
+    public function testScriptRunnerRethrowsNonNoScriptErrors(): void
+    {
+        $this->redis->throws['evalsha'] = new ServerException('WRONGTYPE Operation against a key holding the wrong kind of value');
+
+        $this->expectException(ServerException::class);
+        $this->expectExceptionMessage('WRONGTYPE');
+
+        $this->driver->dequeue('default', 0);
+
+        $callMethods = array_column($this->redis->calls, 'method');
+        $this->assertContains('evalsha', $callMethods);
+        $this->assertNotContains('eval', $callMethods, 'Non-NOSCRIPT errors must not trigger the EVAL fallback');
     }
 
     public function testDequeueBlockingWhenTimeoutPositive(): void
@@ -149,7 +185,7 @@ class RedisQueueDriverTest extends TestCase
 
     public function testDequeueReturnsNullWhenEmpty(): void
     {
-        $this->redis->returns['eval'] = null;
+        $this->redis->returns['evalsha'] = null;
 
         $jobId = $this->driver->dequeue('default', 0);
 
@@ -158,7 +194,7 @@ class RedisQueueDriverTest extends TestCase
 
     public function testDequeueRejectsMalformedRedisJobIdWithoutCastingIt(): void
     {
-        $this->redis->returns['eval'] = '0';
+        $this->redis->returns['evalsha'] = '0';
 
         $this->expectException(QueueException::class);
         try {
@@ -192,7 +228,7 @@ class RedisQueueDriverTest extends TestCase
     {
         $this->redis->returns['lrange'] = ['123'];
         $this->redis->pipelineReturns = [[null]];
-        $this->redis->returns['eval'] = 0;
+        $this->redis->returns['evalsha'] = 0;
 
         $this->assertSame(0, $this->driver->recoverStaleProcessing('default', 60, 1));
 
@@ -206,7 +242,7 @@ class RedisQueueDriverTest extends TestCase
     {
         $this->redis->returns['lrange'] = ['123', '456'];
         $this->redis->pipelineReturns = [['1700000000', '1700000001']];
-        $this->redis->returns['eval'] = 0;
+        $this->redis->returns['evalsha'] = 0;
 
         $this->assertSame(0, $this->driver->recoverStaleProcessing('default', 60, 2));
 
@@ -257,8 +293,31 @@ class RedisQueueDriverTest extends TestCase
         $this->assertContains('lpush', $pipelineMethods, 'Should immediately re-enqueue');
     }
 
-    public function testPromoteDelayedJobsEvaluatesLuaScript(): void
+    public function testPromoteDelayedJobsUsesCachedLuaScript(): void
     {
+        $this->redis->returns['evalsha'] = 3;
+
+        $count = $this->driver->promoteDelayedJobs('default', 50);
+
+        $this->assertEquals(3, $count);
+
+        $evalshaCall = array_filter(
+            $this->redis->calls,
+            fn($c) => $c['method'] === 'evalsha'
+        );
+        $this->assertCount(1, $evalshaCall);
+
+        $call = reset($evalshaCall);
+        $this->assertEquals(40, strlen($call['args'][0])); // SHA1 digest
+        $this->assertEquals(2, $call['args'][1]); // numKeys
+        $this->assertEquals('test:queue:default:delayed', $call['args'][2]);
+        $this->assertEquals('test:queue:default:pending', $call['args'][3]);
+        $this->assertEquals('50', $call['args'][5]);
+    }
+
+    public function testPromoteDelayedJobsFallsBackToEvalWhenScriptCacheIsCold(): void
+    {
+        $this->redis->throws['evalsha'] = new ServerException('NOSCRIPT No matching script. Please use EVAL.');
         $this->redis->returns['eval'] = 3;
 
         $count = $this->driver->promoteDelayedJobs('default', 50);
@@ -279,23 +338,23 @@ class RedisQueueDriverTest extends TestCase
         $this->assertEquals('50', $call['args'][5]);
     }
 
-    public function testRecoverStaleProcessingEvaluatesLuaScript(): void
+    public function testRecoverStaleProcessingUsesCachedLuaScript(): void
     {
-        $this->redis->returns['eval'] = 2;
+        $this->redis->returns['evalsha'] = 2;
         $this->redis->returns['lrange'] = [];
 
         $count = $this->driver->recoverStaleProcessing('default', 600, 75);
 
         $this->assertEquals(2, $count);
 
-        $evalCall = array_filter(
+        $evalshaCall = array_filter(
             $this->redis->calls,
-            fn($c) => $c['method'] === 'eval'
+            fn($c) => $c['method'] === 'evalsha'
         );
-        $this->assertCount(1, $evalCall);
+        $this->assertCount(1, $evalshaCall);
 
-        $call = reset($evalCall);
-        $this->assertStringContainsString('ZRANGEBYSCORE', $call['args'][0]);
+        $call = reset($evalshaCall);
+        $this->assertEquals(40, strlen($call['args'][0])); // SHA1 digest
         $this->assertEquals(3, $call['args'][1]); // numKeys
         $this->assertEquals('test:queue:default:processing_z', $call['args'][2]);
         $this->assertEquals('test:queue:default:processing', $call['args'][3]);

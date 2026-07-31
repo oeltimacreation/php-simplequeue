@@ -18,6 +18,7 @@ use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Internal\PositiveJobId;
 use Oeltima\SimpleQueue\Internal\RedisProcessingRepair;
 use Oeltima\SimpleQueue\Internal\RedisResponseNormalizer;
+use Oeltima\SimpleQueue\Internal\RedisScriptRunner;
 use Oeltima\SimpleQueue\SystemClock;
 use Predis\ClientInterface;
 
@@ -82,6 +83,8 @@ LUA;
     /** @var array<string, int> */
     private array $repairCursors = [];
 
+    private readonly RedisScriptRunner $scripts;
+
     /**
      * @param ClientInterface $redis Predis client instance
      * @param string $prefix Key prefix for all queue keys
@@ -91,6 +94,7 @@ LUA;
         private string $prefix = 'simplequeue',
         private readonly ClockInterface $clock = new SystemClock()
     ) {
+        $this->scripts = new RedisScriptRunner($this->redis);
     }
 
     public function isAvailable(): bool
@@ -247,13 +251,13 @@ LUA;
     {
         $now = $this->clock->timestamp();
 
-        $result = $this->redis->eval(
+        $result = $this->scripts->run(
             self::PROMOTE_DELAYED_LUA,
-            2,
-            $this->delayedKey($queue),
-            $this->pendingKey($queue),
-            (string) $now,
-            (string) $limit
+            [
+                $this->delayedKey($queue),
+                $this->pendingKey($queue),
+            ],
+            [(string) $now, (string) $limit]
         );
 
         return RedisResponseNormalizer::integer($result);
@@ -275,14 +279,14 @@ LUA;
         $this->repairUnscoredProcessing($queue, $limit);
         $staleThreshold = $this->clock->timestamp() - $ttlSeconds;
 
-        $result = $this->redis->eval(
+        $result = $this->scripts->run(
             self::RECOVER_STALE_LUA,
-            3,
-            $this->processingZKey($queue),
-            $this->processingKey($queue),
-            $this->pendingKey($queue),
-            (string) $staleThreshold,
-            (string) $limit
+            [
+                $this->processingZKey($queue),
+                $this->processingKey($queue),
+                $this->pendingKey($queue),
+            ],
+            [(string) $staleThreshold, (string) $limit]
         );
 
         return RedisResponseNormalizer::integer($result);
@@ -421,13 +425,14 @@ LUA;
     private function dequeueResponse(string $queue, int $timeoutSeconds): mixed
     {
         if ($timeoutSeconds <= 0) {
-            return $this->redis->eval(
+            return $this->scripts->run(
                 self::DEQUEUE_LUA,
-                3,
-                $this->pendingKey($queue),
-                $this->processingKey($queue),
-                $this->processingZKey($queue),
-                (string) $this->clock->timestamp()
+                [
+                    $this->pendingKey($queue),
+                    $this->processingKey($queue),
+                    $this->processingZKey($queue),
+                ],
+                [(string) $this->clock->timestamp()]
             );
         }
 
