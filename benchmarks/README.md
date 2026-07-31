@@ -24,8 +24,14 @@ parsing terminal formatting. Compare medians across multiple samples; individual
 microbenchmark timings are affected by CPU scheduling, allocator state, PHP
 version, database server latency, and Redis/Valkey transport latency.
 
-The scenarios cover repeated single dispatch, one batch dispatch, storage
-claims, worker execution and acknowledgement, worker retry scheduling, bounded
-reconciliation, deterministic idle-worker maintenance, Redis batch enqueue,
-Redis dequeue/ACK, Redis retry, and repair of blocking-dequeue notifications
-that are missing processing scores.
+The scenarios cover repeated single dispatch, one batch dispatch, scheduled
+single and batch dispatch, storage claims, worker execution and
+acknowledgement, worker retry scheduling, bounded reconciliation,
+deterministic idle-worker maintenance, an idle-worker CPU/memory check,
+Redis batch enqueue, Redis scheduled dispatch, a large-backlog (10,000 job)
+delayed promotion, Redis dequeue/ACK, Redis retry, and repair of
+blocking-dequeue notifications that are missing processing scores.
+
+Each sample also records process CPU seconds for scenarios that provide it and
+estimated Redis wire payload bytes for `EVAL`/`EVALSHA` script traffic, so the
+`EVALSHA` optimization can be compared directly against a baseline run.

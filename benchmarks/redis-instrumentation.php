@@ -9,6 +9,7 @@ final class BenchmarkRedisClient implements ClientInterface
 {
     public int $commands = 0;
     public int $roundTrips = 0;
+    public int $wireBytes = 0;
 
     public function __construct(public readonly ClientInterface $inner)
     {
@@ -48,6 +49,7 @@ final class BenchmarkRedisClient implements ClientInterface
     {
         $this->commands++;
         $this->roundTrips++;
+        $this->wireBytes += $this->commandWireBytes($command->getId(), $command->getArguments());
         return $this->inner->executeCommand($command);
     }
 
@@ -58,6 +60,7 @@ final class BenchmarkRedisClient implements ClientInterface
         }
         $this->commands++;
         $this->roundTrips++;
+        $this->wireBytes += $this->commandWireBytes($method, $arguments);
         return $this->inner->{$method}(...$arguments);
     }
 
@@ -65,6 +68,24 @@ final class BenchmarkRedisClient implements ClientInterface
     {
         $this->commands = 0;
         $this->roundTrips = 0;
+        $this->wireBytes = 0;
+    }
+
+    /**
+     * Estimate the wire payload bytes of a Lua script invocation.
+     *
+     * EVALSHA transmits the 40-byte digest while EVAL transmits the full script
+     * body, so this tracks the first argument of both command shapes.
+     *
+     * @param string $method Command name
+     * @param array<int, mixed> $arguments Command arguments
+     */
+    private function commandWireBytes(string $method, array $arguments): int
+    {
+        if (!in_array(strtoupper($method), ['EVAL', 'EVALSHA'], true)) {
+            return 0;
+        }
+        return isset($arguments[0]) && is_scalar($arguments[0]) ? strlen((string) $arguments[0]) : 0;
     }
 }
 

@@ -12,13 +12,17 @@ function localBenchmarks(BenchmarkOptions $options): array
 {
     return [
         memoryBatchBenchmark($options),
+        memoryScheduledBatchBenchmark($options),
         sqliteSingleBenchmark($options),
+        sqliteScheduledSingleBenchmark($options),
         sqliteBatchBenchmark($options),
+        sqliteScheduledBatchBenchmark($options),
         sqliteClaimBenchmark($options),
         workerExecutionBenchmark($options),
         workerRetryBenchmark($options),
         sqliteReconcileBenchmark($options),
         idleMaintenanceBenchmark($options),
+        idleCpuMemoryBenchmark($options),
     ];
 }
 
@@ -31,6 +35,20 @@ function memoryBatchBenchmark(BenchmarkOptions $options): array
         $dispatcher = new JobDispatcher(new InMemoryJobStorage(), new QueueManager(new InMemoryQueueDriver()));
         return static function () use ($dispatcher, $payloads): array {
             return ['operations' => count($dispatcher->dispatchBatch('benchmark.noop', $payloads))];
+        };
+    });
+}
+
+/** @return array<string, mixed> */
+function memoryScheduledBatchBenchmark(BenchmarkOptions $options): array
+{
+    $payloads = payloads($options);
+    $scenario = BenchmarkScenario::named(['value' => 'memory.dispatch_scheduled_batch']);
+    return benchmark($scenario, $options, static function () use ($payloads): Closure {
+        $dispatcher = new JobDispatcher(new InMemoryJobStorage(), new QueueManager(new InMemoryQueueDriver()));
+        $availableAt = time() + 3600;
+        return static function () use ($dispatcher, $payloads, $availableAt): array {
+            return ['operations' => count($dispatcher->dispatchBatch('benchmark.noop', $payloads, availableAt: $availableAt))];
         };
     });
 }
@@ -52,6 +70,23 @@ function sqliteSingleBenchmark(BenchmarkOptions $options): array
 }
 
 /** @return array<string, mixed> */
+function sqliteScheduledSingleBenchmark(BenchmarkOptions $options): array
+{
+    $scenario = BenchmarkScenario::named(['value' => 'sqlite.dispatch_scheduled_single']);
+    return benchmark($scenario, $options, static function () use ($options): Closure {
+        [$pdo, $storage] = sqliteStorage();
+        $dispatcher = new JobDispatcher($storage, QueueManager::database($storage));
+        $availableAt = time() + 3600;
+        return static function () use ($dispatcher, $pdo, $options, $availableAt): array {
+            for ($index = 0; $index < $options->jobs; $index++) {
+                $dispatcher->dispatch('benchmark.noop', ['index' => $index], availableAt: $availableAt);
+            }
+            return databaseCounts($pdo, ['operations' => $options->jobs]);
+        };
+    });
+}
+
+/** @return array<string, mixed> */
 function sqliteBatchBenchmark(BenchmarkOptions $options): array
 {
     $payloads = payloads($options);
@@ -61,6 +96,22 @@ function sqliteBatchBenchmark(BenchmarkOptions $options): array
         $dispatcher = new JobDispatcher($storage, QueueManager::database($storage));
         return static function () use ($dispatcher, $pdo, $payloads, $options): array {
             $dispatcher->dispatchBatch('benchmark.noop', $payloads);
+            return databaseCounts($pdo, ['operations' => $options->jobs]);
+        };
+    });
+}
+
+/** @return array<string, mixed> */
+function sqliteScheduledBatchBenchmark(BenchmarkOptions $options): array
+{
+    $payloads = payloads($options);
+    $scenario = BenchmarkScenario::named(['value' => 'sqlite.dispatch_scheduled_batch']);
+    return benchmark($scenario, $options, static function () use ($payloads, $options): Closure {
+        [$pdo, $storage] = sqliteStorage();
+        $dispatcher = new JobDispatcher($storage, QueueManager::database($storage));
+        $availableAt = time() + 3600;
+        return static function () use ($dispatcher, $pdo, $payloads, $options, $availableAt): array {
+            $dispatcher->dispatchBatch('benchmark.noop', $payloads, availableAt: $availableAt);
             return databaseCounts($pdo, ['operations' => $options->jobs]);
         };
     });

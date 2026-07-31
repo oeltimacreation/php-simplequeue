@@ -2,6 +2,13 @@
 
 declare(strict_types=1);
 
+use Oeltima\SimpleQueue\JobDispatcher;
+use Oeltima\SimpleQueue\QueueManager;
+use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
+
+/** Number of due delayed jobs seeded for the large-backlog promotion scenario. */
+const PROMOTION_BACKLOG_JOBS = 10_000;
+
 /** @return array<string, mixed> */
 function redisBatchBenchmark(BenchmarkOptions $options): array
 {
@@ -13,6 +20,66 @@ function redisBatchBenchmark(BenchmarkOptions $options): array
             $jobs = min($options->jobs, 100);
             $fixture['driver']->enqueueBatch('default', range(1, $jobs));
             return redisMetrics($fixture, ['operations' => $jobs]);
+        };
+    });
+}
+
+/** @return array<string, mixed> */
+function redisScheduledSingleBenchmark(BenchmarkOptions $options): array
+{
+    $scenario = BenchmarkScenario::named(['value' => 'redis.dispatch_scheduled_single']);
+    return benchmark($scenario, $options, static function () use ($options, $scenario): Closure {
+        $fixture = redisSetup($options, $scenario);
+        $dispatcher = new JobDispatcher(new InMemoryJobStorage(), new QueueManager($fixture['driver']));
+        $jobs = min($options->jobs, 100);
+        $availableAt = time() + 3600;
+        $fixture['client']->resetCounts();
+        return static function () use ($fixture, $dispatcher, $jobs, $availableAt): array {
+            $dispatched = 0;
+            for ($index = 0; $index < $jobs; $index++) {
+                $dispatcher->dispatch('benchmark.noop', ['index' => $index], availableAt: $availableAt);
+                $dispatched++;
+            }
+            return redisMetrics($fixture, ['operations' => $dispatched]);
+        };
+    });
+}
+
+/** @return array<string, mixed> */
+function redisScheduledBatchBenchmark(BenchmarkOptions $options): array
+{
+    $scenario = BenchmarkScenario::named(['value' => 'redis.dispatch_scheduled_batch']);
+    return benchmark($scenario, $options, static function () use ($options, $scenario): Closure {
+        $fixture = redisSetup($options, $scenario);
+        $dispatcher = new JobDispatcher(new InMemoryJobStorage(), new QueueManager($fixture['driver']));
+        $jobs = min($options->jobs, 100);
+        $payloads = array_slice(payloads($options), 0, $jobs);
+        $availableAt = time() + 3600;
+        $fixture['client']->resetCounts();
+        return static function () use ($fixture, $dispatcher, $payloads, $availableAt): array {
+            $jobIds = $dispatcher->dispatchBatch('benchmark.noop', $payloads, availableAt: $availableAt);
+            return redisMetrics($fixture, ['operations' => count($jobIds)]);
+        };
+    });
+}
+
+/** @return array<string, mixed> */
+function redisPromoteDelayedBenchmark(BenchmarkOptions $options): array
+{
+    $scenario = BenchmarkScenario::named(['value' => 'redis.promote_delayed']);
+    return benchmark($scenario, $options, static function () use ($options, $scenario): Closure {
+        $fixture = redisSetup($options, $scenario);
+        $backlog = PROMOTION_BACKLOG_JOBS;
+        $members = [];
+        $due = time() - 1;
+        for ($id = 1; $id <= $backlog; $id++) {
+            $members[$id] = $due;
+        }
+        $fixture['inner']->zadd($fixture['prefix'] . ':queue:default:delayed', $members);
+        $fixture['client']->resetCounts();
+        return static function () use ($fixture, $backlog): array {
+            $promoted = $fixture['driver']->promoteDelayedJobs('default', $backlog);
+            return redisMetrics($fixture, ['operations' => $promoted]);
         };
     });
 }

@@ -10,6 +10,9 @@ function redisBenchmarks(BenchmarkOptions $options): array
 {
     return [
         redisBatchBenchmark($options),
+        redisScheduledSingleBenchmark($options),
+        redisScheduledBatchBenchmark($options),
+        redisPromoteDelayedBenchmark($options),
         redisAckBenchmark($options),
         redisRetryBenchmark($options),
         redisRepairBenchmark($options),
@@ -48,6 +51,7 @@ function redisMetrics(array $fixture, array $operation): array
         'operations' => $operation['operations'],
         'redis_commands' => $fixture['client']->commands,
         'redis_roundtrips' => $fixture['client']->roundTrips,
+        'redis_wire_bytes' => $fixture['client']->wireBytes,
         'cleanup' => redisCleanup($fixture),
     ];
 }

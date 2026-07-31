@@ -13,6 +13,20 @@ function median(array $values): float
 }
 
 /**
+ * Measure process CPU time consumed between two getrusage() snapshots.
+ *
+ * @param array<string, mixed> $start getrusage() result captured before the operation
+ * @param array<string, mixed> $end getrusage() result captured after the operation
+ * @return float CPU seconds consumed (user plus system)
+ */
+function cpuSeconds(array $start, array $end): float
+{
+    $user = static fn (array $usage): float => (float) $usage['ru_utime.tv_sec'] + ((float) $usage['ru_utime.tv_usec'] / 1_000_000);
+    $system = static fn (array $usage): float => (float) $usage['ru_stime.tv_sec'] + ((float) $usage['ru_stime.tv_usec'] / 1_000_000);
+    return ($user($end) - $user($start)) + ($system($end) - $system($start));
+}
+
+/**
  * @param Closure(): (Closure(): array<string, int|float|Closure>) $setup
  * @return array<string, mixed>
  */
@@ -37,6 +51,8 @@ function benchmark(BenchmarkScenario $scenario, BenchmarkOptions $options, Closu
             'db_transactions' => (int) ($metrics['db_transactions'] ?? 0),
             'redis_commands' => (int) ($metrics['redis_commands'] ?? 0),
             'redis_roundtrips' => (int) ($metrics['redis_roundtrips'] ?? 0),
+            'redis_wire_bytes' => (int) ($metrics['redis_wire_bytes'] ?? 0),
+            'cpu_seconds' => (float) ($metrics['cpu_seconds'] ?? 0),
         ];
         if (isset($metrics['cleanup']) && $metrics['cleanup'] instanceof Closure) {
             $metrics['cleanup']();
@@ -56,6 +72,8 @@ function benchmark(BenchmarkScenario $scenario, BenchmarkOptions $options, Closu
         'median_db_transactions' => median(array_column($samples, 'db_transactions')),
         'median_redis_commands' => median(array_column($samples, 'redis_commands')),
         'median_redis_roundtrips' => median(array_column($samples, 'redis_roundtrips')),
+        'median_redis_wire_bytes' => median(array_column($samples, 'redis_wire_bytes')),
+        'median_cpu_seconds' => median(array_column($samples, 'cpu_seconds')),
         'samples' => $samples,
     ];
 }
