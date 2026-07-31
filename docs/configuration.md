@@ -68,6 +68,41 @@ $result = $dispatcher->dispatchIdempotent(
 notification after durable cancellation; retrying cancellation can repair a
 prior cleanup failure.
 
+### Scheduled initial dispatch
+
+`dispatch()` and `dispatchBatch()` accept an optional `$availableAt` argument,
+and the `dispatchAt()` / `dispatchAfter()` conveniences wrap it:
+
+```php
+$jobId = $dispatcher->dispatchAfter(300, 'invoice.generate', ['invoice_id' => 42]);
+
+$jobId = $dispatcher->dispatchAt(strtotime('tomorrow 09:00'), 'invoice.generate', ['invoice_id' => 42]);
+
+$jobId = $dispatcher->dispatch(
+    'invoice.generate',
+    ['invoice_id' => 42],
+    availableAt: strtotime('tomorrow 09:00'),
+);
+
+$ids = $dispatcher->dispatchBatch(
+    'invoice.generate',
+    [['invoice_id' => 1], ['invoice_id' => 2]],
+    availableAt: strtotime('tomorrow 09:00'),
+);
+```
+
+Semantics:
+
+- Timestamps in the past or equal to now take the immediate dispatch path
+  unchanged; `dispatchAfter(0)` is immediate.
+- Non-positive timestamps and negative delays throw `InvalidArgumentException`.
+- With Redis or the In-Memory driver the notification is added to the delayed
+  structure and promoted when due. With database polling no notification change
+  is needed because claims already gate on `available_at`.
+- Third-party notification drivers must implement `SupportsDelayedJobs` for
+  schedules to be honored; otherwise the notification falls back to a plain
+  enqueue and only storage-gated claims protect the availability window.
+
 The optional progress callback accepts a percentage from `0` to `100` and a
 message. Handlers expected to exceed `stuck_job_ttl` should report progress at
 least every half TTL or use a larger TTL. Retries use capped exponential

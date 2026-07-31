@@ -85,3 +85,40 @@ $worker->run();
 Run the worker under a process supervisor in production. See
 [operations.md](operations.md) for worker settings, exit codes, repair, and
 retention.
+
+## 5. Schedule a job's first run
+
+Pass an optional availability time to `dispatch()`, `dispatchBatch()`, or use
+the `dispatchAt()` / `dispatchAfter()` conveniences. A scheduled job is stored
+with a future `available_at`, receives a delayed notification, and is claimed
+only once that timestamp arrives:
+
+```php
+// Run five minutes from now.
+$jobId = $dispatcher->dispatchAfter(300, 'receipt.send', ['order_id' => 42]);
+
+// Same result with an absolute timestamp or a DateTimeInterface.
+$jobId = $dispatcher->dispatchAt(strtotime('tomorrow 09:00'), 'receipt.send', ['order_id' => 42]);
+$jobId = $dispatcher->dispatchAt(
+    new DateTimeImmutable('2026-08-01 09:00:00', new DateTimeZone('UTC')),
+    'receipt.send',
+    ['order_id' => 42],
+);
+
+// dispatch() and dispatchBatch() accept the same optional parameter.
+$jobId = $dispatcher->dispatch('receipt.send', ['order_id' => 42], availableAt: $timestamp);
+$ids = $dispatcher->dispatchBatch(
+    'receipt.send',
+    [['order_id' => 1], ['order_id' => 2]],
+    availableAt: $timestamp,
+);
+```
+
+Timestamps in the past or equal to now use the immediate dispatch path, so a
+scheduled dispatch never delays a job that is already due. `dispatchAfter(0)`
+is immediate. Negative delays and non-positive timestamps are rejected with an
+`InvalidArgumentException`.
+
+With Redis, the scheduled notification lives in the queue's delayed ZSET and
+the worker promotes it when due. With database polling, the claim query itself
+gates on `available_at`, so no notification change is needed.
