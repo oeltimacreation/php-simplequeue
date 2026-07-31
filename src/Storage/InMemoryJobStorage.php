@@ -65,7 +65,37 @@ class InMemoryJobStorage implements
         $now = $this->now();
         $id = $this->nextId++;
 
-        $this->jobs[$id] = [
+        $this->jobs[$id] = $this->newJobRow($id, $type, $payload, $queue, $maxAttempts, $requestId, $now, $now, $now);
+
+        return $id;
+    }
+
+    /**
+     * Build a stored job row shared by the single and batch creation paths.
+     *
+     * @param int $id Job identifier
+     * @param string $type Job type identifier
+     * @param array<string, mixed> $payload Job payload data
+     * @param string $queue Queue name
+     * @param int $maxAttempts Maximum retry attempts
+     * @param string|null $requestId Optional request correlation ID
+     * @param string $availableAt UTC timestamp the job becomes available
+     * @param string $createdAt UTC creation timestamp
+     * @param string $updatedAt UTC update timestamp
+     * @return StoredJobRow
+     */
+    private function newJobRow(
+        int $id,
+        string $type,
+        array $payload,
+        string $queue,
+        int $maxAttempts,
+        ?string $requestId,
+        string $availableAt,
+        string $createdAt,
+        string $updatedAt
+    ): array {
+        return [
             'id' => $id,
             'queue' => $queue,
             'type' => $type,
@@ -73,7 +103,7 @@ class InMemoryJobStorage implements
             'payload' => JobStorageRules::encodeJson($payload, 'job payload'),
             'attempts' => 0,
             'max_attempts' => $maxAttempts,
-            'available_at' => $now,
+            'available_at' => $availableAt,
             'started_at' => null,
             'completed_at' => null,
             'locked_by' => null,
@@ -85,11 +115,9 @@ class InMemoryJobStorage implements
             'progress_message' => null,
             'result' => null,
             'request_id' => $requestId,
-            'created_at' => $now,
-            'updated_at' => $now,
+            'created_at' => $createdAt,
+            'updated_at' => $updatedAt,
         ];
-
-        return $id;
     }
 
     /**
@@ -111,7 +139,24 @@ class InMemoryJobStorage implements
                 ? (int) $job['maxAttempts']
                 : 3;
             $requestId = isset($job['requestId']) && is_string($job['requestId']) ? $job['requestId'] : null;
-            $ids[] = $this->createJob($type, $payload, $queue, $maxAttempts, $requestId);
+            $now = $this->now();
+            $availableAtRaw = $job['availableAt'] ?? null;
+            $availableAt = $availableAtRaw === null
+                ? $now
+                : JobStorageRules::normalizeAvailableAt($availableAtRaw, $this->clock);
+            $id = $this->nextId++;
+            $this->jobs[$id] = $this->newJobRow(
+                $id,
+                $type,
+                $payload,
+                $queue,
+                $maxAttempts,
+                $requestId,
+                $availableAt,
+                $now,
+                $now
+            );
+            $ids[] = $id;
         }
         return $ids;
     }

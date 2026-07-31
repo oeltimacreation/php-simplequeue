@@ -248,7 +248,7 @@ class PdoJobStorage implements
                 $params[] = $job['type'];
                 $params[] = JobStorageRules::encodeJson($job['payload'], 'job payload');
                 $params[] = $job['maxAttempts'] ?? 3;
-                $params[] = $now;
+                $params[] = $this->rowAvailableAt($job, $now);
                 $params[] = $job['requestId'] ?? null;
                 $params[] = $now;
                 $params[] = $now;
@@ -687,6 +687,22 @@ class PdoJobStorage implements
     protected function now(): string
     {
         return $this->clock()->now();
+    }
+
+    /**
+     * Resolve the available-at timestamp for one createJobs() definition.
+     *
+     * @param array<string, mixed> $job Job definition
+     * @param string $now Default "now" timestamp for absent keys
+     * @return string UTC timestamp the job becomes available
+     */
+    private function rowAvailableAt(array $job, string $now): string
+    {
+        $availableAt = $job['availableAt'] ?? null;
+
+        return $availableAt === null
+            ? $now
+            : JobStorageRules::normalizeAvailableAt($availableAt, $this->clock());
     }
 
     private function clock(): ClockInterface

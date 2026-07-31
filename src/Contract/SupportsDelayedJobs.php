@@ -17,4 +17,16 @@ interface SupportsDelayedJobs
      * @return int Number of jobs promoted
      */
     public function promoteDelayedJobs(string $queue, int $limit = 100): int;
+
+    /**
+     * Add a job to the delayed notification structure.
+     *
+     * The job becomes visible to workers only after its availability timestamp
+     * passes and the delayed structure is promoted.
+     *
+     * @param string $queue Queue name
+     * @param int $jobId Job identifier
+     * @param int $availableAt Unix timestamp when the job becomes available
+     */
+    public function enqueueDelayed(string $queue, int $jobId, int $availableAt): void;
 }

@@ -154,6 +154,22 @@ final class InMemoryQueueDriver implements
     }
 
     /**
+     * Add a job to the delayed notification structure.
+     *
+     * @param string $queue Queue name
+     * @param int $jobId Job identifier
+     * @param int $availableAt Unix timestamp when the job becomes available
+     */
+    public function enqueueDelayed(string $queue, int $jobId, int $availableAt): void
+    {
+        $this->validateJobId($jobId);
+        if (!isset($this->delayed[$queue])) {
+            $this->delayed[$queue] = [];
+        }
+        $this->delayed[$queue][$jobId] = $availableAt;
+    }
+
+    /**
      * Promote delayed jobs that are now due to the pending queue.
      *
      * @param string $queue Queue name

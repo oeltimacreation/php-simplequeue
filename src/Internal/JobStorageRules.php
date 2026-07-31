@@ -72,6 +72,38 @@ final class JobStorageRules
     }
 
     /**
+     * Normalize an available-at value to the storage UTC timestamp format.
+     *
+     * The storage layer accepts an absolute Unix timestamp or a date/time
+     * object on each `createJobs()` job definition. A null value means "now".
+     * Other values and non-positive timestamps are rejected.
+     *
+     * @param mixed $availableAt Unix timestamp, date/time object, or null for now
+     * @param ClockInterface $clock Clock used as the time source
+     * @return string Formatted UTC timestamp
+     */
+    public static function normalizeAvailableAt(mixed $availableAt, ClockInterface $clock): string
+    {
+        if ($availableAt === null) {
+            return $clock->now();
+        }
+        if (is_int($availableAt)) {
+            $timestamp = $availableAt;
+        } elseif ($availableAt instanceof \DateTimeInterface) {
+            $timestamp = $availableAt->getTimestamp();
+        } else {
+            throw new \InvalidArgumentException(
+                'Available-at must be an integer Unix timestamp or a DateTimeInterface'
+            );
+        }
+        if ($timestamp <= 0) {
+            throw new \InvalidArgumentException('Available-at timestamp must be a positive Unix timestamp');
+        }
+
+        return gmdate('Y-m-d H:i:s', $timestamp);
+    }
+
+    /**
      * Encode a value as JSON with domain-specific error context.
      *
      * @param mixed $value Value to encode

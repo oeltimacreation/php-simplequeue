@@ -6,6 +6,7 @@ namespace Oeltima\SimpleQueue;
 
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
+use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
 use Oeltima\SimpleQueue\Driver\DatabaseQueueDriver;
 use Oeltima\SimpleQueue\Driver\RedisQueueDriver;
 use Oeltima\SimpleQueue\Exception\DriverNotAvailableException;
@@ -40,6 +41,32 @@ final class QueueManager
      */
     public function enqueue(int $jobId, string $queue = 'default'): void
     {
+        $this->driver->enqueue($queue, $jobId);
+    }
+
+    /**
+     * Enqueue a job with a delayed notification.
+     *
+     * Drivers that support delayed notifications (Redis, InMemory) schedule the
+     * job in their delayed structure. Storage-gated drivers such as Database
+     * fall back to a plain enqueue, because their claims already enforce the
+     * job's stored availability timestamp.
+     *
+     * Third-party notification drivers that do not implement
+     * {@see SupportsDelayedJobs} will only honor scheduled dispatch if their
+     * enqueue and storage-gated claims enforce availability.
+     *
+     * @param int $jobId Job identifier
+     * @param string $queue Queue name
+     * @param int $availableAt Unix timestamp when the job becomes available
+     */
+    public function enqueueDelayed(int $jobId, string $queue, int $availableAt): void
+    {
+        if ($this->driver instanceof SupportsDelayedJobs) {
+            $this->driver->enqueueDelayed($queue, $jobId, $availableAt);
+            return;
+        }
+
         $this->driver->enqueue($queue, $jobId);
     }
 
