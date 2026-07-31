@@ -40,6 +40,11 @@ advertise additional behavior without breaking third-party implementations:
 - `SupportsStaleRecovery`
 - `SupportsTimeoutValidation`
 
+`SupportsDelayedJobs` adds `enqueueDelayed()`, `enqueueDelayedBatch()`, and
+`promoteDelayedJobs()`. `enqueueDelayedBatch()` is additive: drivers that skip
+it are still correct, because `QueueManager::enqueueDelayedBatch()` falls back
+to one `enqueueDelayed()` call per job.
+
 Use capability interfaces rather than adding methods to base contracts.
 Document crash/recovery windows and preserve at-least-once semantics.
 

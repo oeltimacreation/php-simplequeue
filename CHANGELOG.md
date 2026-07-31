@@ -15,11 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `availableAt` key handling to `createJobs()` in `PdoJobStorage` and `InMemoryJobStorage`, accepting a Unix timestamp or `\DateTimeInterface` and normalized to UTC through a shared `JobStorageRules` helper; invalid and non-positive values throw `InvalidArgumentException`.
 - Added contract coverage for scheduled batch creation and delayed notifications, unit coverage for dispatcher scheduling, clamping, validation, and cancellation of scheduled jobs, and `FrozenClock` integration coverage across all three drivers verifying a scheduled job is not claimable before its `available_at` and becomes claimable at or after it.
 - Added a reconciliation crash-window test proving a job created with a future `available_at` but no notification is restored into the delayed structure (not pending) by `QueueReconciler`.
+- Added an internal `RedisScriptRunner` that sends Redis Lua scripts through `EVALSHA` and falls back to `EVAL` on `NOSCRIPT`, applied to the dequeue, delayed-promotion, and stale-recovery scripts. Wire payload bytes for the dequeue/ACK scenario dropped 72.8% (14,847 → 4,040 bytes per 100 jobs) and localhost dequeue latency fell ~24%; command and roundtrip counts are unchanged.
+- Added `SupportsDelayedJobs::enqueueDelayedBatch()` (implemented by the Redis and In-Memory drivers) and `QueueManager::enqueueDelayedBatch()`, so a scheduled `dispatchBatch()` sends one Redis `ZADD` instead of one roundtrip per job. Measured on 100 jobs: 100 roundtrips → 1, -75.5% median latency. Drivers without the batch method fall back to one `enqueueDelayed()` per job.
+- Expanded the benchmark harness with scheduled single/batch dispatch scenarios (In-Memory, SQLite, Redis), a 10,000-job delayed-promotion scenario, an idle-worker CPU/memory check, and per-sample `redis_wire_bytes` and `cpu_seconds` metrics.
 
 ### Changed
 
 - `JobDispatcher` accepts an optional `ClockInterface` (defaults to `SystemClock`) used by `dispatchAfter()` and for clamping past timestamps.
 - `InMemoryJobStorage::createJobs()` shares a private row-building helper with `createJob()` so immediate and scheduled batch creation use one code path.
+- `RedisQueueDriver::promoteDelayedJobs()` processes due jobs in bounded 1,000-item Lua chunks so a 10,000-job backlog promotes in one roundtrip instead of exceeding Redis's per-command argument limit; limits of 100 and below behave exactly as before.
+- `JobDataHydrator::hydrate()` builds its row with a single merge loop instead of `array_filter()` plus `array_replace()`, reducing cumulative allocations ~57% per hydration (Xdebug: ~637 MB → ~275 MB over 105,000 hydrations) with neutral-to-positive benchmark throughput and no API change.
+- Re-published `quality/quality-baseline.json` to absorb the new driver methods and Stage 2 test coverage so the quality ratchet remains green.
 
 ## [1.6.0] - 2026-07-26
 

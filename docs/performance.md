@@ -1,10 +1,116 @@
-# v1.6 performance profile
+# Performance profile
+
+## v1.7 Stage 2 profile
+
+Captured 2026-08-01 against the v1.6 report below. This profile measures the
+Stage 2 performance program: `EVALSHA` with NOSCRIPT fallback (P1), the
+expanded benchmark scenarios (P2), the hot-path hydration allocation review
+(P3), and the benchmark-gated pipelined scheduled batch enqueue (P4).
+
+### Method
+
+PHP 8.4.24, SQLite 3.45.1, and an isolated Valkey 7.2.13 on Linux x86-64
+(Intel Core i5-13400). Each result is the median of five measured samples after
+one warmup:
+
+```bash
+REDIS_HOST=127.0.0.1 REDIS_PORT=6379 composer benchmark -- \
+  --jobs=1000 --iterations=5 --warmup=1 --idle-cycles=500
+```
+
+The harness now records `redis_wire_bytes` (the payload bytes of `EVAL`/`EVALSHA`
+script bodies) and `cpu_seconds` (process CPU time from `getrusage()`).
+
+### P1 — Redis Lua EVALSHA
+
+The dequeue, delayed-promotion, and stale-recovery scripts now run through
+`RedisScriptRunner`, which sends `EVALSHA` (40-byte SHA1 digest) and falls back
+to `EVAL` only when Redis reports `NOSCRIPT` (for example after a script-cache
+flush). Roundtrip counts and behavior are unchanged; only the wire payload
+changes. Script bodies are 147, 350, and 525 bytes respectively.
+
+| Scenario | EVAL wire bytes | EVALSHA wire bytes | Saved |
+|---|---:|---:|---:|
+| Dequeue/ACK, 100 jobs + empty probe (101 script calls) | 14,847 | 4,040 | 10,807 (72.8%) |
+| Retry, 100 jobs (100 script calls) | 14,700 | 4,000 | 10,700 (72.8%) |
+| Delayed promotion, 10,000 due jobs (1 call) | 350 | 40 | 310 (88.6%) |
+| Stale-recovery repair, 100 jobs (1 call) | 525 | 40 | 485 (92.4%) |
+
+localhost latency for the affected scenarios:
+
+| Scenario | Before median | After median | Change |
+|---|---:|---:|---:|
+| Redis dequeue/ACK, 100 jobs | 10.615 ms | 8.062 ms | -24.1% |
+| Redis repair unscored, 100 jobs | 2.732 ms | 2.652 ms | -2.9% |
+| Redis retry, 100 jobs | 8.938 ms | 10.049 ms | variance (pipelined ACK dominates) |
+
+The dequeue loop shows the clearest win; the retry sample is dominated by the
+two pipelined ACK/nack commands and its ranges overlap.
+
+### P2 — Expanded benchmark scenarios
+
+New scenarios with this profile (first measurement, no prior baseline):
+
+| Scenario | Median time | Throughput | Notable counters |
+|---|---:|---:|---|
+| In-memory scheduled batch dispatch, 1,000 jobs | 4.537 ms | 220,411 jobs/s | — |
+| SQLite scheduled single dispatch, 1,000 jobs | 19.994 ms | 50,014 jobs/s | 1,000 PDO statements |
+| SQLite scheduled batch dispatch, 1,000 jobs | 5.733 ms | 174,434 jobs/s | 1 PDO statement |
+| Redis scheduled single dispatch, 100 jobs | 3.273 ms | 30,549 jobs/s | 100 roundtrips |
+| Redis scheduled batch dispatch, 100 jobs | 0.764 ms | 130,963 jobs/s | 1 roundtrip |
+| Redis delayed promotion, 10,000 due jobs | 3.691 ms | 2,709,455 jobs/s | 1 roundtrip, 40 wire bytes |
+| Idle worker CPU/memory, 500 cycles | 1.015 ms | 492,376 cycles/s | 0.00101 CPU s, 5,720 B peak |
+
+The 10,000-job promotion exercises the bounded promotion Lua script. Redis's
+Lua argument limit (~8,000) made a single `unpack()` fail at this size, so the
+promote script now chunks its `LPUSH`/`ZREM` into 1,000-item slices within the
+same script. Behavior and roundtrip count are unchanged for the previous
+100-job limit.
+
+### P3 — Hot-path allocation review
+
+The claim → hydrate → execute → complete path was profiled with Xdebug. Exactly
+one `JobData::fromRaw()` hydration happens per claim (no redundant hydration),
+and JSON encode/decode happens once per persisted payload as required. The
+measured allocation hotspot was `JobDataHydrator::hydrate()`, which combined
+`array_filter()` and `array_replace()` into two intermediate arrays per call.
+
+Replacing that with a single merge loop removed the `array_filter` closure and
+filtered-array allocations. Xdebug cumulative allocation for 105,000
+hydrations fell from ~637 MB (`array_filter` 497 MB + `array_replace` 140 MB +
+hydrate) to ~275 MB, a ~57% reduction; the incremental peak in the 100,000
+hydration micro-profile fell from 2,896 to 2,200 bytes. The full-suite
+scenarios show a neutral-to-positive throughput change (worker execute/ACK
+113.090 → 111.041 ms, worker retry 191.765 → 186.234 ms) with unchanged peak
+incremental memory because hydration arrays are transient.
+
+### P4 — Pipelined scheduled batch enqueue
+
+The P2 measurement justified the optional method: scheduled batch dispatch
+with Redis cost N ZADD roundtrips, which dominates on real networks. The
+benchmark-gated `SupportsDelayedJobs::enqueueDelayedBatch()` sends one ZADD
+with all members (1 command, 1 roundtrip), and `JobDispatcher::dispatchBatch()`
+uses it. Drivers that skip the method still work through a per-job fallback.
+
+| Scenario (100 jobs) | Before | After | Change |
+|---|---:|---:|---:|
+| Redis scheduled batch dispatch | 3.117 ms, 100 roundtrips, 100 commands | 0.764 ms, 1 roundtrip, 1 command | -75.5%, -99% roundtrips |
+
+### Operation counts
+
+Unchanged from v1.6 except the intended reductions: Redis dequeue/ACK and
+retry keep the same command and roundtrip counts (script transport switched
+from `EVAL` to `EVALSHA`), scheduled batch dispatch drops from N to 1 ZADD, and
+the 10,000-job promotion stays one roundtrip. PDO statement counts are
+unchanged across dispatch, claim, execute, and retry.
+
+## v1.6 performance profile
 
 This report records the performance profile captured on 2026-07-26. The benchmark
 harness is [`benchmarks/run.php`](../benchmarks/run.php); it emits JSON with all
 samples so results can be compared without parsing display-oriented output.
 
-## Method
+### Method
 
 The comparison used PHP 8.4.23, SQLite 3.45.1, and an isolated Valkey 7.2.13
 instance on Linux x86-64 with an Intel Core i5-13400. Each result below is the
@@ -20,7 +126,7 @@ peak and retained memory use PHP's non-real allocator measurements; a negative
 retained value means the sample released memory that was live at its start.
 Timings include library work but exclude fixture and schema setup.
 
-## Before and after
+### Before and after
 
 Times are milliseconds for the complete sample. Ranges show the minimum and
 maximum of the five samples.
@@ -55,7 +161,7 @@ buffered, but retained memory was unchanged and work remains capped by the
 existing limit of 100. Unrelated Redis timing ranges overlap and are reported
 as variance, not performance changes.
 
-## Operation counts
+### Operation counts
 
 The counters remained stable except for the intended Redis roundtrip reduction:
 
@@ -73,7 +179,7 @@ The counters remained stable except for the intended Redis roundtrip reduction:
 | Redis retry, 100 jobs | — | — | 400 | 200 |
 | Redis unscored repair, 100 jobs | — | — | 202 | **202 → 4** |
 
-## PDO review
+### PDO review
 
 - SQLite claims deliberately retain `BEGIN IMMEDIATE`, select, fenced update,
   refetch, and commit. MySQL retains the equivalent short transaction with
@@ -99,7 +205,7 @@ No MySQL or PostgreSQL service timings are claimed from this workstation. Their
 SQL, transaction, pagination, and documented index shapes were reviewed; the
 real-service performance matrix remains environment-specific.
 
-## Redis and idle-worker review
+### Redis and idle-worker review
 
 Batch enqueue is already one `LPUSH`; ACK and retry already use one pipeline;
 non-blocking dequeue, delayed promotion, and stale recovery remain bounded Lua
