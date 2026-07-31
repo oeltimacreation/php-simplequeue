@@ -338,7 +338,6 @@ class RedisQueueDriverTest extends TestCase
         $this->assertScriptInvocation(
             $coldCache ? 'eval' : 'evalsha',
             !$coldCache,
-            2,
             ['test:queue:default:delayed', 'test:queue:default:pending'],
             '50'
         );
@@ -384,7 +383,6 @@ class RedisQueueDriverTest extends TestCase
         $this->assertScriptInvocation(
             'evalsha',
             true,
-            3,
             ['test:queue:default:processing_z', 'test:queue:default:processing', 'test:queue:default:pending'],
             '75'
         );
@@ -395,14 +393,12 @@ class RedisQueueDriverTest extends TestCase
      *
      * @param string $transportMethod Command used to run the script (evalsha or eval)
      * @param bool $expectSha True when the first argument must be a 40-character SHA1 digest
-     * @param int $numKeys Number of Redis keys passed to the script
      * @param list<string> $keys Expected script keys in order
      * @param string $lastArgument Expected final non-key script argument
      */
     private function assertScriptInvocation(
         string $transportMethod,
         bool $expectSha,
-        int $numKeys,
         array $keys,
         string $lastArgument
     ): void {
@@ -414,6 +410,7 @@ class RedisQueueDriverTest extends TestCase
         } else {
             $this->assertStringContainsString('ZRANGEBYSCORE', $call['args'][0]);
         }
+        $numKeys = count($keys);
         $this->assertSame($numKeys, $call['args'][1]);
         foreach ($keys as $index => $key) {
             $this->assertSame($key, $call['args'][$index + 2]);

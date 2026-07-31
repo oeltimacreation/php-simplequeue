@@ -62,13 +62,7 @@ final class QueueManager
      */
     public function enqueueDelayed(int $jobId, string $queue, int $availableAt): void
     {
-        $delayedDriver = $this->delayedDriver();
-        if ($delayedDriver !== null) {
-            $delayedDriver->enqueueDelayed($queue, $jobId, $availableAt);
-            return;
-        }
-
-        $this->driver->enqueue($queue, $jobId);
+        $this->enqueueDelayedBatch([$jobId], $queue, $availableAt);
     }
 
     /**

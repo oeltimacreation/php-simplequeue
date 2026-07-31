@@ -10,8 +10,8 @@ function redisBenchmarks(BenchmarkOptions $options): array
 {
     return [
         redisBatchBenchmark($options),
-        redisScheduledSingleBenchmark($options),
-        redisScheduledBatchBenchmark($options),
+        redisScheduledBenchmark($options, 'single'),
+        redisScheduledBenchmark($options, 'batch'),
         redisPromoteDelayedBenchmark($options),
         redisAckBenchmark($options),
         redisRetryBenchmark($options),

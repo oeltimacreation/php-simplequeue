@@ -114,56 +114,50 @@ final class QueueDriverContractTest extends TestCase
         }
     }
 
-    #[DataProvider('notificationBackends')]
-    public function testEnqueueDelayedAddsDelayedNotification(QueueBackend $backend): void
+    #[DataProvider('delayedNotificationScenarios')]
+    public function testDelayedNotificationsBecomeClaimableWhenDue(QueueBackend $backend, array $scenario): void
     {
-        $this->assertDelayedNotificationLifecycle(
-            $this->driver($backend),
-            static fn (SupportsDelayedJobs $driver) => $driver->enqueueDelayed('sched', 61, time() + 60),
-            1,
-            static fn (SupportsDelayedJobs $driver) => $driver->enqueueDelayed('sched', 62, time() - 10),
-            62
-        );
-    }
-
-    #[DataProvider('notificationBackends')]
-    public function testEnqueueDelayedBatchAddsAllDelayedNotifications(QueueBackend $backend): void
-    {
-        $this->assertDelayedNotificationLifecycle(
-            $this->driver($backend),
-            static fn (SupportsDelayedJobs $driver) => $driver->enqueueDelayedBatch('sched', [71, 72, 73], time() + 60),
-            3,
-            static fn (SupportsDelayedJobs $driver) => $driver->enqueueDelayedBatch('sched', [74], time() - 10),
-            74
-        );
-    }
-
-    /**
-     * Assert future delayed notifications stay unclaimable until they are due.
-     *
-     * @param callable(SupportsDelayedJobs): void $enqueueFuture Schedules a job in the future
-     * @param callable(SupportsDelayedJobs): void $enqueueDue Schedules a job in the past
-     */
-    private function assertDelayedNotificationLifecycle(
-        QueueDriverInterface $driver,
-        callable $enqueueFuture,
-        int $expectedFutureCount,
-        callable $enqueueDue,
-        int $expectedDueJobId
-    ): void {
+        $driver = $this->driver($backend);
         self::assertInstanceOf(SupportsDelayedJobs::class, $driver);
         self::assertInstanceOf(QueueStatsInterface::class, $driver);
         try {
-            $enqueueFuture($driver);
-            self::assertSame($expectedFutureCount, $driver->getDelayedCount('sched'));
+            $scenario['enqueue_future']($driver);
+            self::assertSame($scenario['future_count'], $driver->getDelayedCount('sched'));
             self::assertNull($driver->dequeue('sched', 0));
             self::assertSame(0, $driver->promoteDelayedJobs('sched'));
 
-            $enqueueDue($driver);
+            $scenario['enqueue_due']($driver);
             self::assertSame(1, $driver->promoteDelayedJobs('sched'));
-            self::assertSame($expectedDueJobId, $driver->dequeue('sched', 0));
+            self::assertSame($scenario['due_job_id'], $driver->dequeue('sched', 0));
         } finally {
             $this->clear($driver, 'sched');
+        }
+    }
+
+    /**
+     * @return iterable<string, array{QueueBackend, array{
+     *     enqueue_future: callable(SupportsDelayedJobs): void,
+     *     future_count: int,
+     *     enqueue_due: callable(SupportsDelayedJobs): void,
+     *     due_job_id: int
+     * }}>
+     */
+    public static function delayedNotificationScenarios(): iterable
+    {
+        foreach (self::notificationBackends() as $label => $arguments) {
+            $backend = $arguments[0];
+            yield 'single ' . $label => [$backend, [
+                'enqueue_future' => static fn (SupportsDelayedJobs $driver) => $driver->enqueueDelayed('sched', 61, time() + 60),
+                'future_count' => 1,
+                'enqueue_due' => static fn (SupportsDelayedJobs $driver) => $driver->enqueueDelayed('sched', 62, time() - 10),
+                'due_job_id' => 62,
+            ]];
+            yield 'batch ' . $label => [$backend, [
+                'enqueue_future' => static fn (SupportsDelayedJobs $driver) => $driver->enqueueDelayedBatch('sched', [71, 72, 73], time() + 60),
+                'future_count' => 3,
+                'enqueue_due' => static fn (SupportsDelayedJobs $driver) => $driver->enqueueDelayedBatch('sched', [74], time() - 10),
+                'due_job_id' => 74,
+            ]];
         }
     }
 

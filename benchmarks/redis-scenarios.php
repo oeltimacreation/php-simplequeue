@@ -39,38 +39,29 @@ function redisBatchBenchmark(BenchmarkOptions $options): array
 }
 
 /** @return array<string, mixed> */
-function redisScheduledSingleBenchmark(BenchmarkOptions $options): array
+function redisScheduledBenchmark(BenchmarkOptions $options, string $mode): array
 {
-    $scenario = BenchmarkScenario::named(['value' => 'redis.dispatch_scheduled_single']);
-    return benchmark($scenario, $options, static function () use ($options, $scenario): Closure {
+    $scenario = BenchmarkScenario::named(['value' => 'redis.dispatch_scheduled_' . $mode]);
+    return benchmark($scenario, $options, static function () use ($options, $scenario, $mode): Closure {
         $fixture = redisDispatchFixture($options, $scenario);
         $jobs = min($options->jobs, 100);
         $availableAt = time() + 3600;
         $fixture['client']->resetCounts();
-        return static function () use ($fixture, $jobs, $availableAt): array {
+        return static function () use ($fixture, $jobs, $availableAt, $mode, $options): array {
+            if ($mode === 'batch') {
+                $jobIds = $fixture['dispatcher']->dispatchBatch(
+                    'benchmark.noop',
+                    array_slice(payloads($options), 0, $jobs),
+                    availableAt: $availableAt
+                );
+                return redisMetrics($fixture, ['operations' => count($jobIds)]);
+            }
             $dispatched = 0;
             for ($index = 0; $index < $jobs; $index++) {
                 $fixture['dispatcher']->dispatch('benchmark.noop', ['index' => $index], availableAt: $availableAt);
                 $dispatched++;
             }
             return redisMetrics($fixture, ['operations' => $dispatched]);
-        };
-    });
-}
-
-/** @return array<string, mixed> */
-function redisScheduledBatchBenchmark(BenchmarkOptions $options): array
-{
-    $scenario = BenchmarkScenario::named(['value' => 'redis.dispatch_scheduled_batch']);
-    return benchmark($scenario, $options, static function () use ($options, $scenario): Closure {
-        $fixture = redisDispatchFixture($options, $scenario);
-        $jobs = min($options->jobs, 100);
-        $payloads = array_slice(payloads($options), 0, $jobs);
-        $availableAt = time() + 3600;
-        $fixture['client']->resetCounts();
-        return static function () use ($fixture, $payloads, $availableAt): array {
-            $jobIds = $fixture['dispatcher']->dispatchBatch('benchmark.noop', $payloads, availableAt: $availableAt);
-            return redisMetrics($fixture, ['operations' => count($jobIds)]);
         };
     });
 }
