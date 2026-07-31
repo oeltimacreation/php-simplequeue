@@ -117,38 +117,51 @@ final class QueueDriverContractTest extends TestCase
     #[DataProvider('notificationBackends')]
     public function testEnqueueDelayedAddsDelayedNotification(QueueBackend $backend): void
     {
-        $driver = $this->driver($backend);
-        self::assertInstanceOf(SupportsDelayedJobs::class, $driver);
-        self::assertInstanceOf(QueueStatsInterface::class, $driver);
-        try {
-            $driver->enqueueDelayed('sched', 61, time() + 60);
-            self::assertSame(1, $driver->getDelayedCount('sched'));
-            self::assertNull($driver->dequeue('sched', 0));
-            self::assertSame(0, $driver->promoteDelayedJobs('sched'));
-
-            $driver->enqueueDelayed('sched', 62, time() - 10);
-            self::assertSame(1, $driver->promoteDelayedJobs('sched'));
-            self::assertSame(62, $driver->dequeue('sched', 0));
-        } finally {
-            $this->clear($driver, 'sched');
-        }
+        $this->assertDelayedNotificationLifecycle(
+            $this->driver($backend),
+            static fn (SupportsDelayedJobs $driver) => $driver->enqueueDelayed('sched', 61, time() + 60),
+            1,
+            static fn (SupportsDelayedJobs $driver) => $driver->enqueueDelayed('sched', 62, time() - 10),
+            62
+        );
     }
 
     #[DataProvider('notificationBackends')]
     public function testEnqueueDelayedBatchAddsAllDelayedNotifications(QueueBackend $backend): void
     {
-        $driver = $this->driver($backend);
+        $this->assertDelayedNotificationLifecycle(
+            $this->driver($backend),
+            static fn (SupportsDelayedJobs $driver) => $driver->enqueueDelayedBatch('sched', [71, 72, 73], time() + 60),
+            3,
+            static fn (SupportsDelayedJobs $driver) => $driver->enqueueDelayedBatch('sched', [74], time() - 10),
+            74
+        );
+    }
+
+    /**
+     * Assert future delayed notifications stay unclaimable until they are due.
+     *
+     * @param callable(SupportsDelayedJobs): void $enqueueFuture Schedules a job in the future
+     * @param callable(SupportsDelayedJobs): void $enqueueDue Schedules a job in the past
+     */
+    private function assertDelayedNotificationLifecycle(
+        QueueDriverInterface $driver,
+        callable $enqueueFuture,
+        int $expectedFutureCount,
+        callable $enqueueDue,
+        int $expectedDueJobId
+    ): void {
         self::assertInstanceOf(SupportsDelayedJobs::class, $driver);
         self::assertInstanceOf(QueueStatsInterface::class, $driver);
         try {
-            $driver->enqueueDelayedBatch('sched', [71, 72, 73], time() + 60);
-            self::assertSame(3, $driver->getDelayedCount('sched'));
+            $enqueueFuture($driver);
+            self::assertSame($expectedFutureCount, $driver->getDelayedCount('sched'));
             self::assertNull($driver->dequeue('sched', 0));
             self::assertSame(0, $driver->promoteDelayedJobs('sched'));
 
-            $driver->enqueueDelayedBatch('sched', [74], time() - 10);
+            $enqueueDue($driver);
             self::assertSame(1, $driver->promoteDelayedJobs('sched'));
-            self::assertSame(74, $driver->dequeue('sched', 0));
+            self::assertSame($expectedDueJobId, $driver->dequeue('sched', 0));
         } finally {
             $this->clear($driver, 'sched');
         }

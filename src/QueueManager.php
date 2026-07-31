@@ -62,8 +62,9 @@ final class QueueManager
      */
     public function enqueueDelayed(int $jobId, string $queue, int $availableAt): void
     {
-        if ($this->driver instanceof SupportsDelayedJobs) {
-            $this->driver->enqueueDelayed($queue, $jobId, $availableAt);
+        $delayedDriver = $this->delayedDriver();
+        if ($delayedDriver !== null) {
+            $delayedDriver->enqueueDelayed($queue, $jobId, $availableAt);
             return;
         }
 
@@ -83,14 +84,23 @@ final class QueueManager
      */
     public function enqueueDelayedBatch(array $jobIds, string $queue, int $availableAt): void
     {
-        if ($this->driver instanceof SupportsDelayedJobs) {
-            $this->driver->enqueueDelayedBatch($queue, $jobIds, $availableAt);
+        $delayedDriver = $this->delayedDriver();
+        if ($delayedDriver !== null) {
+            $delayedDriver->enqueueDelayedBatch($queue, $jobIds, $availableAt);
             return;
         }
 
         foreach ($jobIds as $jobId) {
-            $this->driver->enqueue($queue, $jobId);
+            $this->enqueue($jobId, $queue);
         }
+    }
+
+    /**
+     * The active driver when it can schedule delayed notifications natively.
+     */
+    private function delayedDriver(): ?SupportsDelayedJobs
+    {
+        return $this->driver instanceof SupportsDelayedJobs ? $this->driver : null;
     }
 
     /**
