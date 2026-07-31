@@ -337,6 +337,31 @@ class RedisQueueDriverTest extends TestCase
         $this->assertEquals('test:queue:default:pending', $call['args'][3]);
         $this->assertEquals('50', $call['args'][5]);
     }
+    public function testEnqueueDelayedBatchSendsSingleZadd(): void
+    {
+        $this->driver->enqueueDelayedBatch('default', [1, 2, 3], 1_700_000_100);
+
+        $zaddCalls = array_filter(
+            $this->redis->calls,
+            fn($c) => $c['method'] === 'zadd'
+        );
+        $this->assertCount(1, $zaddCalls);
+
+        $call = reset($zaddCalls);
+        $this->assertEquals('test:queue:default:delayed', $call['args'][0]);
+        $this->assertEquals([1 => 1_700_000_100, 2 => 1_700_000_100, 3 => 1_700_000_100], $call['args'][1]);
+    }
+
+    public function testEnqueueDelayedBatchEmptyDoesNothing(): void
+    {
+        $this->driver->enqueueDelayedBatch('default', [], 1_700_000_100);
+
+        $zaddCalls = array_filter(
+            $this->redis->calls,
+            fn($c) => $c['method'] === 'zadd'
+        );
+        $this->assertCount(0, $zaddCalls);
+    }
 
     public function testRecoverStaleProcessingUsesCachedLuaScript(): void
     {

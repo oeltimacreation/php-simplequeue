@@ -134,6 +134,26 @@ final class QueueDriverContractTest extends TestCase
         }
     }
 
+    #[DataProvider('notificationBackends')]
+    public function testEnqueueDelayedBatchAddsAllDelayedNotifications(QueueBackend $backend): void
+    {
+        $driver = $this->driver($backend);
+        self::assertInstanceOf(SupportsDelayedJobs::class, $driver);
+        self::assertInstanceOf(QueueStatsInterface::class, $driver);
+        try {
+            $driver->enqueueDelayedBatch('sched', [71, 72, 73], time() + 60);
+            self::assertSame(3, $driver->getDelayedCount('sched'));
+            self::assertNull($driver->dequeue('sched', 0));
+            self::assertSame(0, $driver->promoteDelayedJobs('sched'));
+
+            $driver->enqueueDelayedBatch('sched', [74], time() - 10);
+            self::assertSame(1, $driver->promoteDelayedJobs('sched'));
+            self::assertSame(74, $driver->dequeue('sched', 0));
+        } finally {
+            $this->clear($driver, 'sched');
+        }
+    }
+
     #[DataProvider('jobIdBackends')]
     public function testInvalidJobIdMessageIsPreserved(QueueBackend $backend): void
     {

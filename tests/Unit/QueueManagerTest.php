@@ -126,4 +126,26 @@ class QueueManagerTest extends TestCase
         $this->expectExceptionMessage('jobId must be a positive integer');
         $manager->enqueueDelayed(0, 'default', 1_700_000_100);
     }
+
+    public function testEnqueueDelayedBatchDelegatesToDelayedSupportingDriver(): void
+    {
+        $driver = new InMemoryQueueDriver();
+        $manager = new QueueManager($driver);
+
+        $manager->enqueueDelayedBatch([7, 8], 'default', 1_700_000_100);
+
+        $this->assertSame(0, $driver->getPendingCount('default'));
+        $this->assertSame(2, $driver->getDelayedCount('default'));
+        $this->assertSame(1_700_000_100, $driver->getDelayed('default')[7]);
+        $this->assertSame(1_700_000_100, $driver->getDelayed('default')[8]);
+    }
+
+    public function testEnqueueDelayedBatchFallsBackForStorageGatedDriver(): void
+    {
+        $manager = QueueManager::database(new InMemoryJobStorage());
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('jobId must be a positive integer');
+        $manager->enqueueDelayedBatch([0], 'default', 1_700_000_100);
+    }
 }

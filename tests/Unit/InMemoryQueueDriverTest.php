@@ -188,6 +188,17 @@ class InMemoryQueueDriverTest extends TestCase
         $this->assertEmpty($delayed);
     }
 
+    public function testEnqueueDelayedBatchAddsAllDelayedNotifications(): void
+    {
+        $this->driver->enqueueDelayedBatch('default', [1, 2, 3], 1_700_000_100);
+
+        $delayed = $this->driver->getDelayed('default');
+        $this->assertSame(1_700_000_100, $delayed[1]);
+        $this->assertSame(1_700_000_100, $delayed[2]);
+        $this->assertSame(1_700_000_100, $delayed[3]);
+        $this->assertSame(0, $this->driver->getPendingCount('default'));
+    }
+
     public function testPromoteDelayedJobsMovesToPending(): void
     {
         $this->driver->enqueue('default', 1);

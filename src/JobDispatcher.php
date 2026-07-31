@@ -198,9 +198,7 @@ final class JobDispatcher
         if ($resolvedAt === null) {
             $this->notifyBatch($queue, $jobIds);
         } else {
-            foreach ($jobIds as $jobId) {
-                $this->queueManager->enqueueDelayed($jobId, $queue, $resolvedAt);
-            }
+            $this->queueManager->enqueueDelayedBatch($jobIds, $queue, $resolvedAt);
         }
 
         return $jobIds;

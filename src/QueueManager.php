@@ -71,6 +71,29 @@ final class QueueManager
     }
 
     /**
+     * Enqueue multiple jobs with a delayed notification in one roundtrip.
+     *
+     * Delayed-capable drivers batch the notifications; storage-gated drivers
+     * fall back to one plain enqueue per job. See {@see enqueueDelayed()} for
+     * the third-party driver guidance.
+     *
+     * @param int[] $jobIds Job identifiers
+     * @param string $queue Queue name
+     * @param int $availableAt Unix timestamp when the jobs become available
+     */
+    public function enqueueDelayedBatch(array $jobIds, string $queue, int $availableAt): void
+    {
+        if ($this->driver instanceof SupportsDelayedJobs) {
+            $this->driver->enqueueDelayedBatch($queue, $jobIds, $availableAt);
+            return;
+        }
+
+        foreach ($jobIds as $jobId) {
+            $this->driver->enqueue($queue, $jobId);
+        }
+    }
+
+    /**
      * Check if the queue driver is available.
      */
     public function isAvailable(): bool

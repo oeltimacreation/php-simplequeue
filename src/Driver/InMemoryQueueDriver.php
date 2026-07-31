@@ -170,6 +170,27 @@ final class InMemoryQueueDriver implements
     }
 
     /**
+     * Add multiple jobs to the delayed notification structure in one batch.
+     *
+     * @param string $queue Queue name
+     * @param int[] $jobIds Job identifiers
+     * @param int $availableAt Unix timestamp when all jobs become available
+     */
+    public function enqueueDelayedBatch(string $queue, array $jobIds, int $availableAt): void
+    {
+        if ($jobIds === []) {
+            return;
+        }
+        if (!isset($this->delayed[$queue])) {
+            $this->delayed[$queue] = [];
+        }
+        foreach ($jobIds as $jobId) {
+            $this->validateJobId($jobId);
+            $this->delayed[$queue][$jobId] = $availableAt;
+        }
+    }
+
+    /**
      * Promote delayed jobs that are now due to the pending queue.
      *
      * @param string $queue Queue name

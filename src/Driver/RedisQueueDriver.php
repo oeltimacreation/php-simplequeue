@@ -243,6 +243,26 @@ LUA;
     }
 
     /**
+     * Add multiple jobs to the delayed notification structure in one ZADD.
+     *
+     * @param string $queue Queue name
+     * @param int[] $jobIds Job identifiers
+     * @param int $availableAt Unix timestamp when all jobs become available
+     */
+    public function enqueueDelayedBatch(string $queue, array $jobIds, int $availableAt): void
+    {
+        if ($jobIds === []) {
+            return;
+        }
+        $members = [];
+        foreach ($jobIds as $jobId) {
+            $this->validateJobId($jobId);
+            $members[$jobId] = $availableAt;
+        }
+        $this->redis->zadd($this->delayedKey($queue), $members);
+    }
+
+    /**
      * Promote delayed jobs that are now due to the pending queue.
      *
      * @param string $queue Queue name
