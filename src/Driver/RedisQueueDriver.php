@@ -55,9 +55,11 @@ local now = tonumber(ARGV[1])
 local limit = tonumber(ARGV[2])
 
 local dueJobs = redis.call('ZRANGEBYSCORE', delayedKey, '-inf', now, 'LIMIT', 0, limit)
-if #dueJobs > 0 then
-    redis.call('LPUSH', pendingKey, unpack(dueJobs))
-    redis.call('ZREM', delayedKey, unpack(dueJobs))
+local chunkSize = 1000
+for i = 1, #dueJobs, chunkSize do
+    local j = math.min(i + chunkSize - 1, #dueJobs)
+    redis.call('LPUSH', pendingKey, unpack(dueJobs, i, j))
+    redis.call('ZREM', delayedKey, unpack(dueJobs, i, j))
 end
 return #dueJobs
 LUA;
