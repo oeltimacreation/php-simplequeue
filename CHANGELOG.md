@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added scheduled initial dispatch: `dispatchAt()`, `dispatchAfter()`, and an optional `$availableAt` parameter on `dispatch()` and `dispatchBatch()`, working across Redis, Database, and In-Memory drivers. A scheduled job is stored with a future `available_at`, receives a delayed notification on delayed-capable drivers, and is claimed only when due; past or now timestamps take the existing immediate path unchanged.
+- Added `QueueManager::enqueueDelayed()` which delegates to `SupportsDelayedJobs` drivers and falls back to a plain enqueue for storage-gated drivers such as Database.
+- Added `SupportsDelayedJobs::enqueueDelayed()` implemented by the Redis (`ZADD <queue>:delayed`) and In-Memory drivers.
+- Added `availableAt` key handling to `createJobs()` in `PdoJobStorage` and `InMemoryJobStorage`, accepting a Unix timestamp or `\DateTimeInterface` and normalized to UTC through a shared `JobStorageRules` helper; invalid and non-positive values throw `InvalidArgumentException`.
+- Added contract coverage for scheduled batch creation and delayed notifications, unit coverage for dispatcher scheduling, clamping, validation, and cancellation of scheduled jobs, and `FrozenClock` integration coverage across all three drivers verifying a scheduled job is not claimable before its `available_at` and becomes claimable at or after it.
+- Added a reconciliation crash-window test proving a job created with a future `available_at` but no notification is restored into the delayed structure (not pending) by `QueueReconciler`.
+
+### Changed
+
+- `JobDispatcher` accepts an optional `ClockInterface` (defaults to `SystemClock`) used by `dispatchAfter()` and for clamping past timestamps.
+- `InMemoryJobStorage::createJobs()` shares a private row-building helper with `createJob()` so immediate and scheduled batch creation use one code path.
+
 ## [1.6.0] - 2026-07-26
 
 ### Added

@@ -137,6 +137,53 @@ final class JobStorageContractTest extends TestCase
         }
     }
 
+    #[DataProvider('backends')]
+    public function testCreateJobsHonorsAvailableAtKey(string $backend): void
+    {
+        $clock = new FrozenClock();
+        $storage = $this->storage($backend, $clock);
+        $timestamp = $clock->timestamp() + 120;
+
+        $ids = $storage->createJobs([
+            ['type' => 'mail.send', 'payload' => [], 'queue' => 'emails', 'availableAt' => $timestamp],
+            ['type' => 'mail.send', 'payload' => [], 'queue' => 'emails', 'availableAt' => new \DateTimeImmutable('@' . ($timestamp + 60))],
+        ]);
+        $ids[] = $storage->createJobs([['type' => 'mail.send', 'payload' => []]])[0];
+
+        $scheduled = $storage->find($ids[0]);
+        $scheduledLater = $storage->find($ids[1]);
+        $immediate = $storage->find($ids[2]);
+        self::assertNotNull($scheduled);
+        self::assertNotNull($scheduledLater);
+        self::assertNotNull($immediate);
+        self::assertSame('2023-11-14 22:15:20', $scheduled->availableAt);
+        self::assertSame('2023-11-14 22:16:20', $scheduledLater->availableAt);
+        self::assertSame($clock->now(), $immediate->availableAt);
+    }
+
+    #[DataProvider('backends')]
+    public function testCreateJobsRejectsInvalidAvailableAtValues(string $backend): void
+    {
+        $storage = $this->storage($backend, new FrozenClock());
+
+        try {
+            $storage->createJobs([['type' => 'mail.send', 'payload' => [], 'availableAt' => 0]]);
+            self::fail('Non-positive available-at must be rejected');
+        } catch (\InvalidArgumentException $exception) {
+            self::assertSame('Available-at timestamp must be a positive Unix timestamp', $exception->getMessage());
+        }
+
+        try {
+            $storage->createJobs([['type' => 'mail.send', 'payload' => [], 'availableAt' => 'tomorrow']]);
+            self::fail('Invalid available-at type must be rejected');
+        } catch (\InvalidArgumentException $exception) {
+            self::assertSame(
+                'Available-at must be an integer Unix timestamp or a DateTimeInterface',
+                $exception->getMessage()
+            );
+        }
+    }
+
     private function storage(string $backend, FrozenClock $clock): JobStorageInterface
     {
         if ($backend === 'memory') {

@@ -152,6 +152,10 @@ class WorkerTest extends TestCase
                 $this->promoteCalled = true;
                 return 0;
             }
+
+            public function enqueueDelayed(string $queue, int $jobId, int $availableAt): void
+            {
+            }
         };
 
         $worker = $this->createWorkerWithDriver($driverWithPromote);

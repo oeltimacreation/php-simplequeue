@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue;
 
+use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\JobData;
 use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
@@ -20,10 +21,14 @@ use Oeltima\SimpleQueue\Internal\PositiveJobId;
  */
 final class JobDispatcher
 {
+    private readonly ClockInterface $clock;
+
     public function __construct(
         private readonly JobStorageInterface $storage,
-        private readonly QueueManager $queueManager
+        private readonly QueueManager $queueManager,
+        ?ClockInterface $clock = null
     ) {
+        $this->clock = $clock ?? new SystemClock();
     }
 
     /**
@@ -34,6 +39,7 @@ final class JobDispatcher
      * @param string $queue Queue name (default: 'default')
      * @param int $maxAttempts Maximum retry attempts (default: 3)
      * @param string|null $requestId Optional request correlation ID
+     * @param int|\DateTimeInterface|null $availableAt Optional first-availability timestamp
      * @return int The created job ID
      */
     public function dispatch(
@@ -41,13 +47,89 @@ final class JobDispatcher
         array $payload,
         string $queue = 'default',
         int $maxAttempts = 3,
-        ?string $requestId = null
+        ?string $requestId = null,
+        int|\DateTimeInterface|null $availableAt = null
     ): int {
         $this->validateDispatchArguments($type, $queue, $maxAttempts, $requestId);
-        $jobId = $this->storage->createJob($type, $payload, $queue, $maxAttempts, $requestId);
-        $this->queueManager->enqueue($jobId, $queue);
+        $resolvedAt = $this->resolveAvailableAt($availableAt);
 
-        return $jobId;
+        if ($resolvedAt === null) {
+            $jobId = $this->storage->createJob($type, $payload, $queue, $maxAttempts, $requestId);
+            $this->queueManager->enqueue($jobId, $queue);
+
+            return $jobId;
+        }
+
+        $jobIds = $this->storage->createJobs([[
+            'type' => $type,
+            'payload' => $payload,
+            'queue' => $queue,
+            'maxAttempts' => $maxAttempts,
+            'requestId' => $requestId,
+            'availableAt' => $resolvedAt,
+        ]]);
+        $this->queueManager->enqueueDelayed($jobIds[0], $queue, $resolvedAt);
+
+        return $jobIds[0];
+    }
+
+    /**
+     * Schedule a job at an absolute timestamp.
+     *
+     * Values in the past or equal to now are dispatched immediately.
+     *
+     * @param int|\DateTimeInterface $timestamp Unix timestamp or date/time object
+     * @param string $type Job type identifier
+     * @param array<string, mixed> $payload Job payload data
+     * @param string $queue Queue name (default: 'default')
+     * @param int $maxAttempts Maximum retry attempts (default: 3)
+     * @param string|null $requestId Optional request correlation ID
+     * @return int The created job ID
+     */
+    public function dispatchAt(
+        int|\DateTimeInterface $timestamp,
+        string $type,
+        array $payload,
+        string $queue = 'default',
+        int $maxAttempts = 3,
+        ?string $requestId = null
+    ): int {
+        return $this->dispatch($type, $payload, $queue, $maxAttempts, $requestId, $timestamp);
+    }
+
+    /**
+     * Schedule a job after a relative delay.
+     *
+     * A zero delay dispatches immediately.
+     *
+     * @param int $delaySeconds Seconds to wait before the job is available
+     * @param string $type Job type identifier
+     * @param array<string, mixed> $payload Job payload data
+     * @param string $queue Queue name (default: 'default')
+     * @param int $maxAttempts Maximum retry attempts (default: 3)
+     * @param string|null $requestId Optional request correlation ID
+     * @return int The created job ID
+     */
+    public function dispatchAfter(
+        int $delaySeconds,
+        string $type,
+        array $payload,
+        string $queue = 'default',
+        int $maxAttempts = 3,
+        ?string $requestId = null
+    ): int {
+        if ($delaySeconds < 0) {
+            throw new \InvalidArgumentException('Dispatch delay must not be negative');
+        }
+
+        return $this->dispatchAt(
+            $this->clock->timestamp() + $delaySeconds,
+            $type,
+            $payload,
+            $queue,
+            $maxAttempts,
+            $requestId
+        );
     }
 
     /**
@@ -96,33 +178,28 @@ final class JobDispatcher
      * @param array<array<string, mixed>> $payloads Array of job payloads
      * @param string $queue Queue name
      * @param int $maxAttempts Maximum retry attempts
+     * @param int|\DateTimeInterface|null $availableAt Optional first-availability timestamp
      * @return int[] Array of created job IDs
      */
     public function dispatchBatch(
         string $type,
         array $payloads,
         string $queue = 'default',
-        int $maxAttempts = 3
+        int $maxAttempts = 3,
+        int|\DateTimeInterface|null $availableAt = null
     ): array {
         $this->validateDispatchArguments($type, $queue, $maxAttempts, null);
-        $jobs = [];
-        foreach ($payloads as $payload) {
-            $jobs[] = [
-                'type' => $type,
-                'payload' => $payload,
-                'queue' => $queue,
-                'maxAttempts' => $maxAttempts,
-            ];
-        }
+        $resolvedAt = $this->resolveAvailableAt($availableAt);
 
-        $jobIds = $this->storage->createJobs($jobs);
+        $jobIds = $this->storage->createJobs(
+            $this->batchDefinitions($type, $payloads, $queue, $maxAttempts, $resolvedAt)
+        );
 
-        $driver = $this->queueManager->driver();
-        if ($driver instanceof SupportsBatchEnqueue) {
-            $driver->enqueueBatch($queue, $jobIds);
+        if ($resolvedAt === null) {
+            $this->notifyBatch($queue, $jobIds);
         } else {
             foreach ($jobIds as $jobId) {
-                $this->queueManager->enqueue($jobId, $queue);
+                $this->queueManager->enqueueDelayed($jobId, $queue, $resolvedAt);
             }
         }
 
@@ -190,6 +267,82 @@ final class JobDispatcher
         }
         if ($requestId !== null && trim($requestId) === '') {
             throw new \InvalidArgumentException('Request ID must not be empty when provided');
+        }
+    }
+
+    /**
+     * Resolve and clamp a dispatch availability timestamp.
+     *
+     * Past and present values follow the immediate dispatch path. Non-positive
+     * timestamps are rejected.
+     *
+     * @param int|\DateTimeInterface|null $availableAt Raw availability value
+     * @return int|null Unix timestamp when the job becomes available, or null for immediate dispatch
+     */
+    private function resolveAvailableAt(int|\DateTimeInterface|null $availableAt): ?int
+    {
+        if ($availableAt === null) {
+            return null;
+        }
+        $timestamp = $availableAt instanceof \DateTimeInterface
+            ? $availableAt->getTimestamp()
+            : $availableAt;
+        if ($timestamp <= 0) {
+            throw new \InvalidArgumentException('Available-at timestamp must be a positive Unix timestamp');
+        }
+
+        return $timestamp <= $this->clock->timestamp() ? null : $timestamp;
+    }
+
+    /**
+     * Build createJobs() definitions for a batch dispatch.
+     *
+     * @param string $type Job type identifier
+     * @param array<array<string, mixed>> $payloads Array of job payloads
+     * @param string $queue Queue name
+     * @param int $maxAttempts Maximum retry attempts
+     * @param int|null $resolvedAt Resolved availability timestamp or null for immediate dispatch
+     * @return array<int, array<string, mixed>> Job definitions
+     */
+    private function batchDefinitions(
+        string $type,
+        array $payloads,
+        string $queue,
+        int $maxAttempts,
+        ?int $resolvedAt
+    ): array {
+        $definitions = [];
+        foreach ($payloads as $payload) {
+            $definition = [
+                'type' => $type,
+                'payload' => $payload,
+                'queue' => $queue,
+                'maxAttempts' => $maxAttempts,
+            ];
+            if ($resolvedAt !== null) {
+                $definition['availableAt'] = $resolvedAt;
+            }
+            $definitions[] = $definition;
+        }
+
+        return $definitions;
+    }
+
+    /**
+     * Notify the queue driver for an immediate batch dispatch.
+     *
+     * @param string $queue Queue name
+     * @param int[] $jobIds Created job IDs
+     */
+    private function notifyBatch(string $queue, array $jobIds): void
+    {
+        $driver = $this->queueManager->driver();
+        if ($driver instanceof SupportsBatchEnqueue) {
+            $driver->enqueueBatch($queue, $jobIds);
+            return;
+        }
+        foreach ($jobIds as $jobId) {
+            $this->queueManager->enqueue($jobId, $queue);
         }
     }
 }

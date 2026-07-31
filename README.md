@@ -3,8 +3,9 @@
 A small, framework-agnostic PHP queue for durable background jobs. Job data is
 stored in a database; Redis or database polling delivers work to workers.
 
-It supports retries with backoff, delayed retries, progress reporting,
-lease-based job ownership, graceful shutdown, and bounded queue repair.
+It supports retries with backoff, delayed retries, scheduled first dispatch,
+progress reporting, lease-based job ownership, graceful shutdown, and bounded
+queue repair.
 
 ## Requirements
 
@@ -67,6 +68,26 @@ $jobId = $dispatcher->dispatch('email.welcome', ['email' => 'ada@example.test'])
 
 echo $dispatcher->getStatus($jobId)?->status->value; // completed
 ```
+
+## Scheduled dispatch
+
+Delay a job's first availability with `dispatchAfter()`, `dispatchAt()`, or the
+optional `$availableAt` parameter on `dispatch()` / `dispatchBatch()`:
+
+```php
+$jobId = $dispatcher->dispatchAfter(300, 'email.welcome', ['email' => 'ada@example.test']);
+
+$jobId = $dispatcher->dispatch(
+    'email.welcome',
+    ['email' => 'ada@example.test'],
+    availableAt: strtotime('tomorrow 09:00'),
+);
+```
+
+Past or present timestamps dispatch immediately; non-positive timestamps and
+negative delays are rejected. With Redis/In-Memory the notification is delayed
+and promoted when due; with database polling claims already gate on the stored
+`available_at`.
 
 ## Documentation
 

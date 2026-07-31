@@ -7,6 +7,7 @@ namespace Oeltima\SimpleQueue\Tests\Unit;
 require_once __DIR__ . '/RedisQueueDriverTest.php';
 
 use Oeltima\SimpleQueue\Driver\DatabaseQueueDriver;
+use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
 use Oeltima\SimpleQueue\Driver\RedisQueueDriver;
 use Oeltima\SimpleQueue\Exception\DriverNotAvailableException;
 use Oeltima\SimpleQueue\QueueManager;
@@ -103,5 +104,26 @@ class QueueManagerTest extends TestCase
 
         $ref = new \ReflectionProperty(DatabaseQueueDriver::class, 'pollIntervalMs');
         $this->assertEquals(500, $ref->getValue($driver));
+    }
+
+    public function testEnqueueDelayedDelegatesToDelayedSupportingDriver(): void
+    {
+        $driver = new InMemoryQueueDriver();
+        $manager = new QueueManager($driver);
+
+        $manager->enqueueDelayed(7, 'default', 1_700_000_100);
+
+        $this->assertSame(0, $driver->getPendingCount('default'));
+        $this->assertSame(1, $driver->getDelayedCount('default'));
+        $this->assertSame(1_700_000_100, $driver->getDelayed('default')[7]);
+    }
+
+    public function testEnqueueDelayedFallsBackForStorageGatedDriver(): void
+    {
+        $manager = QueueManager::database(new InMemoryJobStorage());
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('jobId must be a positive integer');
+        $manager->enqueueDelayed(0, 'default', 1_700_000_100);
     }
 }

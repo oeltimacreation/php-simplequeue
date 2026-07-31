@@ -9,6 +9,7 @@ use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
 use Oeltima\SimpleQueue\JobDispatcher;
 use Oeltima\SimpleQueue\QueueManager;
 use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
+use Oeltima\SimpleQueue\Tests\Support\FrozenClock;
 use PHPUnit\Framework\TestCase;
 
 class JobDispatcherTest extends TestCase
@@ -247,5 +248,211 @@ class JobDispatcherTest extends TestCase
     {
         $this->expectException(\InvalidArgumentException::class);
         $this->dispatcher->dispatch('', [], 'default', 0);
+    }
+    public function testDispatchWithFutureAvailableAtUsesDelayedNotification(): void
+    {
+        $clock = new FrozenClock();
+        [$storage, $driver, $dispatcher] = $this->scheduledServices($clock);
+
+        $jobId = $dispatcher->dispatch(
+            'email.send',
+            ['to' => 'a@example.com'],
+            'default',
+            3,
+            null,
+            $clock->timestamp() + 60
+        );
+
+        $job = $storage->find($jobId);
+        $this->assertNotNull($job);
+        $this->assertSame('2023-11-14 22:14:20', $job->availableAt);
+        $this->assertSame(0, $driver->getPendingCount('default'));
+        $this->assertSame(1, $driver->getDelayedCount('default'));
+        $this->assertNull($driver->dequeue('default', 0));
+        $this->assertSame(0, $driver->promoteDelayedJobs('default'));
+
+        $clock->advance(60);
+        $this->assertSame(1, $driver->promoteDelayedJobs('default'));
+        $this->assertSame($jobId, $driver->dequeue('default', 0));
+    }
+
+    public function testDispatchWithFutureAvailableAtKeepsRequestId(): void
+    {
+        $clock = new FrozenClock();
+        [$storage, $driver, $dispatcher] = $this->scheduledServices($clock);
+
+        $jobId = $dispatcher->dispatch(
+            'email.send',
+            [],
+            'default',
+            3,
+            'req-scheduled',
+            $clock->timestamp() + 60
+        );
+
+        $this->assertSame('req-scheduled', $storage->find($jobId)?->requestId);
+        $this->assertSame(1, $driver->getDelayedCount('default'));
+    }
+
+    public function testDispatchAtSchedulesJobAtAbsoluteTimestamp(): void
+    {
+        $clock = new FrozenClock();
+        [$storage, $driver, $dispatcher] = $this->scheduledServices($clock);
+
+        $jobId = $dispatcher->dispatchAt($clock->timestamp() + 30, 'email.send', []);
+
+        $this->assertSame('2023-11-14 22:13:50', $storage->find($jobId)?->availableAt);
+        $this->assertSame(1, $driver->getDelayedCount('default'));
+    }
+
+    public function testDispatchAtAcceptsDateTimeInterface(): void
+    {
+        $clock = new FrozenClock();
+        [$storage, $driver, $dispatcher] = $this->scheduledServices($clock);
+
+        $jobId = $dispatcher->dispatchAt(new \DateTimeImmutable('@' . ($clock->timestamp() + 90)), 'email.send', []);
+
+        $this->assertSame('2023-11-14 22:14:50', $storage->find($jobId)?->availableAt);
+        $this->assertSame(1, $driver->getDelayedCount('default'));
+    }
+
+    public function testDispatchAtClampsPastTimestampToImmediatePath(): void
+    {
+        $clock = new FrozenClock();
+        [$storage, $driver, $dispatcher] = $this->scheduledServices($clock);
+
+        $jobId = $dispatcher->dispatchAt($clock->timestamp() - 10, 'email.send', []);
+
+        $this->assertSame(1, $driver->getPendingCount('default'));
+        $this->assertSame(0, $driver->getDelayedCount('default'));
+        $this->assertSame($clock->now(), $storage->find($jobId)?->availableAt);
+    }
+
+    public function testDispatchAtClampsNowToImmediatePath(): void
+    {
+        $clock = new FrozenClock();
+        [, $driver, $dispatcher] = $this->scheduledServices($clock);
+
+        $dispatcher->dispatchAt($clock->timestamp(), 'email.send', []);
+
+        $this->assertSame(1, $driver->getPendingCount('default'));
+        $this->assertSame(0, $driver->getDelayedCount('default'));
+    }
+
+    public function testDispatchAtRejectsNonPositiveTimestamp(): void
+    {
+        $clock = new FrozenClock();
+        [, , $dispatcher] = $this->scheduledServices($clock);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $dispatcher->dispatchAt(0, 'email.send', []);
+    }
+
+    public function testDispatchAfterSchedulesDelayUsingInjectedClock(): void
+    {
+        $clock = new FrozenClock();
+        [$storage, $driver, $dispatcher] = $this->scheduledServices($clock);
+
+        $jobId = $dispatcher->dispatchAfter(60, 'email.send', []);
+
+        $this->assertSame('2023-11-14 22:14:20', $storage->find($jobId)?->availableAt);
+        $this->assertSame(1, $driver->getDelayedCount('default'));
+    }
+
+
+    public function testDispatchAfterZeroIsImmediate(): void
+    {
+        $clock = new FrozenClock();
+        [, $driver, $dispatcher] = $this->scheduledServices($clock);
+
+        $dispatcher->dispatchAfter(0, 'email.send', []);
+
+        $this->assertSame(1, $driver->getPendingCount('default'));
+        $this->assertSame(0, $driver->getDelayedCount('default'));
+    }
+
+    public function testDispatchAfterRejectsNegativeDelay(): void
+    {
+        $clock = new FrozenClock();
+        [, , $dispatcher] = $this->scheduledServices($clock);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $dispatcher->dispatchAfter(-1, 'email.send', []);
+    }
+
+    public function testDispatchRejectsNonPositiveAvailableAt(): void
+    {
+        $clock = new FrozenClock();
+        [, , $dispatcher] = $this->scheduledServices($clock);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $dispatcher->dispatch('email.send', [], 'default', 3, null, 0);
+    }
+
+    public function testDispatchBatchWithFutureAvailableAtSchedulesAllDelayed(): void
+    {
+        $clock = new FrozenClock();
+        [$storage, $driver, $dispatcher] = $this->scheduledServices($clock);
+
+        $jobIds = $dispatcher->dispatchBatch(
+            'email.send',
+            [['n' => 1], ['n' => 2]],
+            'default',
+            3,
+            $clock->timestamp() + 60
+        );
+
+        $this->assertCount(2, $jobIds);
+        $this->assertSame(2, $driver->getDelayedCount('default'));
+        $this->assertSame(0, $driver->getPendingCount('default'));
+        foreach ($jobIds as $jobId) {
+            $this->assertSame('2023-11-14 22:14:20', $storage->find($jobId)?->availableAt);
+        }
+    }
+
+    public function testDispatchBatchWithPastAvailableAtIsImmediate(): void
+    {
+        $clock = new FrozenClock();
+        [, $driver, $dispatcher] = $this->scheduledServices($clock);
+
+        $jobIds = $dispatcher->dispatchBatch(
+            'email.send',
+            [['n' => 1], ['n' => 2]],
+            'default',
+            3,
+            $clock->timestamp() - 5
+        );
+
+        $this->assertCount(2, $jobIds);
+        $this->assertSame(2, $driver->getPendingCount('default'));
+        $this->assertSame(0, $driver->getDelayedCount('default'));
+    }
+
+    public function testCancelScheduledJobRemovesDelayedNotification(): void
+    {
+        $clock = new FrozenClock();
+        [$storage, $driver, $dispatcher] = $this->scheduledServices($clock);
+
+        $jobId = $dispatcher->dispatch('email.send', [], 'default', 3, null, $clock->timestamp() + 60);
+        $this->assertSame(1, $driver->getDelayedCount('default'));
+
+        $this->assertTrue($dispatcher->cancelJob($jobId));
+
+        $this->assertSame(0, $driver->getDelayedCount('default'));
+        $this->assertSame(JobStatus::Cancelled, $storage->find($jobId)?->status);
+    }
+
+    /**
+     * Build scheduled-dispatch services that share one frozen clock.
+     *
+     * @return array{InMemoryJobStorage, InMemoryQueueDriver, JobDispatcher}
+     */
+    private function scheduledServices(FrozenClock $clock): array
+    {
+        $storage = new InMemoryJobStorage($clock);
+        $driver = new InMemoryQueueDriver($clock);
+        $dispatcher = new JobDispatcher($storage, new QueueManager($driver), $clock);
+
+        return [$storage, $driver, $dispatcher];
     }
 }
