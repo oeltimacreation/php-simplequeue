@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue;
 
+use Oeltima\SimpleQueue\Contract\DelayedBatch;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
@@ -62,7 +63,7 @@ final class QueueManager
      */
     public function enqueueDelayed(int $jobId, string $queue, int $availableAt): void
     {
-        $this->enqueueDelayedBatch([$jobId], $queue, $availableAt);
+        $this->enqueueDelayedBatch(new DelayedBatch([$jobId], $queue, $availableAt));
     }
 
     /**
@@ -72,20 +73,18 @@ final class QueueManager
      * fall back to one plain enqueue per job. See {@see enqueueDelayed()} for
      * the third-party driver guidance.
      *
-     * @param int[] $jobIds Job identifiers
-     * @param string $queue Queue name
-     * @param int $availableAt Unix timestamp when the jobs become available
+     * @param DelayedBatch $batch Jobs, queue, and availability time to notify
      */
-    public function enqueueDelayedBatch(array $jobIds, string $queue, int $availableAt): void
+    public function enqueueDelayedBatch(DelayedBatch $batch): void
     {
         $delayedDriver = $this->delayedDriver();
         if ($delayedDriver !== null) {
-            $delayedDriver->enqueueDelayedBatch($queue, $jobIds, $availableAt);
+            $delayedDriver->enqueueDelayedBatch($batch->queue, $batch->jobIds, $batch->availableAt);
             return;
         }
 
-        foreach ($jobIds as $jobId) {
-            $this->enqueue($jobId, $queue);
+        foreach ($batch->jobIds as $jobId) {
+            $this->enqueue($jobId, $batch->queue);
         }
     }
 

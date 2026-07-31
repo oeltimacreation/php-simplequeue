@@ -6,6 +6,7 @@ namespace Oeltima\SimpleQueue\Tests\Unit;
 
 require_once __DIR__ . '/RedisQueueDriverTest.php';
 
+use Oeltima\SimpleQueue\Contract\DelayedBatch;
 use Oeltima\SimpleQueue\Driver\DatabaseQueueDriver;
 use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
 use Oeltima\SimpleQueue\Driver\RedisQueueDriver;
@@ -133,7 +134,7 @@ class QueueManagerTest extends TestCase
         $driver = new InMemoryQueueDriver();
         $manager = new QueueManager($driver);
 
-        $manager->enqueueDelayedBatch([7, 8], 'default', 1_700_000_100);
+        $manager->enqueueDelayedBatch(new DelayedBatch([7, 8], 'default', 1_700_000_100));
 
         $this->assertDelayedDelegation($driver, 2);
         $this->assertSame(1_700_000_100, $driver->getDelayed('default')[7]);
@@ -147,7 +148,7 @@ class QueueManagerTest extends TestCase
     {
         return [
             'single' => [static fn (QueueManager $manager) => $manager->enqueueDelayed(0, 'default', 1_700_000_100)],
-            'batch' => [static fn (QueueManager $manager) => $manager->enqueueDelayedBatch([0], 'default', 1_700_000_100)],
+            'batch' => [static fn (QueueManager $manager) => $manager->enqueueDelayedBatch(new DelayedBatch([0], 'default', 1_700_000_100))],
         ];
     }
 
