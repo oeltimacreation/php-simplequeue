@@ -9,6 +9,7 @@ use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
 use Oeltima\SimpleQueue\QueueReconciler;
 use Oeltima\SimpleQueue\ReconcileOptions;
 use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
+use Oeltima\SimpleQueue\Tests\Support\FrozenClock;
 use PHPUnit\Framework\TestCase;
 
 final class QueueReconcilerTest extends TestCase
@@ -101,5 +102,32 @@ final class QueueReconcilerTest extends TestCase
         $this->assertSame(2, $second->scanned);
         $this->assertNull($second->nextCursor);
         $this->assertSame([3, 2, 1], $driver->getPending('default'));
+    }
+
+    public function testReconcilesScheduledJobWithoutNotificationIntoDelayedStructure(): void
+    {
+        $previousTimezone = date_default_timezone_get();
+        date_default_timezone_set('UTC');
+        try {
+            $clock = new FrozenClock();
+            $storage = new InMemoryJobStorage($clock);
+            $driver = new InMemoryQueueDriver($clock);
+            $storage->createJobs([
+                ['type' => 'test.job', 'payload' => [], 'queue' => 'default', 'availableAt' => $clock->timestamp() + 60],
+            ]);
+
+            $result = (new QueueReconciler($storage, $driver, $clock))->reconcile('default', new ReconcileOptions());
+
+            $this->assertSame(1, $result->restored);
+            $this->assertSame(0, $driver->getPendingCount('default'));
+            $this->assertSame(1, $driver->getDelayedCount('default'));
+            $this->assertSame(0, $driver->promoteDelayedJobs('default'));
+
+            $clock->advance(60);
+            $this->assertSame(1, $driver->promoteDelayedJobs('default'));
+            $this->assertSame(1, $driver->getPendingCount('default'));
+        } finally {
+            date_default_timezone_set($previousTimezone);
+        }
     }
 }
