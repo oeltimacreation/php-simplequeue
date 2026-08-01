@@ -57,6 +57,34 @@ class WorkerTest extends TestCase
         );
     }
 
+    /**
+     * Build a delayed-capable driver mock expecting one promote with the limit.
+     *
+     * @param int $limit Expected promote limit
+     * @param list<string> $order Driver call order recorded when provided
+     * @return WorkerTestDelayedQueueDriver&\PHPUnit\Framework\MockObject\MockObject
+     */
+    private function promoteLimitDriver(int $limit, array &$order = []): WorkerTestDelayedQueueDriver
+    {
+        $driver = $this->createMock(WorkerTestDelayedQueueDriver::class);
+        $driver->expects($this->once())
+            ->method('promoteDelayedJobs')
+            ->with('default', $limit)
+            ->willReturnCallback(
+                static function () use (&$order): int {
+                    $order[] = 'promote';
+                    return 0;
+                }
+            );
+        $driver->method('dequeue')->willReturnCallback(
+            static function () use (&$order): ?int {
+                $order[] = 'dequeue';
+                return null;
+            }
+        );
+        return $driver;
+    }
+
     public function testWorkerContinuesWhenStorageThrowsExceptionDuringClaim(): void
     {
         $driver = $this->createMock(QueueDriverInterface::class);
@@ -119,26 +147,7 @@ class WorkerTest extends TestCase
     public function testWorkerCallsPromoteDelayedJobsBeforeDequeue(): void
     {
         $order = [];
-        $driver = $this->createMock(WorkerTestDelayedQueueDriver::class);
-        $driver->expects($this->once())
-            ->method('promoteDelayedJobs')
-            ->with('default', 100)
-            ->willReturnCallback(
-                static function () use (&$order): int {
-                    $order[] = 'promote';
-                    return 0;
-                }
-            );
-        $driver->expects($this->once())
-            ->method('dequeue')
-            ->willReturnCallback(
-                static function () use (&$order): ?int {
-                    $order[] = 'dequeue';
-                    return null;
-                }
-            );
-
-        $worker = $this->createWorkerWithDriver($driver);
+        $worker = $this->createWorkerWithDriver($this->promoteLimitDriver(100, $order));
         $worker->processOne();
 
         $this->assertSame(['promote', 'dequeue'], $order, 'promote should run before dequeue with the default limit');
@@ -146,30 +155,16 @@ class WorkerTest extends TestCase
 
     public function testWorkerPassesConfiguredPromoteLimitThroughProcessOne(): void
     {
-        $driver = $this->createMock(WorkerTestDelayedQueueDriver::class);
-        $driver->expects($this->once())
-            ->method('promoteDelayedJobs')
-            ->with('default', 42)
-            ->willReturn(0);
-        $driver->method('dequeue')->willReturn(null);
-
-        $worker = $this->createWorkerWithDriver($driver, ['promote_limit' => 42]);
+        $worker = $this->createWorkerWithDriver($this->promoteLimitDriver(42), ['promote_limit' => 42]);
         $worker->processOne();
     }
 
     public function testWorkerPassesConfiguredPromoteLimitThroughRunLoop(): void
     {
-        $driver = $this->createMock(WorkerTestDelayedQueueDriver::class);
-        $driver->expects($this->once())
-            ->method('promoteDelayedJobs')
-            ->with('default', 250)
-            ->willReturn(0);
-        $driver->method('dequeue')->willReturn(null);
-
-        $worker = $this->createWorkerWithDriver($driver, [
-            'promote_limit' => 250,
-            'stop_when_empty' => true,
-        ]);
+        $worker = $this->createWorkerWithDriver(
+            $this->promoteLimitDriver(250),
+            ['promote_limit' => 250, 'stop_when_empty' => true]
+        );
         $worker->run();
     }
 
