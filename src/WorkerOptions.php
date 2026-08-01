@@ -28,16 +28,10 @@ final readonly class WorkerOptions
         if ($pollTimeout < 0 || $stuckJobTtl < 1 || $retryBaseDelay < 0 || $retryMaxDelay < $retryBaseDelay) {
             throw new \InvalidArgumentException('Worker timeout, TTL, and retry delay options are invalid');
         }
-        if (
-            $maxJobs < 0
-            || $maxTime < 0
-            || $memoryLimit < 0
-            || $promoteInterval < 0
-            || $recoveryInterval < 0
-            || $promoteLimit < 1
-        ) {
-            throw new \InvalidArgumentException('Worker limits, intervals, and promote limit must be valid');
+        if ($maxJobs < 0 || $maxTime < 0 || $memoryLimit < 0 || $promoteInterval < 0 || $recoveryInterval < 0) {
+            throw new \InvalidArgumentException('Worker limits and intervals must not be negative');
         }
+        self::assertPromoteLimit($promoteLimit);
         if ($eventListener !== null && !is_callable($eventListener)) {
             throw new \InvalidArgumentException('Worker event listener must be callable or null');
         }
@@ -88,5 +82,17 @@ final readonly class WorkerOptions
     private static function decimalOption(array $options, string $key, float $default): float
     {
         return isset($options[$key]) && is_numeric($options[$key]) ? (float) $options[$key] : $default;
+    }
+
+    /**
+     * Validate the delayed-job promotion limit.
+     *
+     * @param int $promoteLimit Maximum delayed jobs promoted per pass
+     */
+    private static function assertPromoteLimit(int $promoteLimit): void
+    {
+        if ($promoteLimit < 1) {
+            throw new \InvalidArgumentException('Worker promote limit must be positive');
+        }
     }
 }
