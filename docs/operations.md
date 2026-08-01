@@ -25,6 +25,32 @@ non-zero exits and retain stdout/stderr for diagnosis. Exit code `0` means a
 normal stop or configured limit, `1` means an unhandled worker error, and `2`
 means the singleton lock was unavailable.
 
+## Scheduled workloads
+
+A scheduled job is stored with an absolute UTC `available_at` and, on
+delayed-capable drivers, a delayed notification that is promoted when due. The
+worker promotes due notifications on its `promote_interval` cadence and before
+every `processOne()`, up to `promote_limit` (default `100`) jobs per pass.
+
+Redis scheduled workloads that dispatch large batches at the same instant can
+outpace the default limit, which delays visibility by up to
+`ceil(backlog / promote_limit) * promote_interval` per worker. To keep due
+jobs visible sooner:
+
+- Raise `promote_limit` so a full scheduled batch promotes in one pass.
+- Lower `promote_interval` to reduce the worst-case promotion lag.
+- Add workers to scale promotion throughput; each worker promotes independently
+  on its own cadence, so promotion work is parallelized.
+- Keep `promote_limit` bounded to avoid one worker monopolizing a very large
+  delayed ZSET in a single pass; the Redis driver executes promotion as one
+  bounded Lua roundtrip per pass regardless of the limit.
+
+Storage claims also gate on `available_at`, so a worker whose clock is behind
+the dispatcher's cannot claim a scheduled job early; a clock that is ahead can
+claim up to the skew amount early. Schedule availability is absolute time, not
+wall-clock offset, so keep server clocks synchronized (for example with NTP)
+across dispatchers and workers.
+
 ## Retention and repair
 
 Call `JobStorageAdminInterface::pruneCompleted()` on a scheduled maintenance

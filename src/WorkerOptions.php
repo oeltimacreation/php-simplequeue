@@ -21,6 +21,7 @@ final readonly class WorkerOptions
         public int $memoryLimit = 0,
         public bool $stopWhenEmpty = false,
         public float $promoteInterval = 5.0,
+        public int $promoteLimit = 100,
         public float $recoveryInterval = 60.0,
         public mixed $eventListener = null
     ) {
@@ -29,6 +30,9 @@ final readonly class WorkerOptions
         }
         if ($maxJobs < 0 || $maxTime < 0 || $memoryLimit < 0 || $promoteInterval < 0 || $recoveryInterval < 0) {
             throw new \InvalidArgumentException('Worker limits and intervals must not be negative');
+        }
+        if ($promoteLimit < 1) {
+            throw new \InvalidArgumentException('Worker promote limit must be positive');
         }
         if ($eventListener !== null && !is_callable($eventListener)) {
             throw new \InvalidArgumentException('Worker event listener must be callable or null');
@@ -58,6 +62,7 @@ final readonly class WorkerOptions
             memoryLimit: $integer('memory_limit', 0),
             stopWhenEmpty: isset($options['stop_when_empty']) ? (bool) $options['stop_when_empty'] : false,
             promoteInterval: $decimal('promote_interval', 5.0),
+            promoteLimit: $integer('promote_limit', 100),
             recoveryInterval: $decimal('recovery_interval', 60.0),
             eventListener: $options['event_listener'] ?? null
         );

@@ -52,6 +52,7 @@ final class Worker
     private int $processedJobsCount = 0;
     private float $startTime = 0.0;
     private float $promoteInterval;
+    private int $promoteLimit;
     private float $recoveryInterval;
     private float $lastPromoteTime = 0.0;
     private float $lastRecoveryTime = 0.0;
@@ -101,6 +102,7 @@ final class Worker
         $this->memoryLimit = $workerOptions->memoryLimit;
         $this->stopWhenEmpty = $workerOptions->stopWhenEmpty;
         $this->promoteInterval = $workerOptions->promoteInterval;
+        $this->promoteLimit = $workerOptions->promoteLimit;
         $this->recoveryInterval = $workerOptions->recoveryInterval;
 
         if ($driver instanceof SupportsTimeoutValidation) {
@@ -132,6 +134,7 @@ final class Worker
             'memory_limit' => $options->memoryLimit,
             'stop_when_empty' => $options->stopWhenEmpty,
             'promote_interval' => $options->promoteInterval,
+            'promote_limit' => $options->promoteLimit,
             'recovery_interval' => $options->recoveryInterval,
             'event_listener' => $options->eventListener,
         ]);
@@ -285,7 +288,7 @@ final class Worker
 
         // Promote any delayed jobs that are now due
         if ($driver instanceof SupportsDelayedJobs) {
-            $driver->promoteDelayedJobs($this->queue);
+            $driver->promoteDelayedJobs($this->queue, $this->promoteLimit);
         }
 
         try {
@@ -428,7 +431,7 @@ final class Worker
         $driver = $this->queueManager->driver();
         if ($driver instanceof SupportsDelayedJobs) {
             try {
-                $driver->promoteDelayedJobs($this->queue);
+                $driver->promoteDelayedJobs($this->queue, $this->promoteLimit);
             } catch (\Throwable $e) {
                 $this->logger->error('Failed to promote delayed jobs', ['error' => $e->getMessage()]);
             }

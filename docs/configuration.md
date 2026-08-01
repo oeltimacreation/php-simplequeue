@@ -39,6 +39,7 @@ the array form for environment-based configuration.
 | `memory_limit` | `0` | Stop once PHP memory exceeds this many MB; `0` disables the limit. |
 | `stop_when_empty` | `false` | Stop instead of continuing to poll after no job is found. |
 | `promote_interval` | `5.0` | Minimum seconds between delayed-job promotion passes. |
+| `promote_limit` | `100` | Maximum delayed jobs promoted per pass. Raise for large scheduled backlogs (see [operations](operations.md)). |
 | `recovery_interval` | `60.0` | Minimum seconds between recovery and reconciliation passes. |
 | `event_listener` | `null` | Callable receiving `(string $event, array $data)`. Listener failures are logged. |
 
