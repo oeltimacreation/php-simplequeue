@@ -24,52 +24,6 @@ interface WorkerTestReconciliationQueueDriver extends QueueDriverInterface, \Oel
 {
 }
 
-final class WorkerTestPromoteQueueDriver implements WorkerTestDelayedQueueDriver
-{
-    /** @var list<int> */
-    public array $promoteLimits = [];
-    public int $promoteCalls = 0;
-    public bool $promoteBeforeDequeue = false;
-
-    public function isAvailable(): bool
-    {
-        return true;
-    }
-
-    public function enqueue(string $queue, int $jobId): void
-    {
-    }
-
-    public function dequeue(string $queue, int $timeoutSeconds): ?int
-    {
-        $this->promoteBeforeDequeue = $this->promoteCalls > 0;
-        return null;
-    }
-
-    public function ack(string $queue, int $jobId): void
-    {
-    }
-
-    public function nack(string $queue, int $jobId, int $delaySeconds = 0): void
-    {
-    }
-
-    public function promoteDelayedJobs(string $queue, int $limit = 100): int
-    {
-        $this->promoteCalls++;
-        $this->promoteLimits[] = $limit;
-        return 0;
-    }
-
-    public function enqueueDelayed(string $queue, int $jobId, int $availableAt): void
-    {
-    }
-
-    public function enqueueDelayedBatch(string $queue, array $jobIds, int $availableAt): void
-    {
-    }
-}
-
 class WorkerTest extends TestCase
 {
     /** @var JobStorageInterface&\PHPUnit\Framework\MockObject\MockObject */
@@ -164,38 +118,67 @@ class WorkerTest extends TestCase
 
     public function testWorkerCallsPromoteDelayedJobsBeforeDequeue(): void
     {
-        $driverWithPromote = new WorkerTestPromoteQueueDriver();
+        $order = [];
+        $driver = $this->createMock(WorkerTestDelayedQueueDriver::class);
+        $driver->method('isAvailable')->willReturn(true);
+        $driver->method('promoteDelayedJobs')->willReturnCallback(
+            static function (...$args) use (&$order): int {
+                $order[] = ['promote', $args[1] ?? null];
+                return 0;
+            }
+        );
+        $driver->method('dequeue')->willReturnCallback(
+            static function () use (&$order): ?int {
+                $order[] = ['dequeue'];
+                return null;
+            }
+        );
 
-        $worker = $this->createWorkerWithDriver($driverWithPromote);
+        $worker = $this->createWorkerWithDriver($driver);
         $worker->processOne();
 
-        $this->assertGreaterThan(0, $driverWithPromote->promoteCalls, 'promoteDelayedJobs should be called');
-        $this->assertTrue($driverWithPromote->promoteBeforeDequeue, 'promote should be called before dequeue');
-        $this->assertSame([100], $driverWithPromote->promoteLimits, 'the default promote limit should be used');
+        $this->assertSame([['promote', 100], ['dequeue']], $order, 'promote should run before dequeue with the default limit');
     }
 
     public function testWorkerPassesConfiguredPromoteLimitThroughProcessOne(): void
     {
-        $driverWithPromote = new WorkerTestPromoteQueueDriver();
-        $worker = $this->createWorkerWithDriver($driverWithPromote, ['promote_limit' => 42]);
+        $limits = [];
+        $driver = $this->createMock(WorkerTestDelayedQueueDriver::class);
+        $driver->method('isAvailable')->willReturn(true);
+        $driver->method('promoteDelayedJobs')->willReturnCallback(
+            static function (...$args) use (&$limits): int {
+                $limits[] = (int) ($args[1] ?? 100);
+                return 0;
+            }
+        );
+        $driver->method('dequeue')->willReturn(null);
 
+        $worker = $this->createWorkerWithDriver($driver, ['promote_limit' => 42]);
         $worker->processOne();
 
-        $this->assertSame([42], $driverWithPromote->promoteLimits);
+        $this->assertSame([42], $limits);
     }
 
     public function testWorkerPassesConfiguredPromoteLimitThroughRunLoop(): void
     {
-        $driverWithPromote = new WorkerTestPromoteQueueDriver();
-        $worker = $this->createWorkerWithDriver($driverWithPromote, [
+        $limits = [];
+        $driver = $this->createMock(WorkerTestDelayedQueueDriver::class);
+        $driver->method('isAvailable')->willReturn(true);
+        $driver->method('promoteDelayedJobs')->willReturnCallback(
+            static function (...$args) use (&$limits): int {
+                $limits[] = (int) ($args[1] ?? 100);
+                return 0;
+            }
+        );
+        $driver->method('dequeue')->willReturn(null);
+
+        $worker = $this->createWorkerWithDriver($driver, [
             'promote_limit' => 250,
             'stop_when_empty' => true,
         ]);
-
         $worker->run();
 
-        $this->assertNotEmpty($driverWithPromote->promoteLimits);
-        $this->assertSame([250], $driverWithPromote->promoteLimits);
+        $this->assertSame([250], $limits);
     }
 
     public function testDriverSupportsRecoverStaleProcessingMethod(): void

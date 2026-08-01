@@ -14,16 +14,16 @@
         "production": {
             "files": 57,
             "classes": 57,
-            "methods": 272,
-            "lines": 6134,
+            "methods": 274,
+            "lines": 6156,
             "duplicate_windows": 37
         },
         "tests": {
             "files": 26,
-            "classes": 42,
-            "methods": 390,
-            "lines": 6808,
-            "duplicate_windows": 1212
+            "classes": 41,
+            "methods": 382,
+            "lines": 6791,
+            "duplicate_windows": 1258
         }
     },
     "classes": {
@@ -536,9 +536,9 @@
             "file": "src/WorkerOptions.php",
             "class": "Oeltima\\SimpleQueue\\WorkerOptions",
             "start_line": 10,
-            "end_line": 70,
-            "lines": 61,
-            "methods": 2
+            "end_line": 92,
+            "lines": 83,
+            "methods": 4
         },
         "tests/Compatibility/V14ConsumerSmokeTest.php::Oeltima\\SimpleQueue\\Tests\\Compatibility\\V14ConsumerSmokeTest": {
             "scope": "tests",
@@ -886,9 +886,9 @@
             "scope": "tests",
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
-            "start_line": 73,
-            "end_line": 1211,
-            "lines": 1139,
+            "start_line": 27,
+            "end_line": 1194,
+            "lines": 1168,
             "methods": 32
         },
         "tests/Unit/WorkerTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTestDelayedQueueDriver": {
@@ -899,15 +899,6 @@
             "end_line": 22,
             "lines": 3,
             "methods": 0
-        },
-        "tests/Unit/WorkerTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTestPromoteQueueDriver": {
-            "scope": "tests",
-            "file": "tests/Unit/WorkerTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTestPromoteQueueDriver",
-            "start_line": 27,
-            "end_line": 71,
-            "lines": 45,
-            "methods": 8
         },
         "tests/Unit/WorkerTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTestReconciliationQueueDriver": {
             "scope": "tests",
@@ -4166,22 +4157,46 @@
             "class": "Oeltima\\SimpleQueue\\WorkerOptions",
             "method": "__construct",
             "start_line": 12,
-            "end_line": 40,
-            "lines": 29,
+            "end_line": 44,
+            "lines": 33,
             "cyclomatic_complexity": 13,
             "cognitive_complexity": 12,
             "nesting_depth": 1
+        },
+        "src/WorkerOptions.php::Oeltima\\SimpleQueue\\WorkerOptions::decimalOption": {
+            "scope": "production",
+            "file": "src/WorkerOptions.php",
+            "class": "Oeltima\\SimpleQueue\\WorkerOptions",
+            "method": "decimalOption",
+            "start_line": 88,
+            "end_line": 91,
+            "lines": 4,
+            "cyclomatic_complexity": 3,
+            "cognitive_complexity": 1,
+            "nesting_depth": 0
         },
         "src/WorkerOptions.php::Oeltima\\SimpleQueue\\WorkerOptions::fromArray": {
             "scope": "production",
             "file": "src/WorkerOptions.php",
             "class": "Oeltima\\SimpleQueue\\WorkerOptions",
             "method": "fromArray",
-            "start_line": 43,
-            "end_line": 69,
-            "lines": 27,
-            "cyclomatic_complexity": 11,
-            "cognitive_complexity": 5,
+            "start_line": 47,
+            "end_line": 67,
+            "lines": 21,
+            "cyclomatic_complexity": 7,
+            "cognitive_complexity": 3,
+            "nesting_depth": 0
+        },
+        "src/WorkerOptions.php::Oeltima\\SimpleQueue\\WorkerOptions::integerOption": {
+            "scope": "production",
+            "file": "src/WorkerOptions.php",
+            "class": "Oeltima\\SimpleQueue\\WorkerOptions",
+            "method": "integerOption",
+            "start_line": 76,
+            "end_line": 79,
+            "lines": 4,
+            "cyclomatic_complexity": 3,
+            "cognitive_complexity": 1,
             "nesting_depth": 0
         },
         "tests/Compatibility/V14ConsumerSmokeTest.php::Oeltima\\SimpleQueue\\Tests\\Compatibility\\V14ConsumerSmokeTest::testV14PublicConstructionAndLifecycleRemainUsable": {
@@ -8389,8 +8404,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "createWorkerWithDriver",
-            "start_line": 88,
-            "end_line": 104,
+            "start_line": 42,
+            "end_line": 58,
             "lines": 17,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -8401,8 +8416,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "setUp",
-            "start_line": 81,
-            "end_line": 86,
+            "start_line": 35,
+            "end_line": 40,
             "lines": 6,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -8413,8 +8428,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testDefaultLockFileIsQueueScoped",
-            "start_line": 1193,
-            "end_line": 1210,
+            "start_line": 1176,
+            "end_line": 1193,
             "lines": 18,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -8425,8 +8440,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testDriverSupportsRecoverStaleProcessingMethod",
-            "start_line": 201,
-            "end_line": 250,
+            "start_line": 184,
+            "end_line": 233,
             "lines": 50,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 0,
@@ -8437,8 +8452,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testHandleJobFailureCatchesStorageErrors",
-            "start_line": 608,
-            "end_line": 653,
+            "start_line": 591,
+            "end_line": 636,
             "lines": 46,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 0,
@@ -8449,8 +8464,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testNackPassesDelayToDriver",
-            "start_line": 252,
-            "end_line": 304,
+            "start_line": 235,
+            "end_line": 287,
             "lines": 53,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 0,
@@ -8461,8 +8476,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testProcessOneJobFailedAfterMaxAttempts",
-            "start_line": 371,
-            "end_line": 427,
+            "start_line": 354,
+            "end_line": 410,
             "lines": 57,
             "cyclomatic_complexity": 3,
             "cognitive_complexity": 1,
@@ -8473,8 +8488,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testProcessOneNonBlockingReturnsFalseWhenQueueEmpty",
-            "start_line": 306,
-            "end_line": 318,
+            "start_line": 289,
+            "end_line": 301,
             "lines": 13,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -8485,8 +8500,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testProcessOneSuccessfulJobCompletion",
-            "start_line": 320,
-            "end_line": 369,
+            "start_line": 303,
+            "end_line": 352,
             "lines": 50,
             "cyclomatic_complexity": 3,
             "cognitive_complexity": 1,
@@ -8497,8 +8512,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testProgressCallbackTriggersUpdateProgressWithoutRedundantStorageHeartbeat",
-            "start_line": 879,
-            "end_line": 928,
+            "start_line": 862,
+            "end_line": 911,
             "lines": 50,
             "cyclomatic_complexity": 3,
             "cognitive_complexity": 1,
@@ -8509,8 +8524,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testReconcileDbAndRedis",
-            "start_line": 1083,
-            "end_line": 1136,
+            "start_line": 1066,
+            "end_line": 1119,
             "lines": 54,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -8521,8 +8536,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testRunRetriesWithBackoffOnInfrastructureError",
-            "start_line": 706,
-            "end_line": 735,
+            "start_line": 689,
+            "end_line": 718,
             "lines": 30,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 1,
@@ -8533,8 +8548,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testRunReturnsErrorWhenInitialRecoveryFails",
-            "start_line": 689,
-            "end_line": 704,
+            "start_line": 672,
+            "end_line": 687,
             "lines": 16,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -8545,8 +8560,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testRunReturnsExitLockUnavailableOnLockFailure",
-            "start_line": 655,
-            "end_line": 671,
+            "start_line": 638,
+            "end_line": 654,
             "lines": 17,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -8557,8 +8572,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testRunReturnsExitSuccessOnGracefulShutdown",
-            "start_line": 673,
-            "end_line": 687,
+            "start_line": 656,
+            "end_line": 670,
             "lines": 15,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -8569,8 +8584,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testThrottledMaintenanceIsCalled",
-            "start_line": 830,
-            "end_line": 877,
+            "start_line": 813,
+            "end_line": 860,
             "lines": 48,
             "cyclomatic_complexity": 3,
             "cognitive_complexity": 3,
@@ -8581,11 +8596,11 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testWorkerCallsPromoteDelayedJobsBeforeDequeue",
-            "start_line": 165,
-            "end_line": 175,
-            "lines": 11,
-            "cyclomatic_complexity": 1,
-            "cognitive_complexity": 0,
+            "start_line": 119,
+            "end_line": 141,
+            "lines": 23,
+            "cyclomatic_complexity": 3,
+            "cognitive_complexity": 1,
             "nesting_depth": 0
         },
         "tests/Unit/WorkerTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest::testWorkerContinuesWhenJobAlreadyClaimedByAnotherWorker": {
@@ -8593,8 +8608,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testWorkerContinuesWhenJobAlreadyClaimedByAnotherWorker",
-            "start_line": 135,
-            "end_line": 163,
+            "start_line": 89,
+            "end_line": 117,
             "lines": 29,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 1,
@@ -8605,8 +8620,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testWorkerContinuesWhenStorageThrowsExceptionDuringClaim",
-            "start_line": 106,
-            "end_line": 133,
+            "start_line": 60,
+            "end_line": 87,
             "lines": 28,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 1,
@@ -8617,8 +8632,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testWorkerEventListenerEmitsEvents",
-            "start_line": 1138,
-            "end_line": 1191,
+            "start_line": 1121,
+            "end_line": 1174,
             "lines": 54,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 0,
@@ -8629,8 +8644,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testWorkerExitsAfterMaxJobs",
-            "start_line": 737,
-            "end_line": 778,
+            "start_line": 720,
+            "end_line": 761,
             "lines": 42,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 0,
@@ -8641,8 +8656,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testWorkerExitsAfterMaxTime",
-            "start_line": 780,
-            "end_line": 801,
+            "start_line": 763,
+            "end_line": 784,
             "lines": 22,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -8653,8 +8668,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testWorkerExitsOnMemoryLimit",
-            "start_line": 803,
-            "end_line": 813,
+            "start_line": 786,
+            "end_line": 796,
             "lines": 11,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -8665,8 +8680,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testWorkerHandlesAckExceptionAfterCompletedJob",
-            "start_line": 545,
-            "end_line": 606,
+            "start_line": 528,
+            "end_line": 589,
             "lines": 62,
             "cyclomatic_complexity": 4,
             "cognitive_complexity": 2,
@@ -8677,8 +8692,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testWorkerHandlesLostOwnershipOnJobCompletion",
-            "start_line": 930,
-            "end_line": 979,
+            "start_line": 913,
+            "end_line": 962,
             "lines": 50,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 0,
@@ -8689,8 +8704,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testWorkerHandlesLostOwnershipOnMarkingFailed",
-            "start_line": 1032,
-            "end_line": 1081,
+            "start_line": 1015,
+            "end_line": 1064,
             "lines": 50,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 0,
@@ -8701,8 +8716,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testWorkerHandlesLostOwnershipOnRetryScheduling",
-            "start_line": 981,
-            "end_line": 1030,
+            "start_line": 964,
+            "end_line": 1013,
             "lines": 50,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 0,
@@ -8713,11 +8728,11 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testWorkerPassesConfiguredPromoteLimitThroughProcessOne",
-            "start_line": 177,
-            "end_line": 185,
-            "lines": 9,
-            "cyclomatic_complexity": 1,
-            "cognitive_complexity": 0,
+            "start_line": 143,
+            "end_line": 160,
+            "lines": 18,
+            "cyclomatic_complexity": 2,
+            "cognitive_complexity": 1,
             "nesting_depth": 0
         },
         "tests/Unit/WorkerTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest::testWorkerPassesConfiguredPromoteLimitThroughRunLoop": {
@@ -8725,11 +8740,11 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testWorkerPassesConfiguredPromoteLimitThroughRunLoop",
-            "start_line": 187,
-            "end_line": 199,
-            "lines": 13,
-            "cyclomatic_complexity": 1,
-            "cognitive_complexity": 0,
+            "start_line": 162,
+            "end_line": 182,
+            "lines": 21,
+            "cyclomatic_complexity": 2,
+            "cognitive_complexity": 1,
             "nesting_depth": 0
         },
         "tests/Unit/WorkerTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest::testWorkerRetryDelayCappedAtMaxDelay": {
@@ -8737,8 +8752,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testWorkerRetryDelayCappedAtMaxDelay",
-            "start_line": 487,
-            "end_line": 543,
+            "start_line": 470,
+            "end_line": 526,
             "lines": 57,
             "cyclomatic_complexity": 3,
             "cognitive_complexity": 1,
@@ -8749,8 +8764,8 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testWorkerRetryDelayIsExponential",
-            "start_line": 429,
-            "end_line": 485,
+            "start_line": 412,
+            "end_line": 468,
             "lines": 57,
             "cyclomatic_complexity": 3,
             "cognitive_complexity": 1,
@@ -8761,105 +8776,9 @@
             "file": "tests/Unit/WorkerTest.php",
             "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTest",
             "method": "testWorkerStopsWhenEmpty",
-            "start_line": 815,
-            "end_line": 828,
+            "start_line": 798,
+            "end_line": 811,
             "lines": 14,
-            "cyclomatic_complexity": 1,
-            "cognitive_complexity": 0,
-            "nesting_depth": 0
-        },
-        "tests/Unit/WorkerTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTestPromoteQueueDriver::ack": {
-            "scope": "tests",
-            "file": "tests/Unit/WorkerTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTestPromoteQueueDriver",
-            "method": "ack",
-            "start_line": 49,
-            "end_line": 51,
-            "lines": 3,
-            "cyclomatic_complexity": 1,
-            "cognitive_complexity": 0,
-            "nesting_depth": 0
-        },
-        "tests/Unit/WorkerTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTestPromoteQueueDriver::dequeue": {
-            "scope": "tests",
-            "file": "tests/Unit/WorkerTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTestPromoteQueueDriver",
-            "method": "dequeue",
-            "start_line": 43,
-            "end_line": 47,
-            "lines": 5,
-            "cyclomatic_complexity": 1,
-            "cognitive_complexity": 0,
-            "nesting_depth": 0
-        },
-        "tests/Unit/WorkerTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTestPromoteQueueDriver::enqueue": {
-            "scope": "tests",
-            "file": "tests/Unit/WorkerTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTestPromoteQueueDriver",
-            "method": "enqueue",
-            "start_line": 39,
-            "end_line": 41,
-            "lines": 3,
-            "cyclomatic_complexity": 1,
-            "cognitive_complexity": 0,
-            "nesting_depth": 0
-        },
-        "tests/Unit/WorkerTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTestPromoteQueueDriver::enqueueDelayed": {
-            "scope": "tests",
-            "file": "tests/Unit/WorkerTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTestPromoteQueueDriver",
-            "method": "enqueueDelayed",
-            "start_line": 64,
-            "end_line": 66,
-            "lines": 3,
-            "cyclomatic_complexity": 1,
-            "cognitive_complexity": 0,
-            "nesting_depth": 0
-        },
-        "tests/Unit/WorkerTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTestPromoteQueueDriver::enqueueDelayedBatch": {
-            "scope": "tests",
-            "file": "tests/Unit/WorkerTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTestPromoteQueueDriver",
-            "method": "enqueueDelayedBatch",
-            "start_line": 68,
-            "end_line": 70,
-            "lines": 3,
-            "cyclomatic_complexity": 1,
-            "cognitive_complexity": 0,
-            "nesting_depth": 0
-        },
-        "tests/Unit/WorkerTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTestPromoteQueueDriver::isAvailable": {
-            "scope": "tests",
-            "file": "tests/Unit/WorkerTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTestPromoteQueueDriver",
-            "method": "isAvailable",
-            "start_line": 34,
-            "end_line": 37,
-            "lines": 4,
-            "cyclomatic_complexity": 1,
-            "cognitive_complexity": 0,
-            "nesting_depth": 0
-        },
-        "tests/Unit/WorkerTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTestPromoteQueueDriver::nack": {
-            "scope": "tests",
-            "file": "tests/Unit/WorkerTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTestPromoteQueueDriver",
-            "method": "nack",
-            "start_line": 53,
-            "end_line": 55,
-            "lines": 3,
-            "cyclomatic_complexity": 1,
-            "cognitive_complexity": 0,
-            "nesting_depth": 0
-        },
-        "tests/Unit/WorkerTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTestPromoteQueueDriver::promoteDelayedJobs": {
-            "scope": "tests",
-            "file": "tests/Unit/WorkerTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerTestPromoteQueueDriver",
-            "method": "promoteDelayedJobs",
-            "start_line": 57,
-            "end_line": 62,
-            "lines": 6,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
             "nesting_depth": 0
@@ -8871,6 +8790,12 @@
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 2
+        },
+        {
+            "fingerprint": "0071bf12f871f66df4165123fb290356e1346ac90e196d2c5783fb9fcbcfb5a8",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 3
         },
         {
             "fingerprint": "007530497e4bd9acf9a2abff3ecf829bc8a5e2fc1a8f932fed5365ee8d674703",
@@ -9071,6 +8996,12 @@
             "occurrence_count": 2
         },
         {
+            "fingerprint": "06f2ee7c7f471cd0386819f33eba2e2dcc350c5f6acbad1e3e0ea70d3517ef04",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
             "fingerprint": "06fce86da00e150fa363c67b9b749e8d70352c44a443879245aaf0f8b6f42261",
             "scope": "tests",
             "token_count": 50,
@@ -9165,6 +9096,12 @@
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 6
+        },
+        {
+            "fingerprint": "09fbecd1a56b8c7c7c44db45081fd673b6d02f5db0f77d00bf96d1d5d51e9363",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 3
         },
         {
             "fingerprint": "0a07afd622576292cee7b6f9c48310cf77957c05bc3c6d982f65fd63366bf68c",
@@ -9408,6 +9345,12 @@
         },
         {
             "fingerprint": "123960247eec03f29bfae27a7ece55cefd5095468e9f0bcde4efd4e75e90ccd2",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
+            "fingerprint": "128d68261cc7ac06f5d91d7779e86d03867ba0cec9a65c9ad6d1df080cff56a4",
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 2
@@ -9755,6 +9698,12 @@
             "occurrence_count": 4
         },
         {
+            "fingerprint": "1fe978e2844c1486a97aff0343cf71ead44c621951ce12715394cdfc9e240a5b",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
             "fingerprint": "200528b88f27f7e99c13eed3d7c08455687cdf92d3ca1ad333cfbe89b784b574",
             "scope": "tests",
             "token_count": 50,
@@ -9947,6 +9896,12 @@
             "occurrence_count": 6
         },
         {
+            "fingerprint": "271cad74151830a2903169a57c24daf1a4cb73fe9d451ec494fddbb29d9f559f",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
             "fingerprint": "276d31c9f9e909941780345bc26efe2e153491c146e67c768142a35e99159b46",
             "scope": "tests",
             "token_count": 50,
@@ -10002,6 +9957,12 @@
         },
         {
             "fingerprint": "287560009348f715cca2433060a00365bf87564ac2757a8d413d3fcf8dce1a4a",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
+            "fingerprint": "28c145cdd81762a694c277895d334a1871cd640aa417f00583f0447d3d9e43b7",
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 2
@@ -10157,6 +10118,12 @@
             "occurrence_count": 2
         },
         {
+            "fingerprint": "2d3a0585138b6e60edcb88252369b8797270f4477d9c14405358b68abf3a0dac",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
             "fingerprint": "2d8256ec182683ee250bb06f441e0090769e6e66d0d8c9bb9f11b91f77ecca8c",
             "scope": "tests",
             "token_count": 50,
@@ -10277,6 +10244,12 @@
             "occurrence_count": 5
         },
         {
+            "fingerprint": "307cda2f6f8c485dd99898f8ef4509b9759b6a027ebd9bc1c5b5d698fb82de06",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
             "fingerprint": "307f1bd8b9adfbdfff151d39136343e3c1def55db0a7c141657e626dca98f0b5",
             "scope": "tests",
             "token_count": 50,
@@ -10307,6 +10280,12 @@
             "occurrence_count": 3
         },
         {
+            "fingerprint": "31d12933bb82b6e2ea48bb65b7050671003239cc8386c274f5260ad330e2b926",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
             "fingerprint": "31d73f955d434d4e4abc7cd6a6d1f0d54707854dd5349824f6fccc0b80632d99",
             "scope": "tests",
             "token_count": 50,
@@ -10326,6 +10305,12 @@
         },
         {
             "fingerprint": "326f8cf621e9fdafa5ad5c5ff72b1424d5613a61e36401ba4eef3fbe5dda85c0",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
+            "fingerprint": "327c672cb12a118e0c429b3b5683b513720485a1ec88d906cf23622114b603b3",
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 2
@@ -11093,6 +11078,12 @@
             "occurrence_count": 2
         },
         {
+            "fingerprint": "4a9eff6c326ebe7e187b7e27e868e05e62c2f402c00df789e931e6ceda2900ff",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
             "fingerprint": "4acf870aa8961fb90ffb3e027b0e89af8f6dbbe635e4f22e8de6a8a3da9b2fbc",
             "scope": "tests",
             "token_count": 50,
@@ -11103,6 +11094,12 @@
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 2
+        },
+        {
+            "fingerprint": "4b12d7f449bc5c04bac3b8d7e2bf3c19caf354049eff4151788ef6fae365de05",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 3
         },
         {
             "fingerprint": "4b2d0352aa99fdb208e87e11070f00cfaff869b73dc34ef06dfd9f68e6870ebb",
@@ -11199,6 +11196,12 @@
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 3
+        },
+        {
+            "fingerprint": "4f68c8b398fd6368fbddd34c6c93f5e65c24fed4216173e105f985842831ec12",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
         },
         {
             "fingerprint": "4fa36110a605931ac872a975317bee0cf4b6beac41f8fa88dd6c87286259f512",
@@ -11301,6 +11304,12 @@
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 3
+        },
+        {
+            "fingerprint": "517dc819ec84682cbf4849fd32cbc3294e966c7b96391f7ff0a7752ac7b5d7ee",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
         },
         {
             "fingerprint": "51df48652e6952d4ad81c01c69064c77b3aea4601b13e76354cb589bfc1a1913",
@@ -11478,6 +11487,12 @@
         },
         {
             "fingerprint": "589674e6954098801ab8f690bcc97760f60638291f127cf986f42eb49fcb97ac",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
+            "fingerprint": "58ee06446fb66e524ee28ac1816d89500b47726c5382fc960a04ee4188dcdb83",
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 2
@@ -11679,6 +11694,12 @@
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 6
+        },
+        {
+            "fingerprint": "606de4f67912ab6a9c807624878b3955e0d5c94fa0a7b4cd36f000ffcd35203a",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
         },
         {
             "fingerprint": "608d658535f0ea83f2a9ea037aeb51ada8d563bff848daae638c0d4620f5b271",
@@ -12029,6 +12050,12 @@
             "occurrence_count": 3
         },
         {
+            "fingerprint": "6bcce613f1d189e59f8579392fe3973e5b08523d5abbc5763dea8dca330b5536",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
             "fingerprint": "6bce5a34c0ea5c89bbccf68723aaa62268a01bb0aa301f3bea7ed93baa31261a",
             "scope": "tests",
             "token_count": 50,
@@ -12063,6 +12090,12 @@
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 3
+        },
+        {
+            "fingerprint": "6cd93cc98f6ffb05f84ea4533531c97ddad21578e9c5f7b5bef2cdfb105910be",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
         },
         {
             "fingerprint": "6d042b232eda499471cacf270dac494f52fb9fb293d4f21ff2e6e4005ad4242e",
@@ -12209,6 +12242,12 @@
             "occurrence_count": 2
         },
         {
+            "fingerprint": "7087fca6dd89230220851e985087f987f0d55a10b1f39fb34f7d3c78775845c2",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
             "fingerprint": "70ca9504a0268f0e0daafe0955006a04bff484e2fd6665092deadd2638ab7b63",
             "scope": "tests",
             "token_count": 50,
@@ -12243,6 +12282,12 @@
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 3
+        },
+        {
+            "fingerprint": "71afa6ca0c07a7f2f7ad654904252f513e2d5396231f63e4aaf03f8e5b90eb86",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
         },
         {
             "fingerprint": "71b31a309f8652fe6ccf3218a4f64b41d430d886a8847da676d62801660f1e68",
@@ -12441,6 +12486,12 @@
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 6
+        },
+        {
+            "fingerprint": "76d61e80fe0ad8fa76b3c5555d16770f826a613d14ce309a622bfcbaecfd6381",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 3
         },
         {
             "fingerprint": "76e0dc16ed184e29bb63b706a90bd5276a37321f8c2ffc94aa913faf5b51ad69",
@@ -12839,6 +12890,12 @@
             "occurrence_count": 4
         },
         {
+            "fingerprint": "848cbd93c4c38070d6949ab9a242f672925bb0adfa4a4b1a9864977b1f92c301",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
             "fingerprint": "84dd50aae16800343854f3a34cd6956a39c7a0d741b03f12c418205680f87648",
             "scope": "tests",
             "token_count": 50,
@@ -12972,6 +13029,18 @@
         },
         {
             "fingerprint": "89346ae888fb25d82d7643dc30a420d4c355ecc973a6a7accf370c8f7746f7cf",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
+            "fingerprint": "8967e47069022cc4108a231fbd6914ff87534a8164daca4dbf13b2e246442c0c",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
+            "fingerprint": "899186c4a865c7c7aba4b904abd1f74834abc134ea437a00fc0815bd8f7f60ca",
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 2
@@ -13121,6 +13190,12 @@
             "occurrence_count": 3
         },
         {
+            "fingerprint": "8ec5327b1165ceb7e8056663d7e71c82f5188403afe5bc5763d8fa7bea963fe0",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
             "fingerprint": "8ec6feeabeee0cb83162e7a74fad077947a44b179883b6507a7cabbcfc1c9ba0",
             "scope": "tests",
             "token_count": 50,
@@ -13187,6 +13262,12 @@
             "occurrence_count": 2
         },
         {
+            "fingerprint": "919897fca6ed2cd8f665604ac056d18a8816e985b4eed4854b77f8b58b714cba",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
             "fingerprint": "919a2f0fe00d97b0882b930651758bf6f34901d0ce2907965ce36d04b72ea4bf",
             "scope": "tests",
             "token_count": 50,
@@ -13236,6 +13317,12 @@
         },
         {
             "fingerprint": "9353468470b8481e146468495093413f7c178f7abf042897de0adc038a6b9141",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
+            "fingerprint": "9369386d748b9dea2c7b02a059181cfe144c4f3de6431a7d4698906cef9af4b4",
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 2
@@ -13704,6 +13791,12 @@
         },
         {
             "fingerprint": "a25a0c049438ac5fa6d87cfd39bffeff27035a484181ea0e8e8c62e7a50bc658",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
+            "fingerprint": "a315a6093aa95e52c59f16bfd4e8bac980c74a64937545a87af1a7d4f6bb8a34",
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 2
@@ -14255,6 +14348,12 @@
             "occurrence_count": 2
         },
         {
+            "fingerprint": "b7b607afe0b41a182af7e211f75f18d9edead2182ecc4051802d462d6d846d41",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
             "fingerprint": "b7bc310dec9225c29c1faebd22686285615c99e2a5a1b9ae03de2d125c43961d",
             "scope": "tests",
             "token_count": 50,
@@ -14405,6 +14504,12 @@
             "occurrence_count": 2
         },
         {
+            "fingerprint": "bc50140ebe56090a31863f4692a5ac0c694288bb6f31b834c3afe25529db225f",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
             "fingerprint": "bccb1275e82ee75dfe12e0a60d6fb40d93e27400eb615c11ca7d2ffe6edd0243",
             "scope": "tests",
             "token_count": 50,
@@ -14549,6 +14654,12 @@
             "occurrence_count": 3
         },
         {
+            "fingerprint": "c0df8114b26e03fa70445431e703b3740c5cb0df0e2ea65d62f64db63d824f23",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
             "fingerprint": "c0fa54e6621a59bb39594bc5bb9efadc4673d5a5cea334406c7c2a14658599c6",
             "scope": "tests",
             "token_count": 50,
@@ -14625,6 +14736,12 @@
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 5
+        },
+        {
+            "fingerprint": "c3e1e8d6ddb1c4819f99872536bc32216781a768b350e47474f024df81fcbb27",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
         },
         {
             "fingerprint": "c3f64bda11c66bec8da505cb6f1e552153ed28475ce05484bb195d7113795551",
@@ -14741,6 +14858,12 @@
             "occurrence_count": 2
         },
         {
+            "fingerprint": "c9fbd891ae4e0b2c5f2704efe5d6bc6b2ba35f26d1452fd5855932e7497e391c",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 3
+        },
+        {
             "fingerprint": "ca1f42fce78f4c90037576e0888c727ab58ad30acb7ca9796ee268b5b53ef3d7",
             "scope": "tests",
             "token_count": 50,
@@ -14815,6 +14938,18 @@
         {
             "fingerprint": "cc40ec3fde034418a062e48323b9a3749d6dc8d741b3e151aab9eb0c5e6765e6",
             "scope": "production",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
+            "fingerprint": "cc9af9d363077879ca9827cad6ebbd1da92425746546f70314386ca9adc32dcc",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 3
+        },
+        {
+            "fingerprint": "cd4ea9ad7940c75a4e9741226a13cdf24aebecaedc0f2d2090066c86adc3fdb6",
+            "scope": "tests",
             "token_count": 50,
             "occurrence_count": 2
         },
@@ -14939,6 +15074,12 @@
             "occurrence_count": 2
         },
         {
+            "fingerprint": "d12f73a1d0cdc75101e01118ac6c5f6a3b78b529a4a0601bf5f9d9017eb945e4",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
             "fingerprint": "d15df7f2507e1eaf8411d658efbb09545f2d36cb4afee0b935c9cbee47621b24",
             "scope": "tests",
             "token_count": 50,
@@ -14973,6 +15114,12 @@
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 3
+        },
+        {
+            "fingerprint": "d26b61ec350a8c625a24ea19b1c72339e732ddc8d151444f90d96ad66ef318eb",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
         },
         {
             "fingerprint": "d26b7d8dd5e7e2c548679aacc97b653c7431eedbb3cd6d41cfaf1e9d4bcb70a4",
@@ -15012,6 +15159,12 @@
         },
         {
             "fingerprint": "d41785255610b46602ff98258a60460058346cf38a24c6a117fa5349baafe647",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
+            "fingerprint": "d50cc4d2e9353fdf0ae90d3e16079dca30376558edddccfac03f03b3a174b681",
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 2
@@ -15179,6 +15332,12 @@
             "occurrence_count": 2
         },
         {
+            "fingerprint": "da641e0974e224747a5fdb420c059c64ad83c58a12e5a28c2122c843eec98e80",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
             "fingerprint": "da93b03668af9abb237f90bb1ca14c59eb7af6e00384a9f3937ce11cc47c4d45",
             "scope": "tests",
             "token_count": 50,
@@ -15198,6 +15357,12 @@
         },
         {
             "fingerprint": "db35a585bd2797997878fbb6db6c0d42edf2c1c22a1018817ce492f20b3824a0",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
+            "fingerprint": "db4599cf9f0bbd9a600b2cc51fa542672a9df1e8d85889e4dbbb5cc2f8f250d5",
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 2
@@ -15426,6 +15591,12 @@
         },
         {
             "fingerprint": "e338d3fd83bac13e3897a09f0ffd618b93cab81eca2aacac948085ab31104f22",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
+            "fingerprint": "e36f4fbf2ce7fe6569c160ed4c8ca50a81e979aca0a54a76c9001dcb74cd5eb1",
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 2
@@ -15689,6 +15860,12 @@
             "occurrence_count": 2
         },
         {
+            "fingerprint": "ec6363423d4b8e5b521649af95b8b6701f22c770aea225923d472d5970757806",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
             "fingerprint": "ec844d991daf5b98e4f80f1e4191c1a993ee1d6815fde99f9e8e49e55c0646a3",
             "scope": "tests",
             "token_count": 50,
@@ -15941,6 +16118,12 @@
             "occurrence_count": 2
         },
         {
+            "fingerprint": "f3daaf545bc084ba573736c330450f560fdd5eca45f2ab71037330c2b315de31",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
             "fingerprint": "f423e0dacd7aac9e493802d2ffe6cffa4878c77762beacf49739d849fe3346c3",
             "scope": "tests",
             "token_count": 50,
@@ -15999,6 +16182,12 @@
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 3
+        },
+        {
+            "fingerprint": "f5d32ea95687730008518a8603b49968382b31af83097f997065ad1a09895a9a",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
         },
         {
             "fingerprint": "f66fa39d715aa1f65de4f258debbbbfabbd390f20d20bbf4ea1a3494e332641a",
@@ -16110,6 +16299,12 @@
         },
         {
             "fingerprint": "f91633c370763a6380f74795548e71ccd36672993b55d9436b65f8a9109e2e46",
+            "scope": "tests",
+            "token_count": 50,
+            "occurrence_count": 2
+        },
+        {
+            "fingerprint": "f9409b69998e27ae08dbb7b077996226d07926b074fc25a402fcd954c356f5a8",
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 2
