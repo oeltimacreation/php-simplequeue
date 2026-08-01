@@ -104,6 +104,28 @@ from `EVAL` to `EVALSHA`), scheduled batch dispatch drops from N to 1 ZADD, and
 the 10,000-job promotion stays one roundtrip. PDO statement counts are
 unchanged across dispatch, claim, execute, and retry.
 
+## v1.7 Stage 3 — no hot-loop amplification
+
+Stage 3 hardened the scheduled-dispatch failure surface without changing the
+hot-loop budget. The counter invariants below are now **asserted** by the
+harness (`benchmarks/operation-count-checks.php`), so a regression that adds a
+roundtrip or a storage statement to the worker iteration path fails the run
+instead of silently changing the published numbers:
+
+| Invariant | Asserted bound |
+|---|---|
+| Scheduled single dispatch → one `enqueueDelayed` roundtrip per job | `redis_roundtrips <= operations` |
+| Scheduled batch dispatch → one delayed-notification roundtrip | `redis_roundtrips <= 1` |
+| Delayed promotion → one bounded Lua roundtrip per pass | `redis_roundtrips <= 1` |
+| Dequeue/ACK → dequeue, pipelined ACK, and the empty probe | `redis_roundtrips <= 2 * operations + 1` |
+| Database claim → one transaction and bounded statements per claim | `db_transactions <= operations` and `db_queries <= 4 * operations` |
+
+The promotion limit is now tunable through the worker `promote_limit` option
+(default `100`), so scheduled backlogs can be promoted in fewer passes while
+still executing as one bounded Lua roundtrip per pass. Reconciliation parses
+stored `available_at` timestamps as UTC, so availability decisions are
+independent of the host timezone.
+
 ## v1.6 performance profile
 
 This report records the performance profile captured on 2026-07-26. The benchmark
