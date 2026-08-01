@@ -21,6 +21,7 @@ final readonly class WorkerOptions
         public int $memoryLimit = 0,
         public bool $stopWhenEmpty = false,
         public float $promoteInterval = 5.0,
+        public int $promoteLimit = 100,
         public float $recoveryInterval = 60.0,
         public mixed $eventListener = null
     ) {
@@ -30,6 +31,7 @@ final readonly class WorkerOptions
         if ($maxJobs < 0 || $maxTime < 0 || $memoryLimit < 0 || $promoteInterval < 0 || $recoveryInterval < 0) {
             throw new \InvalidArgumentException('Worker limits and intervals must not be negative');
         }
+        self::assertPromoteLimit($promoteLimit);
         if ($eventListener !== null && !is_callable($eventListener)) {
             throw new \InvalidArgumentException('Worker event listener must be callable or null');
         }
@@ -38,28 +40,59 @@ final readonly class WorkerOptions
     /** @param array<string, mixed> $options */
     public static function fromArray(array $options): self
     {
-        $integer = static fn (string $key, int $default): int => isset($options[$key]) && is_numeric($options[$key])
-            ? (int) $options[$key]
-            : $default;
-        $decimal = static fn (string $key, float $default): float => isset($options[$key]) && is_numeric($options[$key])
-            ? (float) $options[$key]
-            : $default;
         return new self(
             lockFile: array_key_exists('lock_file', $options) && is_string($options['lock_file'])
                 ? $options['lock_file']
                 : null,
-            pollTimeout: $integer('poll_timeout', 5),
-            stuckJobTtl: $integer('stuck_job_ttl', 600),
-            retryBaseDelay: $integer('retry_base_delay', 2),
-            retryMaxDelay: $integer('retry_max_delay', 300),
+            pollTimeout: self::integerOption($options, 'poll_timeout', 5),
+            stuckJobTtl: self::integerOption($options, 'stuck_job_ttl', 600),
+            retryBaseDelay: self::integerOption($options, 'retry_base_delay', 2),
+            retryMaxDelay: self::integerOption($options, 'retry_max_delay', 300),
             clock: ($options['clock'] ?? null) instanceof ClockInterface ? $options['clock'] : null,
-            maxJobs: $integer('max_jobs', 0),
-            maxTime: $integer('max_time', 0),
-            memoryLimit: $integer('memory_limit', 0),
+            maxJobs: self::integerOption($options, 'max_jobs', 0),
+            maxTime: self::integerOption($options, 'max_time', 0),
+            memoryLimit: self::integerOption($options, 'memory_limit', 0),
             stopWhenEmpty: isset($options['stop_when_empty']) ? (bool) $options['stop_when_empty'] : false,
-            promoteInterval: $decimal('promote_interval', 5.0),
-            recoveryInterval: $decimal('recovery_interval', 60.0),
+            promoteInterval: self::decimalOption($options, 'promote_interval', 5.0),
+            promoteLimit: self::integerOption($options, 'promote_limit', 100),
+            recoveryInterval: self::decimalOption($options, 'recovery_interval', 60.0),
             eventListener: $options['event_listener'] ?? null
         );
+    }
+
+    /**
+     * Resolve a numeric integer option with its default.
+     *
+     * @param array<string, mixed> $options Raw worker options
+     * @param string $key Option key
+     * @param int $default Default when absent or non-numeric
+     */
+    private static function integerOption(array $options, string $key, int $default): int
+    {
+        return isset($options[$key]) && is_numeric($options[$key]) ? (int) $options[$key] : $default;
+    }
+
+    /**
+     * Resolve a numeric decimal option with its default.
+     *
+     * @param array<string, mixed> $options Raw worker options
+     * @param string $key Option key
+     * @param float $default Default when absent or non-numeric
+     */
+    private static function decimalOption(array $options, string $key, float $default): float
+    {
+        return isset($options[$key]) && is_numeric($options[$key]) ? (float) $options[$key] : $default;
+    }
+
+    /**
+     * Validate the delayed-job promotion limit.
+     *
+     * @param int $promoteLimit Maximum delayed jobs promoted per pass
+     */
+    private static function assertPromoteLimit(int $promoteLimit): void
+    {
+        if ($promoteLimit < 1) {
+            throw new \InvalidArgumentException('Worker promote limit must be positive');
+        }
     }
 }

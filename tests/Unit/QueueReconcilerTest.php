@@ -130,4 +130,61 @@ final class QueueReconcilerTest extends TestCase
             date_default_timezone_set($previousTimezone);
         }
     }
+
+    public function testReconciliationParsesStoredTimestampAsUtcWhenDefaultTimezoneIsBehindUtc(): void
+    {
+        $previousTimezone = date_default_timezone_get();
+        date_default_timezone_set('America/New_York');
+        try {
+            $clock = new FrozenClock();
+            $storage = new InMemoryJobStorage($clock);
+            $driver = new InMemoryQueueDriver($clock);
+            // The job became due 60s ago in UTC (available_at is stored as UTC),
+            // but a default-timezone parse of that string would place it 5 hours
+            // in the future and wrongly route it to delayed.
+            $storage->createJobs([
+                ['type' => 'test.job', 'payload' => [], 'queue' => 'default', 'availableAt' => $clock->timestamp() - 60],
+            ]);
+
+            $result = (new QueueReconciler($storage, $driver, $clock))->reconcile('default', new ReconcileOptions());
+
+            $this->assertSame(1, $result->restored);
+            $this->assertSame(1, $driver->getPendingCount('default'));
+            $this->assertSame(0, $driver->getDelayedCount('default'));
+        } finally {
+            date_default_timezone_set($previousTimezone);
+        }
+    }
+
+    public function testReconciliationParsesStoredTimestampAsUtcWhenDefaultTimezoneIsAheadOfUtc(): void
+    {
+        $previousTimezone = date_default_timezone_get();
+        date_default_timezone_set('Asia/Tokyo');
+        try {
+            $clock = new FrozenClock();
+            $storage = new InMemoryJobStorage($clock);
+            $driver = new InMemoryQueueDriver($clock);
+            // The job is not due for another 60s in UTC, but a default-timezone
+            // parse of that string would place it 9 hours in the past and
+            // wrongly route it to pending.
+            $storage->createJobs([
+                ['type' => 'test.job', 'payload' => [], 'queue' => 'default', 'availableAt' => $clock->timestamp() + 60],
+            ]);
+
+            $result = (new QueueReconciler($storage, $driver, $clock))->reconcile('default', new ReconcileOptions());
+
+            $this->assertSame(1, $result->restored);
+            $this->assertSame(0, $driver->getPendingCount('default'));
+            $this->assertSame(1, $driver->getDelayedCount('default'));
+            $jobs = $storage->list();
+            $this->assertCount(1, $jobs);
+            $this->assertSame($clock->timestamp() + 60, $driver->getDelayed('default')[$jobs[0]->id] ?? null);
+
+            $clock->advance(60);
+            $this->assertSame(1, $driver->promoteDelayedJobs('default'));
+            $this->assertSame(1, $driver->getPendingCount('default'));
+        } finally {
+            date_default_timezone_set($previousTimezone);
+        }
+    }
 }

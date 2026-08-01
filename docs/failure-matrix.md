@@ -9,6 +9,12 @@ longer represents claimable work.
 |---|---|---|---|---|---|
 | Storage create/write fails before dispatch notification | No new job; the previous durable state is unchanged | No notification is added | None | Caller may retry the operation | Original storage exception |
 | Notification enqueue fails after storage commit | `pending` job exists | Notification is missing | None | Bounded reconciliation restores the notification; idempotent dispatch avoids a second active job | Dispatch exception; reconciliation log reports `restored` |
+| Crash after scheduled storage create before delayed notification | `pending` with a future `available_at` | Delayed notification is missing | None | Bounded reconciliation parses `available_at` as UTC and restores the notification into the delayed structure with the remaining delay — never into pending | Dispatch exception; reconciliation log reports `restored` |
+| Duplicate notification after a retry dispatch | `pending` with a future `available_at` and incremented attempts | Notification exists in delayed (and optionally a stale pending member) | None | Reconciliation detects the existing delayed notification and reports a duplicate instead of adding another; storage claims gate on `available_at` | `Duplicate` outcome; no extra notification |
+| Dispatcher/worker clock skew | `pending` with an absolute UTC `available_at` | Delayed notification scored by the dispatcher clock | None | Claim queries compare the worker clock with the stored absolute `available_at`; a worker clock behind cannot claim early, a clock ahead may claim up to the skew amount early | Early/late claim timings; availability remains absolute time |
+| Past/now schedule clamping | `pending` with `available_at` equal to now | Immediate notification | None | The schedule path is skipped entirely; the storage claim is immediately eligible | Immediate dispatch path unchanged |
+| Cancel of a scheduled job | `cancelled`, ownership cleared, completion time set | Delayed notification removed | Removal of the delayed member | Repeating cancellation retries idempotent notification removal | `cancelJob()` returns `true` |
+| Max-attempts exhaustion with scheduled retries | `failed` after the final attempt; retry delays kept the job out of `pending` while waiting | Processing notification removed after the fenced failure write | ACK only after the fenced terminal write | No further notifications are produced; administrative redispatch may re-schedule | Failure log plus `failed` event |
 | Connection is lost while claiming after a notification is popped | Job normally remains `pending`; a completed claim transaction remains authoritative if the response was lost | Notification is in processing | Immediate NACK when possible | PDO reconnect retries recognized connection-loss errors once; failed NACK is repaired by stale queue recovery and storage fencing rejects duplicate claims | Claim/requeue error log; loop-level infrastructure event and bounded backoff |
 | Backend returns a malformed notification or stored JSON | Valid durable jobs are unchanged; malformed stored JSON cannot be hydrated | Malformed Redis member is removed instead of becoming job `0` | Discard malformed member; do not ACK a valid job | Producer/data repair is required for malformed durable JSON; queue processing continues after malformed notification cleanup | Contextual `SerializationException`, or a `null` dequeue plus removed malformed member |
 | Handler throws before the final attempt | `pending`, attempts incremented, retry time and error recorded | Processing notification moves to delayed/pending | NACK with the selected delay, only after durable retry scheduling | Delayed promotion and normal worker processing | Failure log plus `retried` event |
@@ -24,7 +30,15 @@ longer represents claimable work.
 ## Deterministic coverage
 
 The transition boundaries are exercised with an in-memory fault-injecting
-driver in `tests/Integration/FailurePathTest.php`. Crash recovery, lease
+driver in `tests/Integration/FailurePathTest.php`. The scheduled-dispatch rows
+are covered deterministically there: delayed-notification failure after a
+scheduled storage create is repaired into the delayed structure, a duplicate
+notification after a retry dispatch is not amplified, a worker clock behind
+the dispatcher cannot claim early, past/now schedules follow the immediate
+path, cancelling a scheduled job removes the delayed notification, and
+max-attempts exhaustion stops rescheduling. UTC-safe reconciliation timestamp
+parsing is characterized in `tests/Unit/QueueReconcilerTest.php` under
+non-UTC default timezones. Crash recovery, lease
 fencing, duplicate delivery, cursor continuation, and backend contracts are
 also covered by:
 

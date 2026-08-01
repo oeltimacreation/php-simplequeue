@@ -41,7 +41,7 @@ final readonly class ReconciliationJobProcessor
             return ReconcileJobOutcome::Invalid;
         }
 
-        $parsedAvailableAt = strtotime($job->availableAt ?? 'now');
+        $parsedAvailableAt = $this->parseAvailableAt($job->availableAt);
         $availableAt = $parsedAvailableAt === false ? $this->clock->timestamp() : $parsedAvailableAt;
         $isDue = $availableAt <= $this->clock->timestamp();
         $exists = $isDue
@@ -57,5 +57,34 @@ final readonly class ReconciliationJobProcessor
             $this->driver->nack($queue, $job->id, max(0, $availableAt - $this->clock->timestamp()));
         }
         return ReconcileJobOutcome::Restored;
+    }
+
+    /**
+     * Parse a stored availability timestamp as UTC.
+     *
+     * Storage implementations write availability timestamps with gmdate() in
+     * UTC. Parsing those strings with the server default timezone would shift
+     * due/not-due reconciliation decisions by the timezone offset on non-UTC
+     * hosts, so the storage format is decoded against the UTC timezone
+     * explicitly. Unparseable values fall back to a UTC-annotated strtotime()
+     * so alternate storage shapes still reconcile.
+     *
+     * @param string|null $availableAt Stored availability timestamp, or null for now
+     * @return int|false Unix timestamp, or false when the value cannot be parsed
+     */
+    private function parseAvailableAt(?string $availableAt): int|false
+    {
+        if ($availableAt === null || $availableAt === '') {
+            return $this->clock->timestamp();
+        }
+
+        $parsed = \DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $availableAt, new \DateTimeZone('UTC'));
+        if ($parsed !== false) {
+            return $parsed->getTimestamp();
+        }
+
+        $fallback = strtotime($availableAt . ' UTC');
+
+        return $fallback === false ? false : $fallback;
     }
 }

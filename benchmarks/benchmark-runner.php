@@ -66,6 +66,7 @@ function benchmark(BenchmarkScenario $scenario, BenchmarkOptions $options, Closu
         'name' => $scenario->value,
         'median_seconds' => median(array_column($samples, 'seconds')),
         'median_throughput_per_second' => median(array_column($samples, 'throughput_per_second')),
+        'median_operations' => median(array_column($samples, 'operations')),
         'max_peak_memory_bytes' => max([0, ...array_column($samples, 'peak_memory_bytes')]),
         'median_retained_memory_bytes' => median(array_column($samples, 'retained_memory_bytes')),
         'median_db_queries' => median(array_column($samples, 'db_queries')),

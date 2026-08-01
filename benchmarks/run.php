@@ -13,6 +13,7 @@ require_once __DIR__ . '/local-worker.php';
 require_once __DIR__ . '/local-maintenance.php';
 require_once __DIR__ . '/redis-support.php';
 require_once __DIR__ . '/redis-scenarios.php';
+require_once __DIR__ . '/operation-count-checks.php';
 
 function runBenchmarks(): void
 {
@@ -21,6 +22,7 @@ function runBenchmarks(): void
     if ($options->redisHost !== null) {
         $results = array_merge($results, redisBenchmarks($options));
     }
+    assertHotLoopCounters($results);
 
     echo json_encode([
         'environment' => [

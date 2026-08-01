@@ -18,8 +18,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added an internal `RedisScriptRunner` that sends Redis Lua scripts through `EVALSHA` and falls back to `EVAL` on `NOSCRIPT`, applied to the dequeue, delayed-promotion, and stale-recovery scripts. Wire payload bytes for the dequeue/ACK scenario dropped 72.8% (14,847 → 4,040 bytes per 100 jobs) and localhost dequeue latency fell ~24%; command and roundtrip counts are unchanged.
 - Added `SupportsDelayedJobs::enqueueDelayedBatch()` (implemented by the Redis and In-Memory drivers), a `DelayedBatch` value object, and `QueueManager::enqueueDelayedBatch(DelayedBatch)`, so a scheduled `dispatchBatch()` sends one Redis `ZADD` instead of one roundtrip per job. Measured on 100 jobs: 100 roundtrips → 1, -75.5% median latency. Drivers without the batch method fall back to one `enqueueDelayed()` per job.
 - Expanded the benchmark harness with scheduled single/batch dispatch scenarios (In-Memory, SQLite, Redis), a 10,000-job delayed-promotion scenario, an idle-worker CPU/memory check, and per-sample `redis_wire_bytes` and `cpu_seconds` metrics.
+- Extended the scheduled-dispatch failure matrix in `docs/failure-matrix.md` with deterministic fault-injection coverage in `tests/Integration/FailurePathTest.php` for: crash after scheduled storage create before delayed notification (the reconciler restores the job into the delayed structure with the remaining delay), duplicate notification after a retry dispatch, dispatcher/worker clock skew, past/now schedule clamping, cancel of a scheduled job, and max-attempts exhaustion with scheduled retries.
+- Added operation-counter assertions to the benchmark harness (`benchmarks/operation-count-checks.php`): scheduled single dispatch stays one driver roundtrip per job, scheduled batch dispatch and delayed promotion stay one roundtrip, dequeue/ACK stays bounded, and the SQLite claim path keeps one transaction and bounded statements per claim.
+- Added UTC-safe reconciliation characterization tests in `tests/Unit/QueueReconcilerTest.php` that set non-UTC default timezones (`America/New_York` and `Asia/Tokyo`), assert due/not-due routing against stored UTC `available_at`, and restore the timezone.
 
 ### Changed
+
+- `WorkerOptions` gains `promoteLimit` (default `100`, array key `promote_limit`) and the worker passes it through both promote call sites, making delayed-promotion throughput tunable for Redis scheduled workloads; tuning guidance is documented in `docs/operations.md`.
+- Re-published `quality/quality-baseline.json` to absorb the Stage 3 test coverage so the quality ratchet remains green.
+
+### Fixed
+
+- `ReconciliationJobProcessor` now parses stored `available_at` timestamps as UTC (decoded against the UTC timezone, with a UTC-annotated `strtotime()` fallback) instead of the server default timezone. Previously a non-UTC host shifted due/not-due reconciliation routing by the timezone offset, affecting retry reconciliation and scheduled-dispatch recovery.
 
 - `JobDispatcher` accepts an optional `ClockInterface` (defaults to `SystemClock`) used by `dispatchAfter()` and for clamping past timestamps.
 - `InMemoryJobStorage::createJobs()` shares a private row-building helper with `createJob()` so immediate and scheduled batch creation use one code path.

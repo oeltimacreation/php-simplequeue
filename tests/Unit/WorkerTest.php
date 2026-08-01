@@ -57,6 +57,34 @@ class WorkerTest extends TestCase
         );
     }
 
+    /**
+     * Build a delayed-capable driver mock expecting one promote with the limit.
+     *
+     * @param int $limit Expected promote limit
+     * @param list<string> $order Driver call order recorded when provided
+     * @return WorkerTestDelayedQueueDriver&\PHPUnit\Framework\MockObject\MockObject
+     */
+    private function promoteLimitDriver(int $limit, array &$order = []): WorkerTestDelayedQueueDriver
+    {
+        $driver = $this->createMock(WorkerTestDelayedQueueDriver::class);
+        $driver->expects($this->once())
+            ->method('promoteDelayedJobs')
+            ->with('default', $limit)
+            ->willReturnCallback(
+                static function () use (&$order): int {
+                    $order[] = 'promote';
+                    return 0;
+                }
+            );
+        $driver->method('dequeue')->willReturnCallback(
+            static function () use (&$order): ?int {
+                $order[] = 'dequeue';
+                return null;
+            }
+        );
+        return $driver;
+    }
+
     public function testWorkerContinuesWhenStorageThrowsExceptionDuringClaim(): void
     {
         $driver = $this->createMock(QueueDriverInterface::class);
@@ -118,56 +146,26 @@ class WorkerTest extends TestCase
 
     public function testWorkerCallsPromoteDelayedJobsBeforeDequeue(): void
     {
-        $driverWithPromote = new class implements QueueDriverInterface, SupportsDelayedJobs {
-            public bool $promoteCalled = false;
-            public bool $dequeueCalled = false;
-            public ?string $promoteCalledBefore = null;
-
-            public function isAvailable(): bool
-            {
-                return true;
-            }
-
-            public function enqueue(string $queue, int $jobId): void
-            {
-            }
-
-            public function dequeue(string $queue, int $timeoutSeconds): ?int
-            {
-                $this->dequeueCalled = true;
-                $this->promoteCalledBefore = $this->promoteCalled ? 'before' : 'after';
-                return null;
-            }
-
-            public function ack(string $queue, int $jobId): void
-            {
-            }
-
-            public function nack(string $queue, int $jobId, int $delaySeconds = 0): void
-            {
-            }
-
-            public function promoteDelayedJobs(string $queue, int $limit = 100): int
-            {
-                $this->promoteCalled = true;
-                return 0;
-            }
-
-            public function enqueueDelayed(string $queue, int $jobId, int $availableAt): void
-            {
-            }
-
-            public function enqueueDelayedBatch(string $queue, array $jobIds, int $availableAt): void
-            {
-            }
-        };
-
-        $worker = $this->createWorkerWithDriver($driverWithPromote);
+        $order = [];
+        $worker = $this->createWorkerWithDriver($this->promoteLimitDriver(100, $order));
         $worker->processOne();
 
-        $this->assertTrue($driverWithPromote->promoteCalled, 'promoteDelayedJobs should be called');
-        $this->assertTrue($driverWithPromote->dequeueCalled, 'dequeue should be called');
-        $this->assertEquals('before', $driverWithPromote->promoteCalledBefore, 'promote should be called before dequeue');
+        $this->assertSame(['promote', 'dequeue'], $order, 'promote should run before dequeue with the default limit');
+    }
+
+    public function testWorkerPassesConfiguredPromoteLimitThroughProcessOne(): void
+    {
+        $worker = $this->createWorkerWithDriver($this->promoteLimitDriver(42), ['promote_limit' => 42]);
+        $worker->processOne();
+    }
+
+    public function testWorkerPassesConfiguredPromoteLimitThroughRunLoop(): void
+    {
+        $worker = $this->createWorkerWithDriver(
+            $this->promoteLimitDriver(250),
+            ['promote_limit' => 250, 'stop_when_empty' => true]
+        );
+        $worker->run();
     }
 
     public function testDriverSupportsRecoverStaleProcessingMethod(): void

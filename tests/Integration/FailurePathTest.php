@@ -9,6 +9,7 @@ use Oeltima\SimpleQueue\Contract\JobHandlerInterface;
 use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Contract\SupportsBoundedQueueMembership;
+use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
 use Oeltima\SimpleQueue\Contract\SupportsJobRemoval;
 use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
 use Oeltima\SimpleQueue\Exception\QueueException;
@@ -28,6 +29,7 @@ enum QueueFailureOperation: string
     case Acknowledge = 'ack';
     case Reject = 'nack';
     case Remove = 'remove';
+    case EnqueueDelayed = 'enqueue_delayed';
 }
 
 final class QueueFailurePlan
@@ -242,8 +244,141 @@ final class FailurePathTest extends TestCase
         self::assertSame([], $inner->getPending('default'));
     }
 
+    public function testScheduledNotificationFailureLeavesFutureJobForReconciliationRestore(): void
+    {
+        $clock = new FrozenClock();
+        $storage = new InMemoryJobStorage($clock);
+        $inner = new InMemoryQueueDriver($clock);
+        $driver = $this->faultInjectingDriver($inner, QueueFailureOperation::EnqueueDelayed);
+        $dispatcher = new JobDispatcher($storage, new QueueManager($driver), $clock);
+
+        try {
+            $dispatcher->dispatch('test.job', ['scheduled' => true], availableAt: $clock->timestamp() + 3600);
+            self::fail('Delayed notification failure must escape dispatch');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('Injected enqueue_delayed failure', $exception->getMessage());
+        }
+
+        $jobs = $storage->list(JobStatus::Pending);
+        self::assertCount(1, $jobs);
+        self::assertSame(gmdate('Y-m-d H:i:s', $clock->timestamp() + 3600), $jobs[0]->availableAt);
+        self::assertSame([], $inner->getPending('default'));
+        self::assertSame([], $inner->getDelayed('default'));
+
+        $result = (new QueueReconciler($storage, $inner, $clock))->reconcile('default', new ReconcileOptions());
+
+        self::assertSame(1, $result->restored);
+        self::assertSame([], $inner->getPending('default'));
+        self::assertSame([$jobs[0]->id], $inner->getDelayedIds('default'));
+    }
+
+    public function testDuplicateNotificationAfterRetryDispatchIsNotAmplified(): void
+    {
+        $clock = new FrozenClock();
+        $storage = new InMemoryJobStorage($clock);
+        $driver = new InMemoryQueueDriver($clock);
+        [$jobId, $worker] = $this->retryJob($storage, $driver);
+
+        self::assertTrue($worker->processOne());
+        $job = $storage->find($jobId);
+        self::assertSame(JobStatus::Pending, $job?->status);
+        self::assertSame(1, $job->attempts);
+        self::assertSame([$jobId], $driver->getDelayedIds('default'));
+
+        // A duplicate pending notification for the not-yet-due retry.
+        $driver->enqueue('default', $jobId);
+
+        $result = (new QueueReconciler($storage, $driver, $clock))->reconcile('default', new ReconcileOptions());
+
+        self::assertSame(0, $result->restored);
+        self::assertSame(1, $result->duplicates);
+        self::assertSame([$jobId], $driver->getDelayedIds('default'));
+        self::assertSame([$jobId], $driver->getPending('default'));
+        self::assertNull($storage->claimNextAvailable('default', 'worker-2'));
+    }
+
+    public function testWorkerClockBehindDispatcherCannotClaimScheduledJobEarly(): void
+    {
+        $dispatcherClock = new FrozenClock();
+        $workerClock = new FrozenClock($dispatcherClock->timestamp() - 7200);
+        $storage = new InMemoryJobStorage($workerClock);
+        $driver = new InMemoryQueueDriver($dispatcherClock);
+        $dispatcher = new JobDispatcher($storage, new QueueManager($driver), $dispatcherClock);
+
+        $jobId = $dispatcher->dispatch('test.job', ['skew' => true], availableAt: $dispatcherClock->timestamp() + 3600);
+
+        self::assertNull($storage->claimNextAvailable('default', 'skewed-worker'));
+
+        $workerClock->advance(10800);
+        /** @var ClaimedJob|null $claim */
+        $claim = $storage->claimNextAvailable('default', 'skewed-worker');
+        self::assertInstanceOf(ClaimedJob::class, $claim);
+        self::assertSame($jobId, $claim->job->id);
+    }
+
+    public function testScheduledDispatchWithPastTimestampFollowsImmediatePath(): void
+    {
+        $clock = new FrozenClock();
+        $storage = new InMemoryJobStorage($clock);
+        $driver = new InMemoryQueueDriver($clock);
+        $dispatcher = new JobDispatcher($storage, new QueueManager($driver), $clock);
+
+        $jobId = $dispatcher->dispatch('test.job', [], availableAt: $clock->timestamp() - 60);
+
+        self::assertSame([$jobId], $driver->getPending('default'));
+        self::assertSame([], $driver->getDelayed('default'));
+        $claim = $storage->claimNextAvailable('default', 'immediate-worker');
+        self::assertNotNull($claim);
+        self::assertSame($jobId, $claim->job->id);
+    }
+
+    public function testCancelScheduledJobRemovesDelayedNotification(): void
+    {
+        $clock = new FrozenClock();
+        $storage = new InMemoryJobStorage($clock);
+        $driver = new InMemoryQueueDriver($clock);
+        $dispatcher = new JobDispatcher($storage, new QueueManager($driver), $clock);
+
+        $jobId = $dispatcher->dispatch('test.job', [], availableAt: $clock->timestamp() + 3600);
+        self::assertSame([$jobId], $driver->getDelayedIds('default'));
+
+        self::assertTrue($dispatcher->cancelJob($jobId));
+
+        self::assertSame(JobStatus::Cancelled, $storage->find($jobId)?->status);
+        self::assertSame([], $driver->getDelayed('default'));
+        self::assertSame([], $driver->getPending('default'));
+    }
+
+    public function testScheduledRetriesExhaustMaxAttemptsWithoutRescheduling(): void
+    {
+        $clock = new FrozenClock();
+        $storage = new InMemoryJobStorage($clock);
+        $driver = new InMemoryQueueDriver($clock);
+        $registry = $this->failingRegistry();
+        $dispatcher = new JobDispatcher($storage, new QueueManager($driver), $clock);
+        $jobId = $dispatcher->dispatch('test.retry', [], maxAttempts: 2, availableAt: $clock->timestamp() + 60);
+        $worker = $this->worker($storage, $driver, $registry);
+
+        $clock->advance(60);
+        self::assertTrue($worker->processOne());
+        $firstRetry = $storage->find($jobId);
+        self::assertNotNull($firstRetry);
+        self::assertSame(JobStatus::Pending, $firstRetry->status);
+        self::assertSame(1, $firstRetry->attempts);
+        self::assertSame([$jobId], $driver->getDelayedIds('default'));
+
+        $clock->advance(1);
+        self::assertTrue($worker->processOne());
+        $job = $storage->find($jobId);
+        self::assertSame(JobStatus::Failed, $job?->status);
+        self::assertSame(1, $job->attempts);
+        self::assertSame([], $driver->getPending('default'));
+        self::assertSame([], $driver->getDelayed('default'));
+        self::assertSame([], $driver->getProcessing('default'));
+    }
+
     /**
-     * @return QueueDriverInterface&SupportsBoundedQueueMembership&SupportsJobRemoval&\PHPUnit\Framework\MockObject\MockObject
+     * @return QueueDriverInterface&SupportsBoundedQueueMembership&SupportsJobRemoval&SupportsDelayedJobs&\PHPUnit\Framework\MockObject\MockObject
      */
     private function faultInjectingDriver(
         InMemoryQueueDriver $inner,
@@ -253,6 +388,7 @@ final class FailurePathTest extends TestCase
             QueueDriverInterface::class,
             SupportsBoundedQueueMembership::class,
             SupportsJobRemoval::class,
+            SupportsDelayedJobs::class,
         ]);
         $plan = new QueueFailurePlan($failure);
         $driver->method('isAvailable')->willReturnCallback($inner->isAvailable(...));
@@ -264,6 +400,8 @@ final class FailurePathTest extends TestCase
             'ack' => [QueueFailureOperation::Acknowledge, $inner->ack(...)],
             'nack' => [QueueFailureOperation::Reject, $inner->nack(...)],
             'remove' => [QueueFailureOperation::Remove, $inner->remove(...)],
+            'enqueueDelayed' => [QueueFailureOperation::EnqueueDelayed, $inner->enqueueDelayed(...)],
+            'enqueueDelayedBatch' => [QueueFailureOperation::EnqueueDelayed, $inner->enqueueDelayedBatch(...)],
         ];
         foreach ($faultableOperations as $method => [$operation, $delegate]) {
             $driver->method($method)->willReturnCallback(
