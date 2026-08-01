@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-08-01
+
 ### Added
 
 - Added scheduled initial dispatch: `dispatchAt()`, `dispatchAfter()`, and an optional `$availableAt` parameter on `dispatch()` and `dispatchBatch()`, working across Redis, Database, and In-Memory drivers. A scheduled job is stored with a future `available_at`, receives a delayed notification on delayed-capable drivers, and is claimed only when due; past or now timestamps take the existing immediate path unchanged.
