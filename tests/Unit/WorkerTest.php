@@ -156,6 +156,10 @@ class WorkerTest extends TestCase
             public function enqueueDelayed(string $queue, int $jobId, int $availableAt): void
             {
             }
+
+            public function enqueueDelayedBatch(string $queue, array $jobIds, int $availableAt): void
+            {
+            }
         };
 
         $worker = $this->createWorkerWithDriver($driverWithPromote);

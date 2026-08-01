@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue;
 
 use Oeltima\SimpleQueue\Contract\ClockInterface;
+use Oeltima\SimpleQueue\Contract\DelayedBatch;
 use Oeltima\SimpleQueue\Contract\JobData;
 use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
@@ -198,9 +199,7 @@ final class JobDispatcher
         if ($resolvedAt === null) {
             $this->notifyBatch($queue, $jobIds);
         } else {
-            foreach ($jobIds as $jobId) {
-                $this->queueManager->enqueueDelayed($jobId, $queue, $resolvedAt);
-            }
+            $this->queueManager->enqueueDelayedBatch(new DelayedBatch($jobIds, $queue, $resolvedAt));
         }
 
         return $jobIds;

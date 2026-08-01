@@ -6,12 +6,14 @@ namespace Oeltima\SimpleQueue\Tests\Unit;
 
 require_once __DIR__ . '/RedisQueueDriverTest.php';
 
+use Oeltima\SimpleQueue\Contract\DelayedBatch;
 use Oeltima\SimpleQueue\Driver\DatabaseQueueDriver;
 use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
 use Oeltima\SimpleQueue\Driver\RedisQueueDriver;
 use Oeltima\SimpleQueue\Exception\DriverNotAvailableException;
 use Oeltima\SimpleQueue\QueueManager;
 use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 class UnavailableRedisClient extends MockRedisClient
@@ -113,17 +115,46 @@ class QueueManagerTest extends TestCase
 
         $manager->enqueueDelayed(7, 'default', 1_700_000_100);
 
-        $this->assertSame(0, $driver->getPendingCount('default'));
-        $this->assertSame(1, $driver->getDelayedCount('default'));
+        $this->assertDelayedDelegation($driver, 1);
         $this->assertSame(1_700_000_100, $driver->getDelayed('default')[7]);
     }
 
-    public function testEnqueueDelayedFallsBackForStorageGatedDriver(): void
+    #[DataProvider('invalidDelayedEnqueue')]
+    public function testDelayedEnqueueRejectsInvalidJobIdForStorageGatedDriver(callable $enqueue): void
     {
         $manager = QueueManager::database(new InMemoryJobStorage());
 
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionMessage('jobId must be a positive integer');
-        $manager->enqueueDelayed(0, 'default', 1_700_000_100);
+        $enqueue($manager);
+    }
+
+    public function testEnqueueDelayedBatchDelegatesToDelayedSupportingDriver(): void
+    {
+        $driver = new InMemoryQueueDriver();
+        $manager = new QueueManager($driver);
+
+        $manager->enqueueDelayedBatch(new DelayedBatch([7, 8], 'default', 1_700_000_100));
+
+        $this->assertDelayedDelegation($driver, 2);
+        $this->assertSame(1_700_000_100, $driver->getDelayed('default')[7]);
+        $this->assertSame(1_700_000_100, $driver->getDelayed('default')[8]);
+    }
+
+    /**
+     * @return array<string, array{callable(QueueManager): void}>
+     */
+    public static function invalidDelayedEnqueue(): array
+    {
+        return [
+            'single' => [static fn (QueueManager $manager) => $manager->enqueueDelayed(0, 'default', 1_700_000_100)],
+            'batch' => [static fn (QueueManager $manager) => $manager->enqueueDelayedBatch(new DelayedBatch([0], 'default', 1_700_000_100))],
+        ];
+    }
+
+    private function assertDelayedDelegation(InMemoryQueueDriver $driver, int $expectedDelayedCount): void
+    {
+        $this->assertSame(0, $driver->getPendingCount('default'));
+        $this->assertSame($expectedDelayedCount, $driver->getDelayedCount('default'));
     }
 }

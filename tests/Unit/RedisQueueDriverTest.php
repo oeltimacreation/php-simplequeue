@@ -6,9 +6,11 @@ namespace Oeltima\SimpleQueue\Tests\Unit;
 
 use Oeltima\SimpleQueue\Driver\RedisQueueDriver;
 use Oeltima\SimpleQueue\Exception\QueueException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Predis\ClientInterface;
 use Predis\Command\CommandInterface;
+use Predis\Response\ServerException;
 
 /**
  * Mock Redis client for testing.
@@ -22,6 +24,9 @@ class MockRedisClient implements ClientInterface
 
     /** @var array<string, mixed> */
     public array $returns = [];
+
+    /** @var array<string, \Throwable> */
+    public array $throws = [];
 
     public ?MockRedisPipeline $pipeline = null;
 
@@ -69,6 +74,9 @@ class MockRedisClient implements ClientInterface
     public function __call($commandID, $arguments)
     {
         $this->calls[] = ['method' => $commandID, 'args' => $arguments];
+        if (isset($this->throws[$commandID])) {
+            throw $this->throws[$commandID];
+        }
         return $this->returns[$commandID] ?? null;
     }
 
@@ -120,18 +128,76 @@ class RedisQueueDriverTest extends TestCase
         $this->driver = new RedisQueueDriver($this->redis, 'test');
     }
 
-    public function testDequeueNonBlockingWhenTimeoutZero(): void
+    /** @return list<string> */
+    private function callMethods(): array
     {
-        $this->redis->returns['eval'] = '123';
+        return array_column($this->redis->calls, 'method');
+    }
+
+    /**
+     * @return list<array{method: string, args: array<int, mixed>}>
+     */
+    private function callsFor(string $method): array
+    {
+        return array_values(array_filter(
+            $this->redis->calls,
+            static fn (array $call): bool => $call['method'] === $method
+        ));
+    }
+
+    private function expectColdScriptCache(): void
+    {
+        $this->redis->throws['evalsha'] = new ServerException('NOSCRIPT No matching script. Please use EVAL.');
+    }
+
+    #[DataProvider('nonBlockingDequeueTransport')]
+    public function testNonBlockingDequeueUsesAtomicLuaScript(bool $coldCache): void
+    {
+        if ($coldCache) {
+            $this->expectColdScriptCache();
+            $this->redis->returns['eval'] = '123';
+        } else {
+            $this->redis->returns['evalsha'] = '123';
+        }
 
         $jobId = $this->driver->dequeue('default', 0);
 
         $this->assertEquals(123, $jobId);
 
-        $callMethods = array_column($this->redis->calls, 'method');
-        $this->assertContains('eval', $callMethods, 'Should use atomic Lua dequeue');
-        $this->assertNotContains('lmove', $callMethods, 'Lua owns the non-blocking move');
-        $this->assertNotContains('blmove', $callMethods, 'Should not use blocking blmove');
+        $methods = $this->callMethods();
+        $this->assertContains('evalsha', $methods, 'Should attempt cached atomic Lua dequeue');
+        if ($coldCache) {
+            $this->assertContains('eval', $methods, 'NOSCRIPT should fall back to EVAL');
+        } else {
+            $this->assertNotContains('eval', $methods);
+        }
+        $this->assertNotContains('lmove', $methods, 'Lua owns the non-blocking move');
+        $this->assertNotContains('blmove', $methods, 'Should not use blocking blmove');
+    }
+
+    /**
+     * @return array<string, array{bool}>
+     */
+    public static function nonBlockingDequeueTransport(): array
+    {
+        return [
+            'warm script cache' => [false],
+            'cold script cache (NOSCRIPT fallback)' => [true],
+        ];
+    }
+
+    public function testScriptRunnerRethrowsNonNoScriptErrors(): void
+    {
+        $this->redis->throws['evalsha'] = new ServerException('WRONGTYPE Operation against a key holding the wrong kind of value');
+
+        $this->expectException(ServerException::class);
+        $this->expectExceptionMessage('WRONGTYPE');
+
+        $this->driver->dequeue('default', 0);
+
+        $methods = $this->callMethods();
+        $this->assertContains('evalsha', $methods);
+        $this->assertNotContains('eval', $methods, 'Non-NOSCRIPT errors must not trigger the EVAL fallback');
     }
 
     public function testDequeueBlockingWhenTimeoutPositive(): void
@@ -142,14 +208,14 @@ class RedisQueueDriverTest extends TestCase
 
         $this->assertEquals(456, $jobId);
 
-        $callMethods = array_column($this->redis->calls, 'method');
-        $this->assertContains('blmove', $callMethods, 'Should use blocking blmove');
-        $this->assertNotContains('lmove', $callMethods, 'Should not use non-blocking lmove');
+        $methods = $this->callMethods();
+        $this->assertContains('blmove', $methods, 'Should use blocking blmove');
+        $this->assertNotContains('lmove', $methods, 'Should not use non-blocking lmove');
     }
 
     public function testDequeueReturnsNullWhenEmpty(): void
     {
-        $this->redis->returns['eval'] = null;
+        $this->redis->returns['evalsha'] = null;
 
         $jobId = $this->driver->dequeue('default', 0);
 
@@ -158,13 +224,13 @@ class RedisQueueDriverTest extends TestCase
 
     public function testDequeueRejectsMalformedRedisJobIdWithoutCastingIt(): void
     {
-        $this->redis->returns['eval'] = '0';
+        $this->redis->returns['evalsha'] = '0';
 
         $this->expectException(QueueException::class);
         try {
             $this->driver->dequeue('default', 0);
         } finally {
-            $methods = array_column($this->redis->calls, 'method');
+            $methods = $this->callMethods();
             $this->assertContains('lrem', $methods);
             $this->assertContains('zrem', $methods);
         }
@@ -192,11 +258,11 @@ class RedisQueueDriverTest extends TestCase
     {
         $this->redis->returns['lrange'] = ['123'];
         $this->redis->pipelineReturns = [[null]];
-        $this->redis->returns['eval'] = 0;
+        $this->redis->returns['evalsha'] = 0;
 
         $this->assertSame(0, $this->driver->recoverStaleProcessing('default', 60, 1));
 
-        $methods = array_column($this->redis->calls, 'method');
+        $methods = $this->callMethods();
         $this->assertContains('lrange', $methods);
         $this->assertSame(['zscore'], array_column($this->redis->pipelines[0]->calls, 'method'));
         $this->assertSame(['zadd'], array_column($this->redis->pipelines[1]->calls, 'method'));
@@ -206,7 +272,7 @@ class RedisQueueDriverTest extends TestCase
     {
         $this->redis->returns['lrange'] = ['123', '456'];
         $this->redis->pipelineReturns = [['1700000000', '1700000001']];
-        $this->redis->returns['eval'] = 0;
+        $this->redis->returns['evalsha'] = 0;
 
         $this->assertSame(0, $this->driver->recoverStaleProcessing('default', 60, 2));
 
@@ -257,61 +323,109 @@ class RedisQueueDriverTest extends TestCase
         $this->assertContains('lpush', $pipelineMethods, 'Should immediately re-enqueue');
     }
 
-    public function testPromoteDelayedJobsEvaluatesLuaScript(): void
+    #[DataProvider('delayedPromotionTransport')]
+    public function testPromoteDelayedJobsUsesAtomicLuaScript(bool $coldCache): void
     {
-        $this->redis->returns['eval'] = 3;
+        if ($coldCache) {
+            $this->expectColdScriptCache();
+            $this->redis->returns['eval'] = 3;
+        } else {
+            $this->redis->returns['evalsha'] = 3;
+        }
 
-        $count = $this->driver->promoteDelayedJobs('default', 50);
+        $this->assertSame(3, $this->driver->promoteDelayedJobs('default', 50));
 
-        $this->assertEquals(3, $count);
-
-        $evalCall = array_filter(
-            $this->redis->calls,
-            fn($c) => $c['method'] === 'eval'
+        $this->assertScriptInvocation(
+            $coldCache ? 'eval' : 'evalsha',
+            !$coldCache,
+            ['test:queue:default:delayed', 'test:queue:default:pending'],
+            '50'
         );
-        $this->assertCount(1, $evalCall);
-
-        $call = reset($evalCall);
-        $this->assertStringContainsString('ZRANGEBYSCORE', $call['args'][0]);
-        $this->assertEquals(2, $call['args'][1]); // numKeys
-        $this->assertEquals('test:queue:default:delayed', $call['args'][2]);
-        $this->assertEquals('test:queue:default:pending', $call['args'][3]);
-        $this->assertEquals('50', $call['args'][5]);
     }
 
-    public function testRecoverStaleProcessingEvaluatesLuaScript(): void
+    /**
+     * @return array<string, array{bool}>
+     */
+    public static function delayedPromotionTransport(): array
     {
-        $this->redis->returns['eval'] = 2;
+        return [
+            'warm script cache' => [false],
+            'cold script cache (NOSCRIPT fallback)' => [true],
+        ];
+    }
+
+    public function testEnqueueDelayedBatchSendsSingleZadd(): void
+    {
+        $this->driver->enqueueDelayedBatch('default', [1, 2, 3], 1_700_000_100);
+
+        $zaddCalls = $this->callsFor('zadd');
+        $this->assertCount(1, $zaddCalls);
+
+        $call = $zaddCalls[0];
+        $this->assertEquals('test:queue:default:delayed', $call['args'][0]);
+        $this->assertEquals([1 => 1_700_000_100, 2 => 1_700_000_100, 3 => 1_700_000_100], $call['args'][1]);
+    }
+
+    public function testEnqueueDelayedBatchEmptyDoesNothing(): void
+    {
+        $this->driver->enqueueDelayedBatch('default', [], 1_700_000_100);
+
+        $this->assertCount(0, $this->callsFor('zadd'));
+    }
+
+    public function testRecoverStaleProcessingUsesCachedLuaScript(): void
+    {
+        $this->redis->returns['evalsha'] = 2;
         $this->redis->returns['lrange'] = [];
 
-        $count = $this->driver->recoverStaleProcessing('default', 600, 75);
+        $this->assertSame(2, $this->driver->recoverStaleProcessing('default', 600, 75));
 
-        $this->assertEquals(2, $count);
-
-        $evalCall = array_filter(
-            $this->redis->calls,
-            fn($c) => $c['method'] === 'eval'
+        $this->assertScriptInvocation(
+            'evalsha',
+            true,
+            ['test:queue:default:processing_z', 'test:queue:default:processing', 'test:queue:default:pending'],
+            '75'
         );
-        $this->assertCount(1, $evalCall);
+    }
 
-        $call = reset($evalCall);
-        $this->assertStringContainsString('ZRANGEBYSCORE', $call['args'][0]);
-        $this->assertEquals(3, $call['args'][1]); // numKeys
-        $this->assertEquals('test:queue:default:processing_z', $call['args'][2]);
-        $this->assertEquals('test:queue:default:processing', $call['args'][3]);
-        $this->assertEquals('test:queue:default:pending', $call['args'][4]);
-        $this->assertEquals('75', $call['args'][6]);
+    /**
+     * Assert a single Lua script invocation's key and argument shape.
+     *
+     * @param string $transportMethod Command used to run the script (evalsha or eval)
+     * @param bool $expectSha True when the first argument must be a 40-character SHA1 digest
+     * @param list<string> $keys Expected script keys in order
+     * @param string $lastArgument Expected final non-key script argument
+     */
+    private function assertScriptInvocation(
+        string $transportMethod,
+        bool $expectSha,
+        array $keys,
+        string $lastArgument
+    ): void {
+        $transportCalls = $this->callsFor($transportMethod);
+        $this->assertCount(1, $transportCalls);
+        $call = $transportCalls[0];
+        if ($expectSha) {
+            $this->assertSame(40, strlen($call['args'][0])); // SHA1 digest
+        } else {
+            $this->assertStringContainsString('ZRANGEBYSCORE', $call['args'][0]);
+        }
+        $numKeys = count($keys);
+        $this->assertSame($numKeys, $call['args'][1]);
+        foreach ($keys as $index => $key) {
+            $this->assertSame($key, $call['args'][$index + 2]);
+        }
+        $this->assertSame($lastArgument, $call['args'][$numKeys + 3]);
     }
 
     public function testClearRemovesAllKeys(): void
     {
         $this->driver->clear('default');
 
-        $delCall = array_filter($this->redis->calls, fn($c) => $c['method'] === 'del');
-        $this->assertCount(1, $delCall);
+        $delCalls = $this->callsFor('del');
+        $this->assertCount(1, $delCalls);
 
-        $delCall = reset($delCall);
-        $keys = $delCall['args'][0];
+        $keys = $delCalls[0]['args'][0];
         $this->assertCount(4, $keys);
         $this->assertContains('test:queue:default:pending', $keys);
         $this->assertContains('test:queue:default:processing', $keys);
@@ -332,13 +446,10 @@ class RedisQueueDriverTest extends TestCase
     {
         $this->driver->enqueueBatch('default', [1, 2, 3]);
 
-        $lpushCalls = array_filter(
-            $this->redis->calls,
-            fn($c) => $c['method'] === 'lpush'
-        );
+        $lpushCalls = $this->callsFor('lpush');
         $this->assertCount(1, $lpushCalls);
 
-        $call = reset($lpushCalls);
+        $call = $lpushCalls[0];
         $this->assertEquals('test:queue:default:pending', $call['args'][0]);
         $this->assertEquals(['1', '2', '3'], $call['args'][1]);
     }
@@ -347,11 +458,7 @@ class RedisQueueDriverTest extends TestCase
     {
         $this->driver->enqueueBatch('default', []);
 
-        $lpushCalls = array_filter(
-            $this->redis->calls,
-            fn($c) => $c['method'] === 'lpush'
-        );
-        $this->assertCount(0, $lpushCalls);
+        $this->assertCount(0, $this->callsFor('lpush'));
     }
 
     public function testGetPendingCount(): void
@@ -383,13 +490,9 @@ class RedisQueueDriverTest extends TestCase
     {
         $this->driver->enqueue('myqueue', 42);
 
-        $lpushCall = array_filter(
-            $this->redis->calls,
-            fn($c) => $c['method'] === 'lpush'
-        );
-        $lpushCall = reset($lpushCall);
+        $lpushCalls = $this->callsFor('lpush');
 
-        $this->assertEquals('test:queue:myqueue:pending', $lpushCall['args'][0]);
+        $this->assertEquals('test:queue:myqueue:pending', $lpushCalls[0]['args'][0]);
     }
 
     public function testValidateTimeoutThrowsExceptionWhenUnsafe(): void

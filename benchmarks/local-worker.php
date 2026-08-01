@@ -69,3 +69,35 @@ function workerBenchmark(BenchmarkOptions $options, BenchmarkScenario $scenario)
         };
     });
 }
+
+/** @return array<string, mixed> */
+function idleCpuMemoryBenchmark(BenchmarkOptions $options): array
+{
+    $scenario = BenchmarkScenario::named(['value' => 'worker.idle_cpu_memory']);
+    return benchmark($scenario, $options, static function () use ($options): Closure {
+        [$pdo, $storage] = sqliteStorage();
+        $worker = new Worker(
+            $storage,
+            new QueueManager(new InMemoryQueueDriver()),
+            new JobRegistry(),
+            options: [
+                'lock_file' => null,
+                'poll_timeout' => 0,
+                'promote_interval' => 0,
+                'recovery_interval' => 0,
+            ]
+        );
+        $pdo->resetCounts();
+        return static function () use ($worker, $pdo, $options): array {
+            $start = getrusage();
+            $cycles = 0;
+            for ($index = 0; $index < $options->idleCycles; $index++) {
+                $worker->processOne();
+                $cycles++;
+            }
+            $metrics = databaseCounts($pdo, ['operations' => $cycles]);
+            $metrics['cpu_seconds'] = cpuSeconds($start, getrusage());
+            return $metrics;
+        };
+    });
+}

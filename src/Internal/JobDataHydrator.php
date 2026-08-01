@@ -52,8 +52,12 @@ final class JobDataHydrator
             $data = (array) $data;
         }
 
-        $nonNullData = array_filter($data, static fn (mixed $value): bool => $value !== null);
-        $row = array_replace(self::ROW_DEFAULTS, $nonNullData);
+        $row = self::ROW_DEFAULTS;
+        foreach ($data as $key => $value) {
+            if (is_string($key) && $value !== null) {
+                $row[$key] = $value;
+            }
+        }
         $statusRaw = $row['status'];
         $status = $statusRaw instanceof JobStatus ? $statusRaw : JobStatus::from($statusRaw);
 

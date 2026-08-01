@@ -102,6 +102,12 @@ Semantics:
 - Third-party notification drivers must implement `SupportsDelayedJobs` for
   schedules to be honored; otherwise the notification falls back to a plain
   enqueue and only storage-gated claims protect the availability window.
+- Scheduled `dispatchBatch()` batches delayed notifications into a single
+  roundtrip on drivers that implement `SupportsDelayedJobs::enqueueDelayedBatch()`
+  (Redis and In-Memory do). Drivers that only implement `enqueueDelayed()`
+  receive one call per job through `QueueManager::enqueueDelayedBatch()`, which
+  takes a `DelayedBatch` value object describing the jobs, queue, and
+  availability time.
 
 The optional progress callback accepts a percentage from `0` to `100` and a
 message. Handlers expected to exceed `stuck_job_ttl` should report progress at

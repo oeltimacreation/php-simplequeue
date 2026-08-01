@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue;
 
+use Oeltima\SimpleQueue\Contract\DelayedBatch;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
@@ -62,12 +63,37 @@ final class QueueManager
      */
     public function enqueueDelayed(int $jobId, string $queue, int $availableAt): void
     {
-        if ($this->driver instanceof SupportsDelayedJobs) {
-            $this->driver->enqueueDelayed($queue, $jobId, $availableAt);
+        $this->enqueueDelayedBatch(new DelayedBatch([$jobId], $queue, $availableAt));
+    }
+
+    /**
+     * Enqueue multiple jobs with a delayed notification in one roundtrip.
+     *
+     * Delayed-capable drivers batch the notifications; storage-gated drivers
+     * fall back to one plain enqueue per job. See {@see enqueueDelayed()} for
+     * the third-party driver guidance.
+     *
+     * @param DelayedBatch $batch Jobs, queue, and availability time to notify
+     */
+    public function enqueueDelayedBatch(DelayedBatch $batch): void
+    {
+        $delayedDriver = $this->delayedDriver();
+        if ($delayedDriver !== null) {
+            $delayedDriver->enqueueDelayedBatch($batch->queue, $batch->jobIds, $batch->availableAt);
             return;
         }
 
-        $this->driver->enqueue($queue, $jobId);
+        foreach ($batch->jobIds as $jobId) {
+            $this->enqueue($jobId, $batch->queue);
+        }
+    }
+
+    /**
+     * The active driver when it can schedule delayed notifications natively.
+     */
+    private function delayedDriver(): ?SupportsDelayedJobs
+    {
+        return $this->driver instanceof SupportsDelayedJobs ? $this->driver : null;
     }
 
     /**
