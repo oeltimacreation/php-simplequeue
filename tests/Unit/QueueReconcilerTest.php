@@ -106,9 +106,7 @@ final class QueueReconcilerTest extends TestCase
 
     public function testReconcilesScheduledJobWithoutNotificationIntoDelayedStructure(): void
     {
-        $previousTimezone = date_default_timezone_get();
-        date_default_timezone_set('UTC');
-        try {
+        $this->withTimezone('UTC', function (): void {
             $clock = new FrozenClock();
             $storage = new InMemoryJobStorage($clock);
             $driver = new InMemoryQueueDriver($clock);
@@ -126,22 +124,15 @@ final class QueueReconcilerTest extends TestCase
             $clock->advance(60);
             $this->assertSame(1, $driver->promoteDelayedJobs('default'));
             $this->assertSame(1, $driver->getPendingCount('default'));
-        } finally {
-            date_default_timezone_set($previousTimezone);
-        }
+        });
     }
 
     public function testReconciliationParsesStoredTimestampAsUtcWhenDefaultTimezoneIsBehindUtc(): void
     {
-        $previousTimezone = date_default_timezone_get();
-        date_default_timezone_set('America/New_York');
-        try {
+        $this->withTimezone('America/New_York', function (): void {
             $clock = new FrozenClock();
             $storage = new InMemoryJobStorage($clock);
             $driver = new InMemoryQueueDriver($clock);
-            // The job became due 60s ago in UTC (available_at is stored as UTC),
-            // but a default-timezone parse of that string would place it 5 hours
-            // in the future and wrongly route it to delayed.
             $storage->createJobs([
                 ['type' => 'test.job', 'payload' => [], 'queue' => 'default', 'availableAt' => $clock->timestamp() - 60],
             ]);
@@ -151,22 +142,15 @@ final class QueueReconcilerTest extends TestCase
             $this->assertSame(1, $result->restored);
             $this->assertSame(1, $driver->getPendingCount('default'));
             $this->assertSame(0, $driver->getDelayedCount('default'));
-        } finally {
-            date_default_timezone_set($previousTimezone);
-        }
+        });
     }
 
     public function testReconciliationParsesStoredTimestampAsUtcWhenDefaultTimezoneIsAheadOfUtc(): void
     {
-        $previousTimezone = date_default_timezone_get();
-        date_default_timezone_set('Asia/Tokyo');
-        try {
+        $this->withTimezone('Asia/Tokyo', function (): void {
             $clock = new FrozenClock();
             $storage = new InMemoryJobStorage($clock);
             $driver = new InMemoryQueueDriver($clock);
-            // The job is not due for another 60s in UTC, but a default-timezone
-            // parse of that string would place it 9 hours in the past and
-            // wrongly route it to pending.
             $storage->createJobs([
                 ['type' => 'test.job', 'payload' => [], 'queue' => 'default', 'availableAt' => $clock->timestamp() + 60],
             ]);
@@ -183,6 +167,15 @@ final class QueueReconcilerTest extends TestCase
             $clock->advance(60);
             $this->assertSame(1, $driver->promoteDelayedJobs('default'));
             $this->assertSame(1, $driver->getPendingCount('default'));
+        });
+    }
+
+    private function withTimezone(string $timezone, callable $fn): void
+    {
+        $previousTimezone = date_default_timezone_get();
+        date_default_timezone_set($timezone);
+        try {
+            $fn();
         } finally {
             date_default_timezone_set($previousTimezone);
         }

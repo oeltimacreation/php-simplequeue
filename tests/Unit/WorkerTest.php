@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Tests\Unit;
 
 use Oeltima\SimpleQueue\Contract\JobData;
-use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Contract\JobHandlerInterface;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
@@ -14,6 +13,8 @@ use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
 use Oeltima\SimpleQueue\JobRegistry;
 use Oeltima\SimpleQueue\QueueManager;
 use Oeltima\SimpleQueue\Worker;
+use Oeltima\SimpleQueue\Tests\Support\ClaimedJobFactory;
+use Oeltima\SimpleQueue\Tests\Support\JobDataFactory;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 
@@ -57,6 +58,13 @@ class WorkerTest extends TestCase
         );
     }
 
+    private function mockClaimById(JobData $jobData): void
+    {
+        $this->storage->expects($this->once())
+            ->method('claimById')
+            ->willReturnCallback(fn(int $jobId, string $workerId): \Oeltima\SimpleQueue\Contract\ClaimedJob => ClaimedJobFactory::create($jobData, $workerId, 'lease-token'));
+    }
+
     /**
      * Build a delayed-capable driver mock expecting one promote with the limit.
      *
@@ -88,9 +96,8 @@ class WorkerTest extends TestCase
     public function testWorkerContinuesWhenStorageThrowsExceptionDuringClaim(): void
     {
         $driver = $this->createMock(QueueDriverInterface::class);
-        $driver->expects($this->once())
-            ->method('dequeue')
-            ->willReturn(123);
+        $driver->expects($this->once())->method('dequeue')->willReturn(123);
+        $driver->expects($this->never())->method('ack');
 
         $this->storage->expects($this->once())
             ->method('claimById')
@@ -100,48 +107,28 @@ class WorkerTest extends TestCase
             ->method('error')
             ->with(
                 'Failed to claim job from storage',
-                $this->callback(function ($context) {
-                    return isset($context['job_id']) && $context['job_id'] === 123;
-                })
+                $this->callback(fn(array $context): bool => isset($context['job_id']) && $context['job_id'] === 123)
             );
 
-        $driver->expects($this->never())
-            ->method('ack');
-
-        $worker = $this->createWorkerWithDriver($driver);
-        $result = $worker->processOne();
-
-        $this->assertFalse($result);
+        $this->assertFalse($this->createWorkerWithDriver($driver)->processOne());
     }
 
     public function testWorkerContinuesWhenJobAlreadyClaimedByAnotherWorker(): void
     {
         $driver = $this->createMock(QueueDriverInterface::class);
-        $driver->expects($this->once())
-            ->method('dequeue')
-            ->willReturn(456);
+        $driver->expects($this->once())->method('dequeue')->willReturn(456);
+        $driver->expects($this->once())->method('ack')->with('default', 456);
 
-        $this->storage->expects($this->once())
-            ->method('claimById')
-            ->willReturn(null);
+        $this->storage->expects($this->once())->method('claimById')->willReturn(null);
 
         $this->logger->expects($this->atLeastOnce())
             ->method('warning')
             ->with(
                 'Failed to claim job, may have been claimed by another process',
-                $this->callback(function ($context) {
-                    return isset($context['job_id']) && $context['job_id'] === 456;
-                })
+                $this->callback(fn(array $context): bool => isset($context['job_id']) && $context['job_id'] === 456)
             );
 
-        $driver->expects($this->once())
-            ->method('ack')
-            ->with('default', 456);
-
-        $worker = $this->createWorkerWithDriver($driver);
-        $result = $worker->processOne();
-
-        $this->assertFalse($result);
+        $this->assertFalse($this->createWorkerWithDriver($driver)->processOne());
     }
 
     public function testWorkerCallsPromoteDelayedJobsBeforeDequeue(): void
@@ -221,17 +208,7 @@ class WorkerTest extends TestCase
 
     public function testNackPassesDelayToDriver(): void
     {
-        $jobData = new JobData(
-            id: 789,
-            queue: 'default',
-            type: 'test.job',
-            status: JobStatus::Running,
-            payload: [],
-            attempts: 0,
-            maxAttempts: 3,
-            createdAt: date('Y-m-d H:i:s'),
-            updatedAt: date('Y-m-d H:i:s')
-        );
+        $jobData = JobDataFactory::running(['id' => 789, 'type' => 'test.job', 'attempts' => 0, 'maxAttempts' => 3]);
 
         $handler = new class implements JobHandlerInterface {
             public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
@@ -243,15 +220,9 @@ class WorkerTest extends TestCase
         $this->registry->register('test.job', get_class($handler));
 
         $driver = $this->createMock(QueueDriverInterface::class);
-        $driver->expects($this->once())
-            ->method('dequeue')
-            ->willReturn(789);
+        $driver->expects($this->once())->method('dequeue')->willReturn(789);
 
-        $this->storage->expects($this->once())
-            ->method('claimById')
-            ->willReturnCallback(function ($jobId, $workerId) use ($jobData) {
-                return new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, $workerId, 'lease-token');
-            });
+        $this->mockClaimById($jobData);
 
         $this->storage->expects($this->once())
             ->method('scheduleRetry')
@@ -259,11 +230,7 @@ class WorkerTest extends TestCase
 
         $driver->expects($this->once())
             ->method('nack')
-            ->with(
-                'default',
-                789,
-                $this->greaterThan(0)
-            );
+            ->with('default', 789, $this->greaterThan(0));
 
         $worker = $this->createWorkerWithDriver($driver, [
             'retry_base_delay' => 2,
@@ -298,44 +265,21 @@ class WorkerTest extends TestCase
 
         $this->registry->register('test.job', get_class($handler));
 
-        $jobData = new JobData(
-            id: 100,
-            queue: 'default',
-            type: 'test.job',
-            status: JobStatus::Running,
-            payload: [],
-            attempts: 0,
-            maxAttempts: 3,
-            createdAt: date('Y-m-d H:i:s'),
-            updatedAt: date('Y-m-d H:i:s')
-        );
+        $jobData = JobDataFactory::running(['id' => 100, 'type' => 'test.job', 'attempts' => 0, 'maxAttempts' => 3]);
 
         $driver = $this->createMock(QueueDriverInterface::class);
-        $driver->expects($this->once())
-            ->method('dequeue')
-            ->willReturn(100);
+        $driver->expects($this->once())->method('dequeue')->willReturn(100);
 
-        $this->storage->expects($this->once())
-            ->method('claimById')
-            ->willReturnCallback(function ($jobId, $workerId) use ($jobData) {
-                return new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, $workerId, 'lease-token');
-            });
+        $this->mockClaimById($jobData);
 
         $this->storage->expects($this->once())
             ->method('markCompleted')
-            ->with($this->callback(function ($claim) {
-                return $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 100;
-            }), ['processed' => true])
+            ->with($this->callback(fn($claim) => $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 100), ['processed' => true])
             ->willReturn(true);
 
-        $driver->expects($this->once())
-            ->method('ack')
-            ->with('default', 100);
+        $driver->expects($this->once())->method('ack')->with('default', 100);
 
-        $worker = $this->createWorkerWithDriver($driver);
-        $result = $worker->processOne();
-
-        $this->assertTrue($result);
+        $this->assertTrue($this->createWorkerWithDriver($driver)->processOne());
     }
 
     public function testProcessOneJobFailedAfterMaxAttempts(): void
@@ -349,51 +293,26 @@ class WorkerTest extends TestCase
 
         $this->registry->register('test.job', get_class($handler));
 
-        $jobData = new JobData(
-            id: 200,
-            queue: 'default',
-            type: 'test.job',
-            status: JobStatus::Running,
-            payload: [],
-            attempts: 2,
-            maxAttempts: 3,
-            createdAt: date('Y-m-d H:i:s'),
-            updatedAt: date('Y-m-d H:i:s')
-        );
+        $jobData = JobDataFactory::running(['id' => 200, 'type' => 'test.job', 'attempts' => 2, 'maxAttempts' => 3]);
 
         $driver = $this->createMock(QueueDriverInterface::class);
-        $driver->expects($this->once())
-            ->method('dequeue')
-            ->willReturn(200);
+        $driver->expects($this->once())->method('dequeue')->willReturn(200);
 
-        $this->storage->expects($this->once())
-            ->method('claimById')
-            ->willReturnCallback(function ($jobId, $workerId) use ($jobData) {
-                return new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, $workerId, 'lease-token');
-            });
+        $this->mockClaimById($jobData);
 
         $this->storage->expects($this->once())
             ->method('markFailed')
             ->with(
-                $this->callback(function ($claim) {
-                    return $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 200;
-                }),
+                $this->callback(fn($claim) => $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 200),
                 $this->isType('string'),
                 $this->anything()
             )
             ->willReturn(true);
 
-        $driver->expects($this->once())
-            ->method('ack')
-            ->with('default', 200);
+        $driver->expects($this->once())->method('ack')->with('default', 200);
+        $this->storage->expects($this->never())->method('scheduleRetry');
 
-        $this->storage->expects($this->never())
-            ->method('scheduleRetry');
-
-        $worker = $this->createWorkerWithDriver($driver);
-        $result = $worker->processOne();
-
-        $this->assertTrue($result);
+        $this->assertTrue($this->createWorkerWithDriver($driver)->processOne());
     }
 
     public function testWorkerRetryDelayIsExponential(): void
@@ -407,44 +326,24 @@ class WorkerTest extends TestCase
 
         $this->registry->register('test.job', get_class($handler));
 
-        $jobData = new JobData(
-            id: 300,
-            queue: 'default',
-            type: 'test.job',
-            status: JobStatus::Running,
-            payload: [],
-            attempts: 0,
-            maxAttempts: 5,
-            createdAt: date('Y-m-d H:i:s'),
-            updatedAt: date('Y-m-d H:i:s')
-        );
+        $jobData = JobDataFactory::running(['id' => 300, 'type' => 'test.job', 'attempts' => 0, 'maxAttempts' => 5]);
 
         $driver = $this->createMock(QueueDriverInterface::class);
-        $driver->expects($this->once())
-            ->method('dequeue')
-            ->willReturn(300);
+        $driver->expects($this->once())->method('dequeue')->willReturn(300);
 
-        $this->storage->expects($this->once())
-            ->method('claimById')
-            ->willReturnCallback(function ($jobId, $workerId) use ($jobData) {
-                return new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, $workerId, 'lease-token');
-            });
+        $this->mockClaimById($jobData);
 
         $this->storage->expects($this->once())
             ->method('scheduleRetry')
             ->with(
-                $this->callback(function ($claim) {
-                    return $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 300;
-                }),
+                $this->callback(fn($claim) => $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 300),
                 1,
                 2,
                 $this->isType('string')
             )
             ->willReturn(true);
 
-        $driver->expects($this->once())
-            ->method('nack')
-            ->with('default', 300, 2);
+        $driver->expects($this->once())->method('nack')->with('default', 300, 2);
 
         $worker = $this->createWorkerWithDriver($driver, [
             'retry_base_delay' => 2,
@@ -465,44 +364,24 @@ class WorkerTest extends TestCase
 
         $this->registry->register('test.job', get_class($handler));
 
-        $jobData = new JobData(
-            id: 400,
-            queue: 'default',
-            type: 'test.job',
-            status: JobStatus::Running,
-            payload: [],
-            attempts: 8,
-            maxAttempts: 15,
-            createdAt: date('Y-m-d H:i:s'),
-            updatedAt: date('Y-m-d H:i:s')
-        );
+        $jobData = JobDataFactory::running(['id' => 400, 'type' => 'test.job', 'attempts' => 8, 'maxAttempts' => 15]);
 
         $driver = $this->createMock(QueueDriverInterface::class);
-        $driver->expects($this->once())
-            ->method('dequeue')
-            ->willReturn(400);
+        $driver->expects($this->once())->method('dequeue')->willReturn(400);
 
-        $this->storage->expects($this->once())
-            ->method('claimById')
-            ->willReturnCallback(function ($jobId, $workerId) use ($jobData) {
-                return new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, $workerId, 'lease-token');
-            });
+        $this->mockClaimById($jobData);
 
         $this->storage->expects($this->once())
             ->method('scheduleRetry')
             ->with(
-                $this->callback(function ($claim) {
-                    return $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 400;
-                }),
+                $this->callback(fn($claim) => $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 400),
                 9,
                 300,
                 $this->isType('string')
             )
             ->willReturn(true);
 
-        $driver->expects($this->once())
-            ->method('nack')
-            ->with('default', 400, 300);
+        $driver->expects($this->once())->method('nack')->with('default', 400, 300);
 
         $worker = $this->createWorkerWithDriver($driver, [
             'retry_base_delay' => 2,
@@ -523,35 +402,17 @@ class WorkerTest extends TestCase
 
         $this->registry->register('test.job', get_class($handler));
 
-        $jobData = new JobData(
-            id: 500,
-            queue: 'default',
-            type: 'test.job',
-            status: JobStatus::Running,
-            payload: [],
-            attempts: 0,
-            maxAttempts: 3,
-            createdAt: date('Y-m-d H:i:s'),
-            updatedAt: date('Y-m-d H:i:s')
-        );
+        $jobData = JobDataFactory::running(['id' => 500, 'type' => 'test.job', 'attempts' => 0, 'maxAttempts' => 3]);
 
         $driver = $this->createMock(QueueDriverInterface::class);
-        $driver->expects($this->once())
-            ->method('dequeue')
-            ->willReturn(500);
+        $driver->expects($this->once())->method('dequeue')->willReturn(500);
 
-        $this->storage->expects($this->once())
-            ->method('claimById')
-            ->willReturnCallback(function ($jobId, $workerId) use ($jobData) {
-                return new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, $workerId, 'lease-token');
-            });
+        $this->mockClaimById($jobData);
 
         $this->storage->expects($this->once())
             ->method('markCompleted')
             ->with(
-                $this->callback(function ($claim) {
-                    return $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 500;
-                }),
+                $this->callback(fn($claim) => $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 500),
                 ['done' => true]
             )
             ->willReturn(true);
@@ -564,30 +425,15 @@ class WorkerTest extends TestCase
             ->method('error')
             ->with(
                 'Failed to ack completed job',
-                $this->callback(function ($context) {
-                    return isset($context['job_id']) && $context['job_id'] === 500;
-                })
+                $this->callback(fn(array $context): bool => isset($context['job_id']) && $context['job_id'] === 500)
             );
 
-        $worker = $this->createWorkerWithDriver($driver);
-        $result = $worker->processOne();
-
-        $this->assertTrue($result);
+        $this->assertTrue($this->createWorkerWithDriver($driver)->processOne());
     }
 
     public function testHandleJobFailureCatchesStorageErrors(): void
     {
-        $jobData = new JobData(
-            id: 999,
-            queue: 'default',
-            type: 'test.job',
-            status: JobStatus::Running,
-            payload: [],
-            attempts: 0,
-            maxAttempts: 3,
-            createdAt: date('Y-m-d H:i:s'),
-            updatedAt: date('Y-m-d H:i:s')
-        );
+        $jobData = JobDataFactory::running(['id' => 999, 'type' => 'test.job', 'attempts' => 0, 'maxAttempts' => 3]);
 
         $handler = new class implements JobHandlerInterface {
             public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
@@ -599,15 +445,9 @@ class WorkerTest extends TestCase
         $this->registry->register('test.job', get_class($handler));
 
         $driver = $this->createMock(QueueDriverInterface::class);
-        $driver->expects($this->once())
-            ->method('dequeue')
-            ->willReturn(999);
+        $driver->expects($this->once())->method('dequeue')->willReturn(999);
 
-        $this->storage->expects($this->once())
-            ->method('claimById')
-            ->willReturnCallback(function ($jobId, $workerId) use ($jobData) {
-                return new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, $workerId, 'lease-token');
-            });
+        $this->mockClaimById($jobData);
 
         $this->storage->expects($this->once())
             ->method('scheduleRetry')
@@ -616,10 +456,7 @@ class WorkerTest extends TestCase
         $this->logger->expects($this->atLeastOnce())
             ->method('error');
 
-        $worker = $this->createWorkerWithDriver($driver);
-        $result = $worker->processOne();
-
-        $this->assertTrue($result);
+        $this->assertTrue($this->createWorkerWithDriver($driver)->processOne());
     }
 
     public function testRunReturnsExitLockUnavailableOnLockFailure(): void
@@ -715,17 +552,7 @@ class WorkerTest extends TestCase
         $this->registry->register('test.job', get_class($handler));
 
         $driver = $this->createMock(QueueDriverInterface::class);
-        $jobData = new JobData(
-            id: 111,
-            queue: 'default',
-            type: 'test.job',
-            status: JobStatus::Running,
-            payload: [],
-            attempts: 0,
-            maxAttempts: 3,
-            createdAt: date('Y-m-d H:i:s'),
-            updatedAt: date('Y-m-d H:i:s')
-        );
+        $jobData = JobDataFactory::running(['id' => 111, 'type' => 'test.job']);
 
         $driver->expects($this->exactly(2))
             ->method('dequeue')
@@ -733,7 +560,7 @@ class WorkerTest extends TestCase
 
         $this->storage->expects($this->exactly(2))
             ->method('claimById')
-            ->willReturn(new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, 'worker', 'token'));
+            ->willReturn(ClaimedJobFactory::create($jobData, 'worker', 'token'));
 
         $this->storage->expects($this->exactly(2))
             ->method('markCompleted')
@@ -860,23 +687,13 @@ class WorkerTest extends TestCase
         $this->registry->register('test.job', get_class($handler));
 
         $driver = $this->createMock(QueueDriverInterface::class);
-        $jobData = new JobData(
-            id: 123,
-            queue: 'default',
-            type: 'test.job',
-            status: JobStatus::Running,
-            payload: [],
-            attempts: 0,
-            maxAttempts: 3,
-            createdAt: date('Y-m-d H:i:s'),
-            updatedAt: date('Y-m-d H:i:s')
-        );
+        $jobData = JobDataFactory::running(['id' => 123, 'type' => 'test.job']);
 
         $driver->expects($this->once())
             ->method('dequeue')
             ->willReturn(123);
 
-        $claim = new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, 'worker-1', 'token-123');
+        $claim = ClaimedJobFactory::create($jobData, 'worker-1', 'token-123');
 
         $this->storage->expects($this->once())
             ->method('claimById')
@@ -908,23 +725,13 @@ class WorkerTest extends TestCase
         $this->registry->register('test.job', get_class($handler));
 
         $driver = $this->createMock(QueueDriverInterface::class);
-        $jobData = new JobData(
-            id: 123,
-            queue: 'default',
-            type: 'test.job',
-            status: JobStatus::Running,
-            payload: [],
-            attempts: 0,
-            maxAttempts: 3,
-            createdAt: date('Y-m-d H:i:s'),
-            updatedAt: date('Y-m-d H:i:s')
-        );
+        $jobData = JobDataFactory::running(['id' => 123, 'type' => 'test.job']);
 
         $driver->expects($this->once())
             ->method('dequeue')
             ->willReturn(123);
 
-        $claim = new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, 'worker-1', 'token-123');
+        $claim = ClaimedJobFactory::create($jobData, 'worker-1', 'token-123');
 
         $this->storage->expects($this->once())
             ->method('claimById')
@@ -959,23 +766,13 @@ class WorkerTest extends TestCase
         $this->registry->register('test.job', get_class($handler));
 
         $driver = $this->createMock(QueueDriverInterface::class);
-        $jobData = new JobData(
-            id: 123,
-            queue: 'default',
-            type: 'test.job',
-            status: JobStatus::Running,
-            payload: [],
-            attempts: 0,
-            maxAttempts: 3,
-            createdAt: date('Y-m-d H:i:s'),
-            updatedAt: date('Y-m-d H:i:s')
-        );
+        $jobData = JobDataFactory::running(['id' => 123, 'type' => 'test.job']);
 
         $driver->expects($this->once())
             ->method('dequeue')
             ->willReturn(123);
 
-        $claim = new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, 'worker-1', 'token-123');
+        $claim = ClaimedJobFactory::create($jobData, 'worker-1', 'token-123');
 
         $this->storage->expects($this->once())
             ->method('claimById')
@@ -1010,23 +807,13 @@ class WorkerTest extends TestCase
         $this->registry->register('test.job', get_class($handler));
 
         $driver = $this->createMock(QueueDriverInterface::class);
-        $jobData = new JobData(
-            id: 123,
-            queue: 'default',
-            type: 'test.job',
-            status: JobStatus::Running,
-            payload: [],
-            attempts: 2,
-            maxAttempts: 3,
-            createdAt: date('Y-m-d H:i:s'),
-            updatedAt: date('Y-m-d H:i:s')
-        );
+        $jobData = JobDataFactory::running(['id' => 123, 'type' => 'test.job', 'attempts' => 2, 'maxAttempts' => 3]);
 
         $driver->expects($this->once())
             ->method('dequeue')
             ->willReturn(123);
 
-        $claim = new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, 'worker-1', 'token-123');
+        $claim = ClaimedJobFactory::create($jobData, 'worker-1', 'token-123');
 
         $this->storage->expects($this->once())
             ->method('claimById')
@@ -1115,17 +902,7 @@ class WorkerTest extends TestCase
         };
         $this->registry->register('test.job', get_class($handler));
 
-        $jobData = new JobData(
-            id: 123,
-            queue: 'default',
-            type: 'test.job',
-            status: JobStatus::Running,
-            payload: [],
-            attempts: 0,
-            maxAttempts: 3,
-            createdAt: date('Y-m-d H:i:s'),
-            updatedAt: date('Y-m-d H:i:s')
-        );
+        $jobData = JobDataFactory::running(['id' => 123, 'type' => 'test.job']);
 
         $driver = $this->createMock(QueueDriverInterface::class);
         $driver->expects($this->once())
@@ -1134,7 +911,7 @@ class WorkerTest extends TestCase
 
         $this->storage->expects($this->once())
             ->method('claimById')
-            ->willReturn(new \Oeltima\SimpleQueue\Contract\ClaimedJob($jobData, 'worker-1', 'token-123'));
+            ->willReturn(ClaimedJobFactory::create($jobData, 'worker-1', 'token-123'));
 
         $this->storage->expects($this->once())
             ->method('markCompleted')
