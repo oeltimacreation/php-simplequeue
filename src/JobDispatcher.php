@@ -56,22 +56,16 @@ final class JobDispatcher
 
         if ($resolvedAt === null) {
             $jobId = $this->storage->createJob($type, $payload, $queue, $maxAttempts, $requestId);
-            $this->queueManager->enqueue($jobId, $queue);
-
-            return $jobId;
+        } else {
+            $jobIds = $this->storage->createJobs([
+                $this->jobDefinition($type, $payload, $queue, $maxAttempts, $requestId, $resolvedAt),
+            ]);
+            $jobId = $jobIds[0];
         }
 
-        $jobIds = $this->storage->createJobs([[
-            'type' => $type,
-            'payload' => $payload,
-            'queue' => $queue,
-            'maxAttempts' => $maxAttempts,
-            'requestId' => $requestId,
-            'availableAt' => $resolvedAt,
-        ]]);
-        $this->queueManager->enqueueDelayed($jobIds[0], $queue, $resolvedAt);
+        $this->notifyDispatch($jobId, $queue, $resolvedAt);
 
-        return $jobIds[0];
+        return $jobId;
     }
 
     /**
@@ -294,6 +288,36 @@ final class JobDispatcher
     }
 
     /**
+     * Build one job definition array for createJobs().
+     *
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
+     */
+    private function jobDefinition(
+        string $type,
+        array $payload,
+        string $queue,
+        int $maxAttempts,
+        ?string $requestId = null,
+        ?int $resolvedAt = null
+    ): array {
+        $definition = [
+            'type' => $type,
+            'payload' => $payload,
+            'queue' => $queue,
+            'maxAttempts' => $maxAttempts,
+        ];
+        if ($requestId !== null) {
+            $definition['requestId'] = $requestId;
+        }
+        if ($resolvedAt !== null) {
+            $definition['availableAt'] = $resolvedAt;
+        }
+
+        return $definition;
+    }
+
+    /**
      * Build createJobs() definitions for a batch dispatch.
      *
      * @param string $type Job type identifier
@@ -312,19 +336,19 @@ final class JobDispatcher
     ): array {
         $definitions = [];
         foreach ($payloads as $payload) {
-            $definition = [
-                'type' => $type,
-                'payload' => $payload,
-                'queue' => $queue,
-                'maxAttempts' => $maxAttempts,
-            ];
-            if ($resolvedAt !== null) {
-                $definition['availableAt'] = $resolvedAt;
-            }
-            $definitions[] = $definition;
+            $definitions[] = $this->jobDefinition($type, $payload, $queue, $maxAttempts, null, $resolvedAt);
         }
 
         return $definitions;
+    }
+
+    private function notifyDispatch(int $jobId, string $queue, ?int $resolvedAt): void
+    {
+        if ($resolvedAt === null) {
+            $this->queueManager->enqueue($jobId, $queue);
+        } else {
+            $this->queueManager->enqueueDelayed($jobId, $queue, $resolvedAt);
+        }
     }
 
     /**

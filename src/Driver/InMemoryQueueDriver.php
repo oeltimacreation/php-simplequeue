@@ -339,15 +339,9 @@ final class InMemoryQueueDriver implements
      */
     public function enqueueBatch(string $queue, array $jobIds): void
     {
-        if ($jobIds === []) {
-            return;
+        foreach ($jobIds as $jobId) {
+            $this->enqueue($queue, $jobId);
         }
-
-        if (!isset($this->pending[$queue])) {
-            $this->pending[$queue] = [];
-        }
-
-        $this->pending[$queue] = array_merge(array_reverse($jobIds), $this->pending[$queue]);
     }
 
     /**

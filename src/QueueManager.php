@@ -124,35 +124,37 @@ final class QueueManager
     ): self {
         $driverName = strtolower(trim($driverName));
 
-        $redisDriver = null;
-        if ($redis !== null) {
-            $redisDriver = new RedisQueueDriver($redis, $redisPrefix);
-        }
+        $redisDriver = $redis !== null ? new RedisQueueDriver($redis, $redisPrefix) : null;
+        $dbDriver = $storage !== null ? new DatabaseQueueDriver($storage, $pollIntervalMs) : null;
 
-        $dbDriver = null;
-        if ($storage !== null) {
-            $dbDriver = new DatabaseQueueDriver($storage, $pollIntervalMs);
-        }
+        return new self(self::selectDriver($driverName, $redisDriver, $dbDriver));
+    }
 
-        // Select driver based on configuration
-        if ($driverName === 'redis' && $redisDriver !== null) {
-            if ($redisDriver->isAvailable()) {
-                return new self($redisDriver);
+    private static function selectDriver(
+        string $driverName,
+        ?RedisQueueDriver $redisDriver,
+        ?DatabaseQueueDriver $dbDriver
+    ): QueueDriverInterface {
+        if ($driverName === 'redis') {
+            if ($redisDriver !== null && $redisDriver->isAvailable()) {
+                return $redisDriver;
             }
             throw DriverNotAvailableException::redis();
         }
 
-        if ($driverName === 'db' && $dbDriver !== null) {
-            return new self($dbDriver);
+        if ($driverName === 'db') {
+            if ($dbDriver !== null) {
+                return $dbDriver;
+            }
+            throw DriverNotAvailableException::noDriver();
         }
 
-        // Auto mode: try Redis first, fallback to DB
         if ($driverName === 'auto') {
             if ($redisDriver !== null && $redisDriver->isAvailable()) {
-                return new self($redisDriver);
+                return $redisDriver;
             }
             if ($dbDriver !== null) {
-                return new self($dbDriver);
+                return $dbDriver;
             }
         }
 

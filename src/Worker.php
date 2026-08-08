@@ -67,7 +67,7 @@ final class Worker
      * @param JobRegistry $registry Job handler registry
      * @param LoggerInterface|null $logger PSR-3 logger (optional)
      * @param string $queue Queue name to process
-     * @param array<string, mixed> $options Worker options
+     * @param array<string, mixed>|WorkerOptions $options Worker options
      */
     public function __construct(
         private readonly JobStorageInterface $storage,
@@ -75,7 +75,7 @@ final class Worker
         private readonly JobRegistry $registry,
         ?LoggerInterface $logger = null,
         private readonly string $queue = 'default',
-        array $options = []
+        array|WorkerOptions $options = []
     ) {
         $this->logger = $logger ?? new NullLogger();
         $this->workerId = $this->generateWorkerId();
@@ -85,12 +85,20 @@ final class Worker
             $driver->setWorkerId($this->workerId);
         }
 
-        $workerOptions = WorkerOptions::fromArray($options);
-        $lockFileOpt = $workerOptions->lockFile;
-        if (array_key_exists('lock_file', $options)) {
+        $workerOptions = $options instanceof WorkerOptions ? $options : WorkerOptions::fromArray($options);
+        if ($options instanceof WorkerOptions) {
+            $this->lockFile = $options->lockFile ?? sprintf(
+                '/tmp/simplequeue-worker-%s.lock',
+                preg_replace('/[^a-zA-Z0-9_-]/', '', $queue)
+            );
+        } elseif (array_key_exists('lock_file', $options)) {
+            $lockFileOpt = $workerOptions->lockFile;
             $this->lockFile = is_string($lockFileOpt) ? $lockFileOpt : null;
         } else {
-            $this->lockFile = sprintf('/tmp/simplequeue-worker-%s.lock', preg_replace('/[^a-zA-Z0-9_-]/', '', $queue));
+            $this->lockFile = sprintf(
+                '/tmp/simplequeue-worker-%s.lock',
+                preg_replace('/[^a-zA-Z0-9_-]/', '', $queue)
+            );
         }
         $this->pollTimeout = $workerOptions->pollTimeout;
         $this->stuckJobTtl = $workerOptions->stuckJobTtl;
@@ -122,22 +130,7 @@ final class Worker
         ?LoggerInterface $logger = null,
         string $queue = 'default'
     ): self {
-        return new self($storage, $queueManager, $registry, $logger, $queue, [
-            'lock_file' => $options->lockFile,
-            'poll_timeout' => $options->pollTimeout,
-            'stuck_job_ttl' => $options->stuckJobTtl,
-            'retry_base_delay' => $options->retryBaseDelay,
-            'retry_max_delay' => $options->retryMaxDelay,
-            'clock' => $options->clock,
-            'max_jobs' => $options->maxJobs,
-            'max_time' => $options->maxTime,
-            'memory_limit' => $options->memoryLimit,
-            'stop_when_empty' => $options->stopWhenEmpty,
-            'promote_interval' => $options->promoteInterval,
-            'promote_limit' => $options->promoteLimit,
-            'recovery_interval' => $options->recoveryInterval,
-            'event_listener' => $options->eventListener,
-        ]);
+        return new self($storage, $queueManager, $registry, $logger, $queue, $options);
     }
 
     /**
@@ -474,11 +467,7 @@ final class Worker
         $job = $claim->job;
         if ($this->policy->ownershipOutcome($completed)->isLost()) {
             $this->logger->warning('Lost job ownership before completion ack', ['job_id' => $job->id]);
-            $this->emit('lost_ownership', [
-                'job_id' => $job->id,
-                'type' => $job->type,
-                'context' => 'complete',
-            ]);
+            $this->emitLostOwnership($claim, 'complete');
             return;
         }
 
@@ -603,11 +592,7 @@ final class Worker
         $delay = $this->policy->retryDelay($attempts);
         $scheduled = $this->scheduleRetry($claim, $attempts, $delay, $exception);
         if ($this->policy->ownershipOutcome($scheduled)->isLost()) {
-            $this->emit('lost_ownership', [
-                'job_id' => $claim->job->id,
-                'type' => $claim->job->type,
-                'context' => 'retry',
-            ]);
+            $this->emitLostOwnership($claim, 'retry');
             return;
         }
 
@@ -634,11 +619,7 @@ final class Worker
         );
         if ($this->policy->ownershipOutcome($marked)->isLost()) {
             $this->logger->warning('Lost job ownership before marking failed', ['job_id' => $claim->job->id]);
-            $this->emit('lost_ownership', [
-                'job_id' => $claim->job->id,
-                'type' => $claim->job->type,
-                'context' => 'fail',
-            ]);
+            $this->emitLostOwnership($claim, 'fail');
             return;
         }
 
@@ -780,6 +761,15 @@ final class Worker
 
         pcntl_signal(SIGTERM, $shutdown);
         pcntl_signal(SIGINT, $shutdown);
+    }
+
+    private function emitLostOwnership(ClaimedJob $claim, string $context): void
+    {
+        $this->emit('lost_ownership', [
+            'job_id' => $claim->job->id,
+            'type' => $claim->job->type,
+            'context' => $context,
+        ]);
     }
 
     private function generateWorkerId(): string
