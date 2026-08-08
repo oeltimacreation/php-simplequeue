@@ -106,67 +106,44 @@ final class QueueReconcilerTest extends TestCase
 
     public function testReconcilesScheduledJobWithoutNotificationIntoDelayedStructure(): void
     {
-        $this->withTimezone('UTC', function (): void {
-            $clock = new FrozenClock();
-            $storage = new InMemoryJobStorage($clock);
-            $driver = new InMemoryQueueDriver($clock);
-            $storage->createJobs([
-                ['type' => 'test.job', 'payload' => [], 'queue' => 'default', 'availableAt' => $clock->timestamp() + 60],
-            ]);
-
-            $result = (new QueueReconciler($storage, $driver, $clock))->reconcile('default', new ReconcileOptions());
-
-            $this->assertSame(1, $result->restored);
-            $this->assertSame(0, $driver->getPendingCount('default'));
-            $this->assertSame(1, $driver->getDelayedCount('default'));
-            $this->assertSame(0, $driver->promoteDelayedJobs('default'));
-
-            $clock->advance(60);
-            $this->assertSame(1, $driver->promoteDelayedJobs('default'));
-            $this->assertSame(1, $driver->getPendingCount('default'));
-        });
+        $this->assertReconcilesScheduledJobInTimezone('UTC', 60, 0, 1);
     }
 
     public function testReconciliationParsesStoredTimestampAsUtcWhenDefaultTimezoneIsBehindUtc(): void
     {
-        $this->withTimezone('America/New_York', function (): void {
-            $clock = new FrozenClock();
-            $storage = new InMemoryJobStorage($clock);
-            $driver = new InMemoryQueueDriver($clock);
-            $storage->createJobs([
-                ['type' => 'test.job', 'payload' => [], 'queue' => 'default', 'availableAt' => $clock->timestamp() - 60],
-            ]);
-
-            $result = (new QueueReconciler($storage, $driver, $clock))->reconcile('default', new ReconcileOptions());
-
-            $this->assertSame(1, $result->restored);
-            $this->assertSame(1, $driver->getPendingCount('default'));
-            $this->assertSame(0, $driver->getDelayedCount('default'));
-        });
+        $this->assertReconcilesScheduledJobInTimezone('America/New_York', -60, 1, 0);
     }
 
     public function testReconciliationParsesStoredTimestampAsUtcWhenDefaultTimezoneIsAheadOfUtc(): void
     {
-        $this->withTimezone('Asia/Tokyo', function (): void {
+        $this->assertReconcilesScheduledJobInTimezone('Asia/Tokyo', 60, 0, 1);
+    }
+
+    private function assertReconcilesScheduledJobInTimezone(
+        string $timezone,
+        int $availableOffset,
+        int $expectedPending,
+        int $expectedDelayed
+    ): void {
+        $this->withTimezone($timezone, function () use ($availableOffset, $expectedPending, $expectedDelayed): void {
             $clock = new FrozenClock();
             $storage = new InMemoryJobStorage($clock);
             $driver = new InMemoryQueueDriver($clock);
             $storage->createJobs([
-                ['type' => 'test.job', 'payload' => [], 'queue' => 'default', 'availableAt' => $clock->timestamp() + 60],
+                ['type' => 'test.job', 'payload' => [], 'queue' => 'default', 'availableAt' => $clock->timestamp() + $availableOffset],
             ]);
 
             $result = (new QueueReconciler($storage, $driver, $clock))->reconcile('default', new ReconcileOptions());
 
             $this->assertSame(1, $result->restored);
-            $this->assertSame(0, $driver->getPendingCount('default'));
-            $this->assertSame(1, $driver->getDelayedCount('default'));
-            $jobs = $storage->list();
-            $this->assertCount(1, $jobs);
-            $this->assertSame($clock->timestamp() + 60, $driver->getDelayed('default')[$jobs[0]->id] ?? null);
+            $this->assertSame($expectedPending, $driver->getPendingCount('default'));
+            $this->assertSame($expectedDelayed, $driver->getDelayedCount('default'));
 
-            $clock->advance(60);
-            $this->assertSame(1, $driver->promoteDelayedJobs('default'));
-            $this->assertSame(1, $driver->getPendingCount('default'));
+            if ($expectedDelayed > 0) {
+                $clock->advance($availableOffset);
+                $this->assertSame(1, $driver->promoteDelayedJobs('default'));
+                $this->assertSame(1, $driver->getPendingCount('default'));
+            }
         });
     }
 

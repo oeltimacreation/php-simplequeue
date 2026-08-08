@@ -27,21 +27,25 @@ final class WorkerHarness
     /**
      * @param JobStorageInterface|null $storage
      * @param QueueDriverInterface|null $driver
-     * @param LoggerInterface|null $logger
      * @param array<string, mixed> $options
-     * @param string $queue
      */
     public function __construct(
         ?JobStorageInterface $storage = null,
         ?QueueDriverInterface $driver = null,
-        ?LoggerInterface $logger = null,
-        array $options = [],
-        string $queue = 'default'
+        array $options = []
     ) {
         $this->storage = $storage ?? new InMemoryJobStorage();
         $this->driver = $driver ?? new InMemoryQueueDriver();
         $this->registry = new JobRegistry();
-        $this->logger = $logger ?? new NullLogger();
+
+        /** @var LoggerInterface $logger */
+        $logger = $options['logger'] ?? new NullLogger();
+        unset($options['logger']);
+        $this->logger = $logger;
+
+        /** @var string $queue */
+        $queue = is_string($options['queue'] ?? null) ? $options['queue'] : 'default';
+        unset($options['queue']);
 
         $this->queueManager = new QueueManager($this->driver);
 
@@ -64,19 +68,15 @@ final class WorkerHarness
     /**
      * @param JobStorageInterface|null $storage
      * @param QueueDriverInterface|null $driver
-     * @param LoggerInterface|null $logger
      * @param array<string, mixed> $options
-     * @param string $queue
      * @return self
      */
     public static function create(
         ?JobStorageInterface $storage = null,
         ?QueueDriverInterface $driver = null,
-        ?LoggerInterface $logger = null,
-        array $options = [],
-        string $queue = 'default'
+        array $options = []
     ): self {
-        return new self($storage, $driver, $logger, $options, $queue);
+        return new self($storage, $driver, $options);
     }
 
     /**
