@@ -568,7 +568,7 @@ final class Worker
 
         try {
             if ($this->policy->retryDecision($attempts, $job->maxAttempts)->shouldRetry()) {
-                $this->retryFailedJob($claim, $exception, $driver, $attempts, $durationMs);
+                $this->retryFailedJob($claim, $exception, $driver, $durationMs);
                 return;
             }
 
@@ -587,11 +587,11 @@ final class Worker
         ClaimedJob $claim,
         \Throwable $exception,
         QueueDriverInterface $driver,
-        int $attempts,
         float $durationMs
     ): void {
+        $attempts = $claim->job->attempts + 1;
         $delay = $this->policy->retryDelay($attempts);
-        $scheduled = $this->scheduleRetry($claim, $attempts, $delay, $exception);
+        $scheduled = $this->scheduleRetry($claim, $delay, $exception);
         if ($this->policy->ownershipOutcome($scheduled)->isLost()) {
             $this->emitLostOwnership($claim, 'retry');
             return;
@@ -633,8 +633,9 @@ final class Worker
         ]);
     }
 
-    private function scheduleRetry(ClaimedJob $claim, int $attempts, int $delay, \Throwable $e): bool
+    private function scheduleRetry(ClaimedJob $claim, int $delay, \Throwable $e): bool
     {
+        $attempts = $claim->job->attempts + 1;
         $scheduled = $this->storage->scheduleRetry($claim, $attempts, $delay, $e->getMessage());
 
         if ($scheduled) {
