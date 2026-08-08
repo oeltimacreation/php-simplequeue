@@ -19,7 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `WorkerHarness` test support helper in `tests/Support/` to streamline worker test dependency wiring and execution.
 - Refactored `WorkerTest.php` using test support factories, reducing class size from 1,182 lines to 931 lines and cutting test duplicate windows.
 - Streamlined `QueueReconcilerTest.php` timezone characterization tests using a `withTimezone()` helper method.
-- Re-published `quality/quality-baseline.json` following Stage 2 test de-duplication, keeping all static checks, test suites, and quality ratchets green.
+- Refactored hotspot watch-list methods (`PdoJobStorage::createIdempotentJob`, `InMemoryJobStorage::claimNextAvailable`, `Worker::claimNextJob`) with private helper extraction, dropping cognitive complexity across all target methods while preserving exact behavior.
+- Introduced `@phpstan-type JobDefinitionShape` in `JobStorageInterface` and `@phpstan-type StorageRowShape` in `JobDataHydrator`, enforcing precise array-shape types across `createJobs()`, `JobDispatcher`, and storage boundaries.
+- Documented `JobDefinitionShape` structure in `docs/architecture.md` and re-baselined `docs/type-safety.md` for v1.8.0, confirming `declare(strict_types=1)` across all 57 production files and PHP 8.2+ `readonly` compliance.
+- Added edge-case unit characterization tests in `JobDataTest.php` verifying `SerializationException` message contracts, invalid JSON decoding, unencodable inputs, and non-UTC `DateTimeInterface` timezone normalization in `normalizeAvailableAt()`.
+- Re-published `quality/quality-baseline.json` following Stage 3 quality, complexity, and type safety refactoring, keeping all test suites, PHPStan Level 9 strict rules, PHPCS, and quality ratchets green.
 
 ## [1.7.0] - 2026-08-01
 

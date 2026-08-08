@@ -36,3 +36,15 @@ database driver polls storage and claims rows there. The worker singleton lock
 is a local file lock: scale by using one lock file per independent worker/queue
 and coordinate process counts with the supervisor. The current Redis key layout
 does not promise Redis Cluster hash-slot compatibility.
+
+## Job definition shape
+
+Batch creation in `JobStorageInterface::createJobs()` uses a typed array shape (`JobDefinitionShape`):
+
+- `type` (`string`, required): Job type identifier registered in `JobRegistry`.
+- `payload` (`array<string, mixed>`, required): Serializable payload dictionary.
+- `queue` (`string`, optional): Queue name (defaults to `'default'`).
+- `maxAttempts` (`int`, optional): Maximum retry limit (defaults to `3`).
+- `requestId` (`string|null`, optional): Idempotency correlation key.
+- `availableAt` (`int|\DateTimeInterface|string|null`, optional): Availability timestamp for scheduled dispatch.
+

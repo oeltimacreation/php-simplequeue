@@ -1,15 +1,23 @@
 # Internal type-safety boundaries
 
-This document records the primitive and array-shape inventory for
-v1.6.0. Public scalar signatures and serialized job data remain compatible;
+This document records the primitive, array-shape, and type-safety inventory for
+v1.8.0. Public scalar signatures and serialized job data remain compatible;
 normalization happens after values enter the library.
+
+## PHP 8.2+ Audit & Invariants
+
+- **Strict Types**: `declare(strict_types=1)` is verified across all 57 production source files and all unit/integration test files.
+- **Readonly Classes**: Immutable value objects (`DelayedBatch`, `IdempotentJobResult`, `WorkerOptions`, `ReconcileOptions`, `ReconcileResult`, `PositiveJobId`, `WorkerPolicy`, `ClaimedJob`, `JobData`) utilize `final readonly class` or `readonly` properties.
+- **Language Compatibility**: Strictly targets PHP 8.2+ features (backed enums, standalone types, `readonly` classes). No PHP 8.3+ features (such as `#[Override]` or typed class constants) are used.
 
 ## Inventory and decisions
 
 | Value or shape | Boundary | Internal representation | Decision |
 |---|---|---|---|
+| Job definitions | Dispatcher & storage `createJobs()` | `JobDefinitionShape` | Typed array shape `@phpstan-type JobDefinitionShape` enforcing `type`, `payload`, and optional `queue`, `maxAttempts`, `requestId`, `availableAt`. |
+| Storage rows | PDO & in-memory hydration | `StorageRowShape` | Typed array shape `@phpstan-type StorageRowShape` in `JobDataHydrator` mapping database columns and types. |
 | Positive job IDs | Dispatcher and queue-driver scalar arguments | `PositiveJobId` | Centralizes the `> 0` invariant while preserving each public error message. |
-| Queue names | Public dispatcher, worker, and driver arguments | `string` | Remains scalar because v1.6 cannot trim or rewrite backend key names without changing behavior. Existing dispatch validation rejects empty names. |
+| Queue names | Public dispatcher, worker, and driver arguments | `string` | Remains scalar because v1.8 cannot trim or rewrite backend key names without changing behavior. Existing dispatch validation rejects empty names. |
 | Worker IDs and lease tokens | Storage claims and fenced mutations | `ClaimedJob` | The existing immutable claim object keeps job, worker, and lease together. Separate wrappers would add no new invariant and would complicate custom storage compatibility. |
 | Retry decisions | Worker policy | `RetryDecision` | Replaces a policy boolean with exhaustive `Retry` and `Fail` outcomes. |
 | Fenced-write ownership | Storage result entering the worker | `OwnershipOutcome` | Converts the public storage boolean into exhaustive `Owned` and `Lost` outcomes before acknowledgement decisions. |
@@ -22,8 +30,8 @@ normalization happens after values enter the library.
 
 ## Trusted transitions
 
-Raw PDO rows, storage objects, encoded payloads, and encoded results now enter
-`JobData` only through `JobDataHydrator`. It supplies field defaults, converts
+Raw PDO rows, storage objects, encoded payloads, and encoded results enter
+`JobData` through `JobDataHydrator`. It supplies field defaults, converts
 status values to `JobStatus`, validates payload object keys, and reports invalid
 JSON through the existing `SerializationException` messages.
 
