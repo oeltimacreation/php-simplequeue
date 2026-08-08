@@ -2,24 +2,24 @@
 
 ## Stable release policy
 
-Use one version value in each of these forms for a release such as 1.6.0:
+Use one version value in each of these forms for a release such as 1.8.0:
 
 | Surface | Required form |
 |---|---|
-| Release branch | `release/1.6.0` |
-| Composer/Packagist version | `1.6.0` |
-| Git tag | `v1.6.0` |
-| GitHub release title | `v1.6.0` |
+| Release branch | `release/1.8.0` |
+| Composer/Packagist version | `1.8.0` |
+| Git tag | `v1.8.0` |
+| GitHub release title | `v1.8.0` |
 
 The difference is intentional. GitHub keeps the project's conventional `v`
 tag format, while Packagist must expose the unprefixed semantic version. Set
-the Composer/Packagist release metadata to `1.6.0` in the release commit so
-Packagist presents that version even though the Git tag is `v1.6.0`.
+the Composer/Packagist release metadata to `1.8.0` in the release commit so
+Packagist presents that version even though the Git tag is `v1.8.0`.
 
 ## Release workflow
 
 1. Create `release/<version>` from the default branch (`master` or `main`),
-   for example `release/1.6.0`.
+   for example `release/1.8.0`.
 2. Update `CHANGELOG.md` with a dated `<version>` section and make any required
    version-metadata changes. Do not commit internal planning documents unless
    they are explicitly intended for users.

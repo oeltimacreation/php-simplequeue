@@ -1,138 +1,174 @@
-# Contributing
+# Contributing to PHP SimpleQueue
 
-Thank you for considering contributing to PHP SimpleQueue! This document provides guidelines and instructions for contributing.
+Thank you for contributing to PHP SimpleQueue! This document provides guidelines for environment setup, code quality enforcement, quality ratchets, and adding new drivers or storage backends.
 
-## Code of Conduct
+---
 
-By participating in this project, you agree to maintain a respectful and inclusive environment for everyone.
+## Local Development Setup
 
-## How Can I Contribute?
+### Requirements
 
-### Reporting Bugs
+- **PHP**: 8.2 or higher with `pdo`, `pdo_sqlite` extensions (and `pcntl` on Unix systems)
+- **Composer**: 2.x
+- **Redis / Valkey (Optional)**: Required only for running integration tests against a real Redis instance
 
-Before creating bug reports, please check existing issues to avoid duplicates. When creating a bug report, include:
-
-- **Clear title** describing the issue
-- **Steps to reproduce** the behavior
-- **Expected behavior** vs actual behavior
-- **PHP version** and environment details
-- **Code samples** if applicable
-
-### Suggesting Enhancements
-
-Enhancement suggestions are welcome! Please include:
-
-- **Use case** explaining why this enhancement would be useful
-- **Proposed solution** with as much detail as possible
-- **Alternatives** you've considered
-
-### Pull Requests
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes
-4. Run tests (`composer test`)
-5. Run static analysis (`composer phpstan`)
-6. Run code style check (`composer cs-check`)
-7. Commit your changes (`git commit -m 'Add amazing feature'`)
-8. Push to the branch (`git push origin feature/amazing-feature`)
-9. Open a Pull Request
-
-## Development Setup
+### Initial Setup
 
 ```bash
-# Clone your fork
-git clone https://github.com/your-username/php-simplequeue.git
+# Clone the repository
+git clone https://github.com/oeltimacreation/php-simplequeue.git
 cd php-simplequeue
 
-# Install dependencies
+# Install development dependencies
 composer install
 
-# Run tests
-composer test
-
-# Run with coverage
-composer test-coverage
-
-# Check code style
-composer cs-check
-
-# Fix code style
-composer cs-fix
-
-# Run static analysis
-composer phpstan
+# Verify your installation with the full quality suite
+composer check
 ```
 
-## Coding Standards
+---
 
-- Follow PSR-12 coding standards
-- Use strict types (`declare(strict_types=1);`)
-- Write descriptive commit messages
-- Add PHPDoc blocks for public methods
-- Include unit tests for new features
+## Quality Toolchain & Testing Program
 
-### Code Style
+SimpleQueue maintains strict quality gates across static analysis, unit/integration testing, coding standards, and complexity limits.
+
+```bash
+# Run the complete quality gate suite (PHPUnit, PHPStan, PHPCS, Quality Ratchet)
+composer check
+
+# Run unit and integration tests
+composer test
+
+# Run tests with HTML coverage report (outputs to coverage/html)
+composer test-coverage
+
+# Run static analysis (PHPStan Level 9 with strict-rules)
+composer phpstan
+
+# Run code style check (PHPCS with Slevomat ruleset)
+composer cs-check
+
+# Auto-fix code style issues
+composer cs-fix
+
+# Generate physical code complexity and duplication report
+composer quality-report
+
+# Enforce quality ratchet rules against quality/quality-baseline.json
+composer quality-ratchet
+
+# Run performance benchmarks
+composer benchmark
+```
+
+---
+
+## Code Quality Ratchet System
+
+SimpleQueue uses an internal dependency-free code analyzer (`composer quality-ratchet`) based on `token_get_all()` to enforce complexity and duplicate-window limits.
+
+### Quality Thresholds
+
+For all new code additions:
+
+- **Cognitive Complexity**: Max 15 per method
+- **Cyclomatic Complexity**: Max 15 per method
+- **Nesting Depth**: Max 3 control-flow levels
+- **Method Length**: Max 100 lines per method
+- **Class Length**: Max 500 lines per class (new classes)
+- **Production Duplication**: 0 new duplicate 50-token windows allowed
+
+### Ratchet Policy
+
+Existing grandfathered hotspots cannot increase in complexity or line count. If a refactor reduces complexity, the quality baseline is updated via `composer quality-report` and committed to lock in the improvement.
+
+Exceptions to ratchet rules are rare and must be explicitly documented with a justification in `quality/ratchet-exceptions.json`.
+
+---
+
+## Extending SimpleQueue & Contract Testing
+
+### 1. Adding a Custom Job Handler
+
+Implement `Oeltima\SimpleQueue\Contract\JobHandlerInterface` and register it with `JobRegistry`:
 
 ```php
 <?php
 
 declare(strict_types=1);
 
-namespace Oeltima\SimpleQueue;
+namespace App\Queue;
 
-/**
- * Brief description of the class.
- */
-final class Example
+use Oeltima\SimpleQueue\Contract\JobHandlerInterface;
+
+final class ProcessReportHandler implements JobHandlerInterface
 {
-    private string $property;
-
-    /**
-     * Brief description of the method.
-     *
-     * @param string $value Description
-     * @return void
-     */
-    public function method(string $value): void
+    public function handle(int $jobId, array $payload, ?callable $progress = null): mixed
     {
-        $this->property = $value;
+        // 1. Optional progress reporting
+        if ($progress !== null) {
+            $progress(percent: 50, message: 'Processing report data');
+        }
+
+        // 2. Perform work
+        return ['status' => 'success', 'report_id' => $payload['report_id']];
     }
 }
 ```
 
-## Testing
+### 2. Adding a Custom Queue Driver
 
-- Write tests for all new features
-- Maintain existing test coverage
-- Use meaningful test method names: `testMethodNameWithScenarioExpectsBehavior`
+Implement `Oeltima\SimpleQueue\Contract\QueueDriverInterface`. To verify compliance with driver behavior, write a unit test extending `Oeltima\SimpleQueue\Tests\Contract\QueueDriverContractTest`:
 
 ```php
-public function testDispatchCreatesJobInStorage(): void
+<?php
+
+declare(strict_types=1);
+
+namespace App\Tests\Driver;
+
+use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
+use Oeltima\SimpleQueue\Tests\Contract\QueueDriverContractTest;
+
+final class CustomQueueDriverTest extends QueueDriverContractTest
 {
-    // Arrange
-    $storage = new InMemoryJobStorage();
-    // ...
-
-    // Act
-    $jobId = $dispatcher->dispatch('test.job', ['key' => 'value']);
-
-    // Assert
-    $this->assertNotEmpty($jobId);
+    protected function createDriver(): QueueDriverInterface
+    {
+        return new CustomQueueDriver();
+    }
 }
 ```
 
-## Commit Messages
+### 3. Adding a Custom Job Storage Backend
 
-Follow conventional commits format:
+Implement `Oeltima\SimpleQueue\Contract\JobStorageInterface`. Verify persistence contract compliance by extending `Oeltima\SimpleQueue\Tests\Contract\JobStorageContractTest`:
 
-- `feat: add new feature`
-- `fix: resolve bug`
-- `docs: update documentation`
-- `test: add tests`
-- `refactor: code refactoring`
-- `chore: maintenance tasks`
+```php
+<?php
 
-## Questions?
+declare(strict_types=1);
 
-Feel free to open an issue for any questions or concerns.
+namespace App\Tests\Storage;
+
+use Oeltima\SimpleQueue\Contract\JobStorageInterface;
+use Oeltima\SimpleQueue\Tests\Contract\JobStorageContractTest;
+
+final class CustomJobStorageTest extends JobStorageContractTest
+{
+    protected function createStorage(): JobStorageInterface
+    {
+        return new CustomJobStorage();
+    }
+}
+```
+
+---
+
+## Pull Request Guidelines
+
+1. Create a descriptive feature branch (`git checkout -b refactor/improve-driver-performance`).
+2. Follow strict typing: every PHP file MUST begin with `declare(strict_types=1);`.
+3. Use `final` classes by default unless explicitly designed for extension.
+4. Ensure all public methods have PHPDoc blocks specifying `@param` and `@return` types.
+5. Run `composer check` locally before submitting your pull request. PRs will not be merged unless all CI quality gates pass.
+

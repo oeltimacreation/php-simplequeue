@@ -40,20 +40,12 @@ final class Worker
     private $lockHandle = null;
     private ?string $lockFile;
 
-    private int $pollTimeout;
-    private int $stuckJobTtl;
-    private ClockInterface $clock;
-    private WorkerPolicy $policy;
-    private WorkerLoopFailureHandler $loopFailureHandler;
-    private int $maxJobs;
-    private int $maxTime;
-    private int $memoryLimit;
-    private bool $stopWhenEmpty;
+    private readonly WorkerOptions $options;
+    private readonly ClockInterface $clock;
+    private readonly WorkerPolicy $policy;
+    private readonly WorkerLoopFailureHandler $loopFailureHandler;
     private int $processedJobsCount = 0;
     private float $startTime = 0.0;
-    private float $promoteInterval;
-    private int $promoteLimit;
-    private float $recoveryInterval;
     private float $lastPromoteTime = 0.0;
     private float $lastRecoveryTime = 0.0;
     private ?int $reconcileCursor = null;
@@ -67,7 +59,7 @@ final class Worker
      * @param JobRegistry $registry Job handler registry
      * @param LoggerInterface|null $logger PSR-3 logger (optional)
      * @param string $queue Queue name to process
-     * @param array<string, mixed> $options Worker options
+     * @param array<string, mixed>|WorkerOptions $options Worker options
      */
     public function __construct(
         private readonly JobStorageInterface $storage,
@@ -75,7 +67,7 @@ final class Worker
         private readonly JobRegistry $registry,
         ?LoggerInterface $logger = null,
         private readonly string $queue = 'default',
-        array $options = []
+        array|WorkerOptions $options = []
     ) {
         $this->logger = $logger ?? new NullLogger();
         $this->workerId = $this->generateWorkerId();
@@ -85,33 +77,39 @@ final class Worker
             $driver->setWorkerId($this->workerId);
         }
 
-        $workerOptions = WorkerOptions::fromArray($options);
-        $lockFileOpt = $workerOptions->lockFile;
-        if (array_key_exists('lock_file', $options)) {
-            $this->lockFile = is_string($lockFileOpt) ? $lockFileOpt : null;
-        } else {
-            $this->lockFile = sprintf('/tmp/simplequeue-worker-%s.lock', preg_replace('/[^a-zA-Z0-9_-]/', '', $queue));
-        }
-        $this->pollTimeout = $workerOptions->pollTimeout;
-        $this->stuckJobTtl = $workerOptions->stuckJobTtl;
-        $this->policy = new WorkerPolicy($workerOptions->retryBaseDelay, $workerOptions->retryMaxDelay);
+        $this->options = $options instanceof WorkerOptions ? $options : WorkerOptions::fromArray($options);
+        $this->lockFile = $this->resolveLockFile($queue, $options);
+        $this->policy = new WorkerPolicy($this->options->retryBaseDelay, $this->options->retryMaxDelay);
         $this->loopFailureHandler = new WorkerLoopFailureHandler($this->logger, $this->policy);
-        $this->clock = $workerOptions->clock ?? new SystemClock();
-        $this->maxJobs = $workerOptions->maxJobs;
-        $this->maxTime = $workerOptions->maxTime;
-        $this->memoryLimit = $workerOptions->memoryLimit;
-        $this->stopWhenEmpty = $workerOptions->stopWhenEmpty;
-        $this->promoteInterval = $workerOptions->promoteInterval;
-        $this->promoteLimit = $workerOptions->promoteLimit;
-        $this->recoveryInterval = $workerOptions->recoveryInterval;
+        $this->clock = $this->options->clock ?? new SystemClock();
 
         if ($driver instanceof SupportsTimeoutValidation) {
-            $driver->validateTimeout($this->pollTimeout);
+            $driver->validateTimeout($this->options->pollTimeout);
         }
 
-        if (is_callable($workerOptions->eventListener)) {
-            $this->eventListener = $workerOptions->eventListener;
+        if (is_callable($this->options->eventListener)) {
+            $this->eventListener = $this->options->eventListener;
         }
+    }
+
+    /**
+     * @param array<string, mixed>|WorkerOptions $options
+     */
+    private function resolveLockFile(string $queue, array|WorkerOptions $options): ?string
+    {
+        if ($options instanceof WorkerOptions) {
+            return $options->lockFile ?? sprintf(
+                '/tmp/simplequeue-worker-%s.lock',
+                preg_replace('/[^a-zA-Z0-9_-]/', '', $queue)
+            );
+        }
+        if (array_key_exists('lock_file', $options)) {
+            return $this->options->lockFile;
+        }
+        return sprintf(
+            '/tmp/simplequeue-worker-%s.lock',
+            preg_replace('/[^a-zA-Z0-9_-]/', '', $queue)
+        );
     }
 
     public static function withOptions(
@@ -122,22 +120,7 @@ final class Worker
         ?LoggerInterface $logger = null,
         string $queue = 'default'
     ): self {
-        return new self($storage, $queueManager, $registry, $logger, $queue, [
-            'lock_file' => $options->lockFile,
-            'poll_timeout' => $options->pollTimeout,
-            'stuck_job_ttl' => $options->stuckJobTtl,
-            'retry_base_delay' => $options->retryBaseDelay,
-            'retry_max_delay' => $options->retryMaxDelay,
-            'clock' => $options->clock,
-            'max_jobs' => $options->maxJobs,
-            'max_time' => $options->maxTime,
-            'memory_limit' => $options->memoryLimit,
-            'stop_when_empty' => $options->stopWhenEmpty,
-            'promote_interval' => $options->promoteInterval,
-            'promote_limit' => $options->promoteLimit,
-            'recovery_interval' => $options->recoveryInterval,
-            'event_listener' => $options->eventListener,
-        ]);
+        return new self($storage, $queueManager, $registry, $logger, $queue, $options);
     }
 
     /**
@@ -245,9 +228,9 @@ final class Worker
 
     private function runNextIteration(QueueDriverInterface $driver): bool
     {
-        $claim = $this->claimNextJob($this->pollTimeout);
+        $claim = $this->claimNextJob($this->options->pollTimeout);
         if ($claim === null) {
-            if ($this->stopWhenEmpty) {
+            if ($this->options->stopWhenEmpty) {
                 $this->logger->info('Queue is empty and stop_when_empty is enabled. Stopping worker.');
                 return false;
             }
@@ -288,7 +271,7 @@ final class Worker
 
         // Promote any delayed jobs that are now due
         if ($driver instanceof SupportsDelayedJobs) {
-            $driver->promoteDelayedJobs($this->queue, $this->promoteLimit);
+            $driver->promoteDelayedJobs($this->queue, $this->options->promoteLimit);
         }
 
         try {
@@ -343,35 +326,14 @@ final class Worker
 
             $claim = $this->storage->claimById($jobId, $this->workerId);
         } catch (\Throwable $e) {
-            // Requeue on post-pop claim failure
             if ($jobId !== null) {
-                $this->logger->error('Failed to claim job from storage', [
-                    'job_id' => $jobId,
-                    'error' => $e->getMessage(),
-                ]);
-                try {
-                    $driver->nack($this->queue, $jobId, 0);
-                } catch (\Throwable $nackError) {
-                    $this->logger->error('Failed to requeue job after claim failure', [
-                        'job_id' => $jobId,
-                        'error' => $nackError->getMessage(),
-                    ]);
-                }
+                $this->handlePostPopClaimFailure($driver, $jobId, $e);
             }
-
             throw $e;
         }
 
         if ($claim === null) {
-            $this->logger->warning(
-                'Failed to claim job, may have been claimed by another process',
-                ['job_id' => $jobId]
-            );
-            try {
-                $driver->ack($this->queue, $jobId);
-            } catch (\Throwable $e) {
-                $this->logger->error('Failed to ack unclaimed job', ['job_id' => $jobId, 'error' => $e->getMessage()]);
-            }
+            $this->handleUnclaimedJobAck($driver, $jobId);
             return null;
         }
 
@@ -385,21 +347,53 @@ final class Worker
         return $claim;
     }
 
+    private function handlePostPopClaimFailure(
+        Contract\QueueDriverInterface $driver,
+        int $jobId,
+        \Throwable $e
+    ): void {
+        $this->logger->error('Failed to claim job from storage', [
+            'job_id' => $jobId,
+            'error' => $e->getMessage(),
+        ]);
+        try {
+            $driver->nack($this->queue, $jobId, 0);
+        } catch (\Throwable $nackError) {
+            $this->logger->error('Failed to requeue job after claim failure', [
+                'job_id' => $jobId,
+                'error' => $nackError->getMessage(),
+            ]);
+        }
+    }
+
+    private function handleUnclaimedJobAck(Contract\QueueDriverInterface $driver, int $jobId): void
+    {
+        $this->logger->warning(
+            'Failed to claim job, may have been claimed by another process',
+            ['job_id' => $jobId]
+        );
+        try {
+            $driver->ack($this->queue, $jobId);
+        } catch (\Throwable $e) {
+            $this->logger->error('Failed to ack unclaimed job', ['job_id' => $jobId, 'error' => $e->getMessage()]);
+        }
+    }
+
     private function limitsReached(): bool
     {
-        if ($this->maxJobs > 0 && $this->processedJobsCount >= $this->maxJobs) {
-            $this->logger->info('Worker limit reached: max_jobs', ['max_jobs' => $this->maxJobs]);
+        if ($this->options->maxJobs > 0 && $this->processedJobsCount >= $this->options->maxJobs) {
+            $this->logger->info('Worker limit reached: max_jobs', ['max_jobs' => $this->options->maxJobs]);
             return true;
         }
 
-        if ($this->maxTime > 0 && ($this->clock->monotonic() - $this->startTime) >= $this->maxTime) {
-            $this->logger->info('Worker limit reached: max_time', ['max_time' => $this->maxTime]);
+        if ($this->options->maxTime > 0 && ($this->clock->monotonic() - $this->startTime) >= $this->options->maxTime) {
+            $this->logger->info('Worker limit reached: max_time', ['max_time' => $this->options->maxTime]);
             return true;
         }
 
-        if ($this->memoryLimit > 0 && memory_get_usage(true) >= $this->memoryLimit) {
+        if ($this->options->memoryLimit > 0 && memory_get_usage(true) >= $this->options->memoryLimit) {
             $this->logger->info('Worker limit reached: memory_limit', [
-                'memory_limit' => $this->memoryLimit,
+                'memory_limit' => $this->options->memoryLimit,
                 'current_memory' => memory_get_usage(true)
             ]);
             return true;
@@ -413,13 +407,13 @@ final class Worker
         $now = $this->clock->monotonic();
 
         // Promote delayed jobs
-        if ($now - $this->lastPromoteTime >= $this->promoteInterval) {
+        if ($now - $this->lastPromoteTime >= $this->options->promoteInterval) {
             $this->promoteDelayedJobs();
             $this->lastPromoteTime = $now;
         }
 
         // Recover stale jobs
-        if ($now - $this->lastRecoveryTime >= $this->recoveryInterval) {
+        if ($now - $this->lastRecoveryTime >= $this->options->recoveryInterval) {
             $this->recoverStaleJobs();
             $this->reconcileDbAndRedis();
             $this->lastRecoveryTime = $now;
@@ -431,7 +425,7 @@ final class Worker
         $driver = $this->queueManager->driver();
         if ($driver instanceof SupportsDelayedJobs) {
             try {
-                $driver->promoteDelayedJobs($this->queue, $this->promoteLimit);
+                $driver->promoteDelayedJobs($this->queue, $this->options->promoteLimit);
             } catch (\Throwable $e) {
                 $this->logger->error('Failed to promote delayed jobs', ['error' => $e->getMessage()]);
             }
@@ -474,11 +468,7 @@ final class Worker
         $job = $claim->job;
         if ($this->policy->ownershipOutcome($completed)->isLost()) {
             $this->logger->warning('Lost job ownership before completion ack', ['job_id' => $job->id]);
-            $this->emit('lost_ownership', [
-                'job_id' => $job->id,
-                'type' => $job->type,
-                'context' => 'complete',
-            ]);
+            $this->emitLostOwnership($claim, 'complete');
             return;
         }
 
@@ -578,7 +568,7 @@ final class Worker
 
         try {
             if ($this->policy->retryDecision($attempts, $job->maxAttempts)->shouldRetry()) {
-                $this->retryFailedJob($claim, $exception, $driver, $attempts, $durationMs);
+                $this->retryFailedJob($claim, $exception, $driver, $durationMs);
                 return;
             }
 
@@ -597,17 +587,13 @@ final class Worker
         ClaimedJob $claim,
         \Throwable $exception,
         QueueDriverInterface $driver,
-        int $attempts,
         float $durationMs
     ): void {
+        $attempts = $claim->job->attempts + 1;
         $delay = $this->policy->retryDelay($attempts);
-        $scheduled = $this->scheduleRetry($claim, $attempts, $delay, $exception);
+        $scheduled = $this->scheduleRetry($claim, $delay, $exception);
         if ($this->policy->ownershipOutcome($scheduled)->isLost()) {
-            $this->emit('lost_ownership', [
-                'job_id' => $claim->job->id,
-                'type' => $claim->job->type,
-                'context' => 'retry',
-            ]);
+            $this->emitLostOwnership($claim, 'retry');
             return;
         }
 
@@ -634,11 +620,7 @@ final class Worker
         );
         if ($this->policy->ownershipOutcome($marked)->isLost()) {
             $this->logger->warning('Lost job ownership before marking failed', ['job_id' => $claim->job->id]);
-            $this->emit('lost_ownership', [
-                'job_id' => $claim->job->id,
-                'type' => $claim->job->type,
-                'context' => 'fail',
-            ]);
+            $this->emitLostOwnership($claim, 'fail');
             return;
         }
 
@@ -651,8 +633,9 @@ final class Worker
         ]);
     }
 
-    private function scheduleRetry(ClaimedJob $claim, int $attempts, int $delay, \Throwable $e): bool
+    private function scheduleRetry(ClaimedJob $claim, int $delay, \Throwable $e): bool
     {
+        $attempts = $claim->job->attempts + 1;
         $scheduled = $this->storage->scheduleRetry($claim, $attempts, $delay, $e->getMessage());
 
         if ($scheduled) {
@@ -670,21 +653,22 @@ final class Worker
 
     private function recoverStaleJobs(): void
     {
+        $stuckJobTtl = $this->options->stuckJobTtl;
         $recovered = $this->storage instanceof \Oeltima\SimpleQueue\Contract\SupportsQueueScopedStaleRecovery
-            ? $this->storage->recoverStaleJobsForQueue($this->queue, $this->stuckJobTtl, 100)
-            : $this->storage->recoverStaleJobs($this->stuckJobTtl);
+            ? $this->storage->recoverStaleJobsForQueue($this->queue, $stuckJobTtl, 100)
+            : $this->storage->recoverStaleJobs($stuckJobTtl);
 
         // Also recover from driver if supported
         $driver = $this->queueManager->driver();
         if ($driver instanceof SupportsStaleRecovery) {
-            $driverRecovered = $driver->recoverStaleProcessing($this->queue, $this->stuckJobTtl);
+            $driverRecovered = $driver->recoverStaleProcessing($this->queue, $stuckJobTtl);
             $recovered += $driverRecovered;
         }
 
         if ($recovered > 0) {
             $this->logger->warning(
                 'Recovered stale jobs',
-                ['count' => $recovered, 'ttl_seconds' => $this->stuckJobTtl]
+                ['count' => $recovered, 'ttl_seconds' => $stuckJobTtl]
             );
         }
     }
@@ -780,6 +764,15 @@ final class Worker
 
         pcntl_signal(SIGTERM, $shutdown);
         pcntl_signal(SIGINT, $shutdown);
+    }
+
+    private function emitLostOwnership(ClaimedJob $claim, string $context): void
+    {
+        $this->emit('lost_ownership', [
+            'job_id' => $claim->job->id,
+            'type' => $claim->job->type,
+            'context' => $context,
+        ]);
     }
 
     private function generateWorkerId(): string

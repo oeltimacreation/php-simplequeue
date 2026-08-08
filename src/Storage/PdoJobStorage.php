@@ -29,6 +29,8 @@ use PDOStatement;
  * Provides a database-agnostic implementation using PDO.
  * Works with MySQL, PostgreSQL, SQLite, and other PDO-supported databases.
  *
+ * @phpstan-import-type JobDefinitionShape from JobStorageInterface
+ *
  * Supports auto-reconnect for long-running workers via connection factory.
  */
 class PdoJobStorage implements
@@ -219,7 +221,7 @@ class PdoJobStorage implements
     /**
      * Batch create multiple job records in a single operation.
      *
-     * @param array<int, array<string, mixed>> $jobs Array of job definitions
+     * @param array<int, JobDefinitionShape> $jobs Array of job definitions
      * @return int[] Array of created job IDs
      */
     public function createJobs(array $jobs): array
@@ -316,41 +318,59 @@ class PdoJobStorage implements
     ): IdempotentJobResult {
         // The database conditional/generated unique index is the concurrency authority.
         for ($attempt = 0; $attempt < 2; $attempt++) {
-            $existing = $this->findActiveByRequestId($requestId);
-            if ($existing !== null) {
-                return new IdempotentJobResult($existing->id, false);
-            }
-
-            $pdo = $this->getPdo();
-            $hasSavepoint = $pdo->inTransaction();
-            if ($hasSavepoint) {
-                $pdo->exec('SAVEPOINT simplequeue_idempotent_job');
-            }
-
-            try {
-                $result = new IdempotentJobResult(
-                    $this->createJob($type, $payload, $queue, $maxAttempts, $requestId),
-                    true
-                );
-                if ($hasSavepoint) {
-                    $pdo->exec('RELEASE SAVEPOINT simplequeue_idempotent_job');
-                }
+            $result = $this->attemptCreateIdempotentJob($type, $payload, $requestId, $queue, $maxAttempts);
+            if ($result !== null) {
                 return $result;
-            } catch (PDOException $exception) {
-                if (!$this->isUniqueConstraintViolation($exception)) {
-                    throw $exception;
-                }
-
-                $this->rollbackIdempotentSavepoint($pdo, $hasSavepoint);
-
-                $existing = $this->findActiveByRequestId($requestId);
-                if ($existing !== null) {
-                    return new IdempotentJobResult($existing->id, false);
-                }
             }
         }
 
         throw new \RuntimeException('Could not resolve concurrent idempotent job creation');
+    }
+
+    /**
+     * @param array<string, mixed> $payload Job payload
+     */
+    private function attemptCreateIdempotentJob(
+        string $type,
+        array $payload,
+        string $requestId,
+        string $queue,
+        int $maxAttempts
+    ): ?IdempotentJobResult {
+        $existing = $this->findActiveByRequestId($requestId);
+        if ($existing !== null) {
+            return new IdempotentJobResult($existing->id, false);
+        }
+
+        $pdo = $this->getPdo();
+        $hasSavepoint = $pdo->inTransaction();
+        if ($hasSavepoint) {
+            $pdo->exec('SAVEPOINT simplequeue_idempotent_job');
+        }
+
+        try {
+            $result = new IdempotentJobResult(
+                $this->createJob($type, $payload, $queue, $maxAttempts, $requestId),
+                true
+            );
+            if ($hasSavepoint) {
+                $pdo->exec('RELEASE SAVEPOINT simplequeue_idempotent_job');
+            }
+            return $result;
+        } catch (PDOException $exception) {
+            if (!$this->isUniqueConstraintViolation($exception)) {
+                throw $exception;
+            }
+
+            $this->rollbackIdempotentSavepoint($pdo, $hasSavepoint);
+
+            $existing = $this->findActiveByRequestId($requestId);
+            if ($existing !== null) {
+                return new IdempotentJobResult($existing->id, false);
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -362,19 +382,7 @@ class PdoJobStorage implements
      */
     public function claimNextAvailable(string $queue, string $workerId): ?ClaimedJob
     {
-        $now = $this->now();
-        $leaseToken = $this->generateLeaseToken();
-
-        return $this->withReconnect(function (PDO $pdo) use ($queue, $workerId, $leaseToken, $now): ?ClaimedJob {
-            $driverAttr = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
-            $driver = is_string($driverAttr) ? $driverAttr : '';
-
-            if ($driver === 'pgsql') {
-                return $this->claimNextAvailableWithReturning($pdo, $queue, $workerId, $leaseToken, $now);
-            }
-
-            return $this->claimNextAvailableWithTransaction($pdo, $driver, $queue, $workerId, $leaseToken, $now);
-        });
+        return $this->claimJob($queue, null, $workerId);
     }
 
     /**
@@ -386,18 +394,23 @@ class PdoJobStorage implements
      */
     public function claimById(int $id, string $workerId): ?ClaimedJob
     {
+        return $this->claimJob(null, $id, $workerId);
+    }
+
+    private function claimJob(?string $queue, ?int $id, string $workerId): ?ClaimedJob
+    {
         $now = $this->now();
         $leaseToken = $this->generateLeaseToken();
 
-        return $this->withReconnect(function (PDO $pdo) use ($id, $workerId, $leaseToken, $now): ?ClaimedJob {
+        return $this->withReconnect(function (PDO $pdo) use ($queue, $id, $workerId, $leaseToken, $now): ?ClaimedJob {
             $driverAttr = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
             $driver = is_string($driverAttr) ? $driverAttr : '';
 
             if ($driver === 'pgsql') {
-                return $this->claimByIdWithReturning($pdo, $id, $workerId, $leaseToken, $now);
+                return $this->claimWithReturning($pdo, $queue, $id, $workerId, $leaseToken, $now);
             }
 
-            return $this->claimByIdWithTransaction($pdo, $driver, $id, $workerId, $leaseToken, $now);
+            return $this->claimJobWithTransaction($pdo, $driver, $queue, $id, $workerId, $leaseToken, $now);
         });
     }
 
@@ -801,21 +814,32 @@ class PdoJobStorage implements
         return $result;
     }
 
-    private function claimNextAvailableWithReturning(
+    private function claimWithReturning(
         PDO $pdo,
-        string $queue,
+        ?string $queue,
+        ?int $id,
         string $workerId,
         string $leaseToken,
         string $now
     ): ?ClaimedJob {
-        $sql = "UPDATE {$this->table}
-            SET status = 'running',
-                locked_by = :worker_id,
-                locked_at = :locked_at,
-                started_at = :started_at,
-                lease_token = :lease_token,
-                updated_at = :updated_at
-            WHERE id = (
+        if ($id !== null) {
+            $whereClause = "WHERE id = :id
+            AND (
+                (status = 'pending' AND available_at <= :now)
+                OR (status = 'running' AND locked_by = :worker_id_where)
+            )";
+            $params = [
+                'id' => $id,
+                'worker_id' => $workerId,
+                'worker_id_where' => $workerId,
+                'locked_at' => $now,
+                'started_at' => $now,
+                'lease_token' => $leaseToken,
+                'updated_at' => $now,
+                'now' => $now,
+            ];
+        } else {
+            $whereClause = "WHERE id = (
                 SELECT id FROM {$this->table}
                 WHERE status = 'pending'
                 AND queue = :queue
@@ -823,30 +847,18 @@ class PdoJobStorage implements
                 ORDER BY available_at ASC, id ASC
                 FOR UPDATE SKIP LOCKED
                 LIMIT 1
-            )
-            RETURNING *";
+            )";
+            $params = [
+                'queue' => $queue,
+                'worker_id' => $workerId,
+                'locked_at' => $now,
+                'started_at' => $now,
+                'lease_token' => $leaseToken,
+                'updated_at' => $now,
+                'now' => $now,
+            ];
+        }
 
-        $stmt = $this->prepare($pdo, $sql);
-        $stmt->execute([
-            'queue' => $queue,
-            'worker_id' => $workerId,
-            'locked_at' => $now,
-            'started_at' => $now,
-            'lease_token' => $leaseToken,
-            'updated_at' => $now,
-            'now' => $now,
-        ]);
-
-        return $this->claimFromStatement($stmt, $workerId, $leaseToken);
-    }
-
-    private function claimByIdWithReturning(
-        PDO $pdo,
-        int $id,
-        string $workerId,
-        string $leaseToken,
-        string $now
-    ): ?ClaimedJob {
         $sql = "UPDATE {$this->table}
             SET status = 'running',
                 locked_by = :worker_id,
@@ -854,101 +866,47 @@ class PdoJobStorage implements
                 started_at = :started_at,
                 lease_token = :lease_token,
                 updated_at = :updated_at
-            WHERE id = :id
-            AND (
-                (status = 'pending' AND available_at <= :now)
-                OR (status = 'running' AND locked_by = :worker_id_where)
-            )
+            {$whereClause}
             RETURNING *";
 
         $stmt = $this->prepare($pdo, $sql);
-        $stmt->execute([
-            'id' => $id,
-            'worker_id' => $workerId,
-            'worker_id_where' => $workerId,
-            'locked_at' => $now,
-            'started_at' => $now,
-            'lease_token' => $leaseToken,
-            'updated_at' => $now,
-            'now' => $now,
-        ]);
+        $stmt->execute($params);
 
         return $this->claimFromStatement($stmt, $workerId, $leaseToken);
     }
 
-    private function claimNextAvailableWithTransaction(
+    private function claimJobWithTransaction(
         PDO $pdo,
         string $driver,
-        string $queue,
+        ?string $queue,
+        ?int $id,
         string $workerId,
         string $leaseToken,
         string $now
     ): ?ClaimedJob {
-        $selectSql = "SELECT * FROM {$this->table}
-            WHERE status = 'pending'
-            AND queue = :queue
-            AND available_at <= :now
-            ORDER BY available_at ASC, id ASC
-            LIMIT 1";
+        if ($id !== null) {
+            $selectSql = "SELECT * FROM {$this->table}
+                WHERE id = :id
+                AND (
+                    (status = 'pending' AND available_at <= :now)
+                    OR (status = 'running' AND locked_by = :worker_id)
+                )
+                LIMIT 1";
+            $selectParams = ['id' => $id, 'now' => $now, 'worker_id' => $workerId];
+        } else {
+            $selectSql = "SELECT * FROM {$this->table}
+                WHERE status = 'pending'
+                AND queue = :queue
+                AND available_at <= :now
+                ORDER BY available_at ASC, id ASC
+                LIMIT 1";
+            $selectParams = ['queue' => $queue, 'now' => $now];
+        }
 
         if ($driver !== 'sqlite') {
             $selectSql .= ' FOR UPDATE SKIP LOCKED';
         }
 
-        return $this->claimWithTransaction(
-            $pdo,
-            $driver,
-            $selectSql,
-            ['queue' => $queue, 'now' => $now],
-            $workerId,
-            $leaseToken,
-            $now
-        );
-    }
-
-    private function claimByIdWithTransaction(
-        PDO $pdo,
-        string $driver,
-        int $id,
-        string $workerId,
-        string $leaseToken,
-        string $now
-    ): ?ClaimedJob {
-        $selectSql = "SELECT * FROM {$this->table}
-            WHERE id = :id
-            AND (
-                (status = 'pending' AND available_at <= :now)
-                OR (status = 'running' AND locked_by = :worker_id)
-            )
-            LIMIT 1";
-
-        if ($driver !== 'sqlite') {
-            $selectSql .= ' FOR UPDATE SKIP LOCKED';
-        }
-
-        return $this->claimWithTransaction(
-            $pdo,
-            $driver,
-            $selectSql,
-            ['id' => $id, 'now' => $now, 'worker_id' => $workerId],
-            $workerId,
-            $leaseToken,
-            $now
-        );
-    }
-
-    /**
-     * @param array<string, mixed> $selectParams
-     */
-    private function claimWithTransaction(
-        PDO $pdo,
-        string $driver,
-        string $selectSql,
-        array $selectParams,
-        string $workerId,
-        string $leaseToken,
-        string $now
-    ): ?ClaimedJob {
         $transaction = new PdoClaimTransaction($pdo, $driver);
         $transaction->begin();
 
