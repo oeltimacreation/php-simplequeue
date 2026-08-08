@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Refactored `PdoJobStorage` claim execution paths (`claimNextAvailable`, `claimById`, `claimWithReturning`, `claimJobWithTransaction`) into a unified private claim helper method, dropping production duplicated windows from 37 to 0.
+- Extracted single-job definition creation in `JobDispatcher` into a private `jobDefinition()` builder helper used by both `dispatch()` and `batchDefinitions()`, routing all job notifications through `notifyDispatch()`.
+- Extracted `emitLostOwnership(ClaimedJob, string)` helper in `Worker` to eliminate duplicated `lost_ownership` event payload constructions across job completion, retry, and permanent failure contexts.
+- Updated `Worker::withOptions()` and `Worker` constructor to construct directly from a `WorkerOptions` instance without array flattening and re-parsing.
+- Updated `InMemoryQueueDriver::enqueueBatch()` to use per-item `enqueue()` semantics (including job ID validation and ordering parity).
+- Extracted driver-selection decision tree in `QueueManager::create()` into a private `selectDriver()` helper to improve readability while maintaining public signatures and error exception handling.
+- Re-published `quality/quality-baseline.json` following Stage 1 production de-duplication, bringing production duplicated windows down to 0 while keeping all static checks and quality ratchets green.
+
 ## [1.7.0] - 2026-08-01
 
 ### Added

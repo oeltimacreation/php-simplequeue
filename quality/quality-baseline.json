@@ -14,9 +14,9 @@
         "production": {
             "files": 57,
             "classes": 57,
-            "methods": 275,
-            "lines": 6162,
-            "duplicate_windows": 37
+            "methods": 277,
+            "lines": 6110,
+            "duplicate_windows": 0
         },
         "tests": {
             "files": 26,
@@ -257,8 +257,8 @@
             "file": "src/Driver/InMemoryQueueDriver.php",
             "class": "Oeltima\\SimpleQueue\\Driver\\InMemoryQueueDriver",
             "start_line": 26,
-            "end_line": 385,
-            "lines": 360,
+            "end_line": 379,
+            "lines": 354,
             "methods": 25
         },
         "src/Driver/RedisQueueDriver.php::Oeltima\\SimpleQueue\\Driver\\RedisQueueDriver": {
@@ -446,9 +446,9 @@
             "file": "src/JobDispatcher.php",
             "class": "Oeltima\\SimpleQueue\\JobDispatcher",
             "start_line": 23,
-            "end_line": 347,
-            "lines": 325,
-            "methods": 14
+            "end_line": 371,
+            "lines": 349,
+            "methods": 16
         },
         "src/JobRegistry.php::Oeltima\\SimpleQueue\\JobRegistry": {
             "scope": "production",
@@ -464,9 +464,9 @@
             "file": "src/QueueManager.php",
             "class": "Oeltima\\SimpleQueue\\QueueManager",
             "start_line": 22,
-            "end_line": 183,
-            "lines": 162,
-            "methods": 10
+            "end_line": 185,
+            "lines": 164,
+            "methods": 11
         },
         "src/QueueReconciler.php::Oeltima\\SimpleQueue\\QueueReconciler": {
             "scope": "production",
@@ -509,9 +509,9 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "start_line": 34,
-            "end_line": 1058,
-            "lines": 1025,
-            "methods": 49
+            "end_line": 996,
+            "lines": 963,
+            "methods": 47
         },
         "src/SystemClock.php::Oeltima\\SimpleQueue\\SystemClock": {
             "scope": "production",
@@ -527,9 +527,9 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "start_line": 30,
-            "end_line": 800,
-            "lines": 771,
-            "methods": 31
+            "end_line": 790,
+            "lines": 761,
+            "methods": 32
         },
         "src/WorkerOptions.php::Oeltima\\SimpleQueue\\WorkerOptions": {
             "scope": "production",
@@ -1181,10 +1181,10 @@
             "class": "Oeltima\\SimpleQueue\\Driver\\InMemoryQueueDriver",
             "method": "enqueueBatch",
             "start_line": 340,
-            "end_line": 351,
-            "lines": 12,
-            "cyclomatic_complexity": 3,
-            "cognitive_complexity": 2,
+            "end_line": 345,
+            "lines": 6,
+            "cyclomatic_complexity": 2,
+            "cognitive_complexity": 1,
             "nesting_depth": 1
         },
         "src/Driver/InMemoryQueueDriver.php::Oeltima\\SimpleQueue\\Driver\\InMemoryQueueDriver::enqueueDelayed": {
@@ -1228,8 +1228,8 @@
             "file": "src/Driver/InMemoryQueueDriver.php",
             "class": "Oeltima\\SimpleQueue\\Driver\\InMemoryQueueDriver",
             "method": "getDelayedCount",
-            "start_line": 381,
-            "end_line": 384,
+            "start_line": 375,
+            "end_line": 378,
             "lines": 4,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 0,
@@ -1264,8 +1264,8 @@
             "file": "src/Driver/InMemoryQueueDriver.php",
             "class": "Oeltima\\SimpleQueue\\Driver\\InMemoryQueueDriver",
             "method": "getPendingCount",
-            "start_line": 359,
-            "end_line": 362,
+            "start_line": 353,
+            "end_line": 356,
             "lines": 4,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 0,
@@ -1300,8 +1300,8 @@
             "file": "src/Driver/InMemoryQueueDriver.php",
             "class": "Oeltima\\SimpleQueue\\Driver\\InMemoryQueueDriver",
             "method": "getProcessingCount",
-            "start_line": 370,
-            "end_line": 373,
+            "start_line": 364,
+            "end_line": 367,
             "lines": 4,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 0,
@@ -2404,20 +2404,20 @@
             "file": "src/JobDispatcher.php",
             "class": "Oeltima\\SimpleQueue\\JobDispatcher",
             "method": "batchDefinitions",
-            "start_line": 306,
-            "end_line": 328,
-            "lines": 23,
-            "cyclomatic_complexity": 3,
-            "cognitive_complexity": 3,
-            "nesting_depth": 2
+            "start_line": 330,
+            "end_line": 343,
+            "lines": 14,
+            "cyclomatic_complexity": 2,
+            "cognitive_complexity": 1,
+            "nesting_depth": 1
         },
         "src/JobDispatcher.php::Oeltima\\SimpleQueue\\JobDispatcher::cancelJob": {
             "scope": "production",
             "file": "src/JobDispatcher.php",
             "class": "Oeltima\\SimpleQueue\\JobDispatcher",
             "method": "cancelJob",
-            "start_line": 241,
-            "end_line": 257,
+            "start_line": 235,
+            "end_line": 251,
             "lines": 17,
             "cyclomatic_complexity": 6,
             "cognitive_complexity": 8,
@@ -2429,10 +2429,10 @@
             "class": "Oeltima\\SimpleQueue\\JobDispatcher",
             "method": "dispatch",
             "start_line": 46,
-            "end_line": 75,
-            "lines": 30,
+            "end_line": 69,
+            "lines": 24,
             "cyclomatic_complexity": 2,
-            "cognitive_complexity": 1,
+            "cognitive_complexity": 2,
             "nesting_depth": 1
         },
         "src/JobDispatcher.php::Oeltima\\SimpleQueue\\JobDispatcher::dispatchAfter": {
@@ -2440,8 +2440,8 @@
             "file": "src/JobDispatcher.php",
             "class": "Oeltima\\SimpleQueue\\JobDispatcher",
             "method": "dispatchAfter",
-            "start_line": 114,
-            "end_line": 134,
+            "start_line": 108,
+            "end_line": 128,
             "lines": 21,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 1,
@@ -2452,8 +2452,8 @@
             "file": "src/JobDispatcher.php",
             "class": "Oeltima\\SimpleQueue\\JobDispatcher",
             "method": "dispatchAt",
-            "start_line": 90,
-            "end_line": 99,
+            "start_line": 84,
+            "end_line": 93,
             "lines": 10,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -2464,8 +2464,8 @@
             "file": "src/JobDispatcher.php",
             "class": "Oeltima\\SimpleQueue\\JobDispatcher",
             "method": "dispatchBatch",
-            "start_line": 185,
-            "end_line": 206,
+            "start_line": 179,
+            "end_line": 200,
             "lines": 22,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 2,
@@ -2476,8 +2476,8 @@
             "file": "src/JobDispatcher.php",
             "class": "Oeltima\\SimpleQueue\\JobDispatcher",
             "method": "dispatchIdempotent",
-            "start_line": 146,
-            "end_line": 173,
+            "start_line": 140,
+            "end_line": 167,
             "lines": 28,
             "cyclomatic_complexity": 5,
             "cognitive_complexity": 5,
@@ -2488,8 +2488,8 @@
             "file": "src/JobDispatcher.php",
             "class": "Oeltima\\SimpleQueue\\JobDispatcher",
             "method": "getQueueManager",
-            "start_line": 222,
-            "end_line": 225,
+            "start_line": 216,
+            "end_line": 219,
             "lines": 4,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -2500,8 +2500,8 @@
             "file": "src/JobDispatcher.php",
             "class": "Oeltima\\SimpleQueue\\JobDispatcher",
             "method": "getStatus",
-            "start_line": 214,
-            "end_line": 217,
+            "start_line": 208,
+            "end_line": 211,
             "lines": 4,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -2512,22 +2512,46 @@
             "file": "src/JobDispatcher.php",
             "class": "Oeltima\\SimpleQueue\\JobDispatcher",
             "method": "getStorage",
-            "start_line": 230,
-            "end_line": 233,
+            "start_line": 224,
+            "end_line": 227,
             "lines": 4,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
             "nesting_depth": 0
+        },
+        "src/JobDispatcher.php::Oeltima\\SimpleQueue\\JobDispatcher::jobDefinition": {
+            "scope": "production",
+            "file": "src/JobDispatcher.php",
+            "class": "Oeltima\\SimpleQueue\\JobDispatcher",
+            "method": "jobDefinition",
+            "start_line": 296,
+            "end_line": 318,
+            "lines": 23,
+            "cyclomatic_complexity": 3,
+            "cognitive_complexity": 2,
+            "nesting_depth": 1
         },
         "src/JobDispatcher.php::Oeltima\\SimpleQueue\\JobDispatcher::notifyBatch": {
             "scope": "production",
             "file": "src/JobDispatcher.php",
             "class": "Oeltima\\SimpleQueue\\JobDispatcher",
             "method": "notifyBatch",
-            "start_line": 336,
-            "end_line": 346,
+            "start_line": 360,
+            "end_line": 370,
             "lines": 11,
             "cyclomatic_complexity": 3,
+            "cognitive_complexity": 2,
+            "nesting_depth": 1
+        },
+        "src/JobDispatcher.php::Oeltima\\SimpleQueue\\JobDispatcher::notifyDispatch": {
+            "scope": "production",
+            "file": "src/JobDispatcher.php",
+            "class": "Oeltima\\SimpleQueue\\JobDispatcher",
+            "method": "notifyDispatch",
+            "start_line": 345,
+            "end_line": 352,
+            "lines": 8,
+            "cyclomatic_complexity": 2,
             "cognitive_complexity": 2,
             "nesting_depth": 1
         },
@@ -2536,8 +2560,8 @@
             "file": "src/JobDispatcher.php",
             "class": "Oeltima\\SimpleQueue\\JobDispatcher",
             "method": "resolveAvailableAt",
-            "start_line": 281,
-            "end_line": 294,
+            "start_line": 275,
+            "end_line": 288,
             "lines": 14,
             "cyclomatic_complexity": 5,
             "cognitive_complexity": 2,
@@ -2548,8 +2572,8 @@
             "file": "src/JobDispatcher.php",
             "class": "Oeltima\\SimpleQueue\\JobDispatcher",
             "method": "validateDispatchArguments",
-            "start_line": 259,
-            "end_line": 270,
+            "start_line": 253,
+            "end_line": 264,
             "lines": 12,
             "cyclomatic_complexity": 6,
             "cognitive_complexity": 5,
@@ -2657,19 +2681,19 @@
             "class": "Oeltima\\SimpleQueue\\QueueManager",
             "method": "create",
             "start_line": 118,
-            "end_line": 160,
-            "lines": 43,
-            "cyclomatic_complexity": 12,
-            "cognitive_complexity": 14,
-            "nesting_depth": 2
+            "end_line": 131,
+            "lines": 14,
+            "cyclomatic_complexity": 3,
+            "cognitive_complexity": 0,
+            "nesting_depth": 0
         },
         "src/QueueManager.php::Oeltima\\SimpleQueue\\QueueManager::database": {
             "scope": "production",
             "file": "src/QueueManager.php",
             "class": "Oeltima\\SimpleQueue\\QueueManager",
             "method": "database",
-            "start_line": 179,
-            "end_line": 182,
+            "start_line": 181,
+            "end_line": 184,
             "lines": 4,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -2752,12 +2776,24 @@
             "file": "src/QueueManager.php",
             "class": "Oeltima\\SimpleQueue\\QueueManager",
             "method": "redis",
-            "start_line": 168,
-            "end_line": 171,
+            "start_line": 170,
+            "end_line": 173,
             "lines": 4,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
             "nesting_depth": 0
+        },
+        "src/QueueManager.php::Oeltima\\SimpleQueue\\QueueManager::selectDriver": {
+            "scope": "production",
+            "file": "src/QueueManager.php",
+            "class": "Oeltima\\SimpleQueue\\QueueManager",
+            "method": "selectDriver",
+            "start_line": 133,
+            "end_line": 162,
+            "lines": 30,
+            "cyclomatic_complexity": 10,
+            "cognitive_complexity": 13,
+            "nesting_depth": 2
         },
         "src/QueueReconciler.php::Oeltima\\SimpleQueue\\QueueReconciler::__construct": {
             "scope": "production",
@@ -3172,8 +3208,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "associativeRow",
-            "start_line": 793,
-            "end_line": 802,
+            "start_line": 786,
+            "end_line": 795,
             "lines": 10,
             "cyclomatic_complexity": 3,
             "cognitive_complexity": 3,
@@ -3184,8 +3220,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "boundedStatement",
-            "start_line": 755,
-            "end_line": 772,
+            "start_line": 748,
+            "end_line": 765,
             "lines": 18,
             "cyclomatic_complexity": 3,
             "cognitive_complexity": 2,
@@ -3196,8 +3232,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "cancel",
-            "start_line": 579,
-            "end_line": 594,
+            "start_line": 572,
+            "end_line": 587,
             "lines": 16,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -3208,44 +3244,20 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "claimById",
-            "start_line": 387,
-            "end_line": 402,
-            "lines": 16,
-            "cyclomatic_complexity": 4,
-            "cognitive_complexity": 1,
-            "nesting_depth": 1
-        },
-        "src/Storage/PdoJobStorage.php::Oeltima\\SimpleQueue\\Storage\\PdoJobStorage::claimByIdWithReturning": {
-            "scope": "production",
-            "file": "src/Storage/PdoJobStorage.php",
-            "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
-            "method": "claimByIdWithReturning",
-            "start_line": 843,
-            "end_line": 877,
-            "lines": 35,
+            "start_line": 375,
+            "end_line": 378,
+            "lines": 4,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
             "nesting_depth": 0
-        },
-        "src/Storage/PdoJobStorage.php::Oeltima\\SimpleQueue\\Storage\\PdoJobStorage::claimByIdWithTransaction": {
-            "scope": "production",
-            "file": "src/Storage/PdoJobStorage.php",
-            "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
-            "method": "claimByIdWithTransaction",
-            "start_line": 909,
-            "end_line": 938,
-            "lines": 30,
-            "cyclomatic_complexity": 2,
-            "cognitive_complexity": 1,
-            "nesting_depth": 1
         },
         "src/Storage/PdoJobStorage.php::Oeltima\\SimpleQueue\\Storage\\PdoJobStorage::claimFromStatement": {
             "scope": "production",
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "claimFromStatement",
-            "start_line": 1033,
-            "end_line": 1042,
+            "start_line": 971,
+            "end_line": 980,
             "lines": 10,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 1,
@@ -3256,12 +3268,36 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "claimIdentity",
-            "start_line": 747,
-            "end_line": 750,
+            "start_line": 740,
+            "end_line": 743,
             "lines": 4,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
             "nesting_depth": 0
+        },
+        "src/Storage/PdoJobStorage.php::Oeltima\\SimpleQueue\\Storage\\PdoJobStorage::claimJob": {
+            "scope": "production",
+            "file": "src/Storage/PdoJobStorage.php",
+            "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
+            "method": "claimJob",
+            "start_line": 380,
+            "end_line": 395,
+            "lines": 16,
+            "cyclomatic_complexity": 4,
+            "cognitive_complexity": 1,
+            "nesting_depth": 1
+        },
+        "src/Storage/PdoJobStorage.php::Oeltima\\SimpleQueue\\Storage\\PdoJobStorage::claimJobWithTransaction": {
+            "scope": "production",
+            "file": "src/Storage/PdoJobStorage.php",
+            "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
+            "method": "claimJobWithTransaction",
+            "start_line": 858,
+            "end_line": 908,
+            "lines": 51,
+            "cyclomatic_complexity": 5,
+            "cognitive_complexity": 4,
+            "nesting_depth": 1
         },
         "src/Storage/PdoJobStorage.php::Oeltima\\SimpleQueue\\Storage\\PdoJobStorage::claimNextAvailable": {
             "scope": "production",
@@ -3269,43 +3305,19 @@
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "claimNextAvailable",
             "start_line": 363,
-            "end_line": 378,
-            "lines": 16,
-            "cyclomatic_complexity": 4,
-            "cognitive_complexity": 1,
-            "nesting_depth": 1
-        },
-        "src/Storage/PdoJobStorage.php::Oeltima\\SimpleQueue\\Storage\\PdoJobStorage::claimNextAvailableWithReturning": {
-            "scope": "production",
-            "file": "src/Storage/PdoJobStorage.php",
-            "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
-            "method": "claimNextAvailableWithReturning",
-            "start_line": 804,
-            "end_line": 841,
-            "lines": 38,
+            "end_line": 366,
+            "lines": 4,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
             "nesting_depth": 0
-        },
-        "src/Storage/PdoJobStorage.php::Oeltima\\SimpleQueue\\Storage\\PdoJobStorage::claimNextAvailableWithTransaction": {
-            "scope": "production",
-            "file": "src/Storage/PdoJobStorage.php",
-            "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
-            "method": "claimNextAvailableWithTransaction",
-            "start_line": 879,
-            "end_line": 907,
-            "lines": 29,
-            "cyclomatic_complexity": 2,
-            "cognitive_complexity": 1,
-            "nesting_depth": 1
         },
         "src/Storage/PdoJobStorage.php::Oeltima\\SimpleQueue\\Storage\\PdoJobStorage::claimRowId": {
             "scope": "production",
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "claimRowId",
-            "start_line": 1022,
-            "end_line": 1031,
+            "start_line": 960,
+            "end_line": 969,
             "lines": 10,
             "cyclomatic_complexity": 6,
             "cognitive_complexity": 2,
@@ -3316,23 +3328,23 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "claimStillOwned",
-            "start_line": 739,
-            "end_line": 744,
+            "start_line": 732,
+            "end_line": 737,
             "lines": 6,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
             "nesting_depth": 0
         },
-        "src/Storage/PdoJobStorage.php::Oeltima\\SimpleQueue\\Storage\\PdoJobStorage::claimWithTransaction": {
+        "src/Storage/PdoJobStorage.php::Oeltima\\SimpleQueue\\Storage\\PdoJobStorage::claimWithReturning": {
             "scope": "production",
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
-            "method": "claimWithTransaction",
-            "start_line": 943,
-            "end_line": 970,
-            "lines": 28,
-            "cyclomatic_complexity": 3,
-            "cognitive_complexity": 1,
+            "method": "claimWithReturning",
+            "start_line": 797,
+            "end_line": 856,
+            "lines": 60,
+            "cyclomatic_complexity": 2,
+            "cognitive_complexity": 2,
             "nesting_depth": 1
         },
         "src/Storage/PdoJobStorage.php::Oeltima\\SimpleQueue\\Storage\\PdoJobStorage::claimWithinTransaction": {
@@ -3340,8 +3352,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "claimWithinTransaction",
-            "start_line": 975,
-            "end_line": 1020,
+            "start_line": 913,
+            "end_line": 958,
             "lines": 46,
             "cyclomatic_complexity": 3,
             "cognitive_complexity": 2,
@@ -3352,8 +3364,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "clock",
-            "start_line": 708,
-            "end_line": 711,
+            "start_line": 701,
+            "end_line": 704,
             "lines": 4,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 1,
@@ -3376,8 +3388,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "count",
-            "start_line": 659,
-            "end_line": 666,
+            "start_line": 652,
+            "end_line": 659,
             "lines": 8,
             "cyclomatic_complexity": 4,
             "cognitive_complexity": 2,
@@ -3436,8 +3448,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "executeClaimUpdate",
-            "start_line": 732,
-            "end_line": 737,
+            "start_line": 725,
+            "end_line": 730,
             "lines": 6,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -3448,8 +3460,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "fetchJob",
-            "start_line": 783,
-            "end_line": 787,
+            "start_line": 776,
+            "end_line": 780,
             "lines": 5,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 0,
@@ -3460,8 +3472,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "fetchJobs",
-            "start_line": 775,
-            "end_line": 781,
+            "start_line": 768,
+            "end_line": 774,
             "lines": 7,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -3472,8 +3484,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "filteredQuery",
-            "start_line": 714,
-            "end_line": 727,
+            "start_line": 707,
+            "end_line": 720,
             "lines": 14,
             "cyclomatic_complexity": 3,
             "cognitive_complexity": 2,
@@ -3508,8 +3520,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "generateLeaseToken",
-            "start_line": 1044,
-            "end_line": 1047,
+            "start_line": 982,
+            "end_line": 985,
             "lines": 4,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -3532,8 +3544,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "heartbeat",
-            "start_line": 481,
-            "end_line": 496,
+            "start_line": 474,
+            "end_line": 489,
             "lines": 16,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 1,
@@ -3556,8 +3568,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "isUniqueConstraintViolation",
-            "start_line": 596,
-            "end_line": 600,
+            "start_line": 589,
+            "end_line": 593,
             "lines": 5,
             "cyclomatic_complexity": 3,
             "cognitive_complexity": 2,
@@ -3568,8 +3580,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "list",
-            "start_line": 621,
-            "end_line": 630,
+            "start_line": 614,
+            "end_line": 623,
             "lines": 10,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -3580,8 +3592,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "markCompleted",
-            "start_line": 404,
-            "end_line": 418,
+            "start_line": 397,
+            "end_line": 411,
             "lines": 15,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 0,
@@ -3592,8 +3604,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "markFailed",
-            "start_line": 420,
-            "end_line": 435,
+            "start_line": 413,
+            "end_line": 428,
             "lines": 16,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -3604,8 +3616,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "now",
-            "start_line": 687,
-            "end_line": 690,
+            "start_line": 680,
+            "end_line": 683,
             "lines": 4,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 1,
@@ -3616,8 +3628,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "prepare",
-            "start_line": 1049,
-            "end_line": 1057,
+            "start_line": 987,
+            "end_line": 995,
             "lines": 9,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 2,
@@ -3628,8 +3640,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "pruneCompleted",
-            "start_line": 674,
-            "end_line": 685,
+            "start_line": 667,
+            "end_line": 678,
             "lines": 12,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -3652,8 +3664,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "recoverStaleJobs",
-            "start_line": 498,
-            "end_line": 544,
+            "start_line": 491,
+            "end_line": 537,
             "lines": 47,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -3664,8 +3676,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "recoverStaleJobsForQueue",
-            "start_line": 546,
-            "end_line": 577,
+            "start_line": 539,
+            "end_line": 570,
             "lines": 32,
             "cyclomatic_complexity": 4,
             "cognitive_complexity": 1,
@@ -3676,8 +3688,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "rollbackIdempotentSavepoint",
-            "start_line": 602,
-            "end_line": 610,
+            "start_line": 595,
+            "end_line": 603,
             "lines": 9,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 1,
@@ -3688,8 +3700,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "rowAvailableAt",
-            "start_line": 699,
-            "end_line": 706,
+            "start_line": 692,
+            "end_line": 699,
             "lines": 8,
             "cyclomatic_complexity": 3,
             "cognitive_complexity": 1,
@@ -3700,8 +3712,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "scanPending",
-            "start_line": 635,
-            "end_line": 651,
+            "start_line": 628,
+            "end_line": 644,
             "lines": 17,
             "cyclomatic_complexity": 3,
             "cognitive_complexity": 2,
@@ -3712,8 +3724,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "scheduleRetry",
-            "start_line": 458,
-            "end_line": 479,
+            "start_line": 451,
+            "end_line": 472,
             "lines": 22,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -3724,8 +3736,8 @@
             "file": "src/Storage/PdoJobStorage.php",
             "class": "Oeltima\\SimpleQueue\\Storage\\PdoJobStorage",
             "method": "updateProgress",
-            "start_line": 437,
-            "end_line": 456,
+            "start_line": 430,
+            "end_line": 449,
             "lines": 20,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 1,
@@ -3785,10 +3797,10 @@
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "__construct",
             "start_line": 72,
-            "end_line": 115,
-            "lines": 44,
-            "cyclomatic_complexity": 8,
-            "cognitive_complexity": 7,
+            "end_line": 123,
+            "lines": 52,
+            "cyclomatic_complexity": 11,
+            "cognitive_complexity": 9,
             "nesting_depth": 1
         },
         "src/Worker.php::Oeltima\\SimpleQueue\\Worker::acquireLock": {
@@ -3796,8 +3808,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "acquireLock",
-            "start_line": 727,
-            "end_line": 751,
+            "start_line": 708,
+            "end_line": 732,
             "lines": 25,
             "cyclomatic_complexity": 5,
             "cognitive_complexity": 4,
@@ -3808,8 +3820,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "claimNextJob",
-            "start_line": 324,
-            "end_line": 386,
+            "start_line": 317,
+            "end_line": 379,
             "lines": 63,
             "cyclomatic_complexity": 9,
             "cognitive_complexity": 13,
@@ -3820,20 +3832,32 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "emit",
-            "start_line": 159,
-            "end_line": 171,
+            "start_line": 152,
+            "end_line": 164,
             "lines": 13,
             "cyclomatic_complexity": 3,
             "cognitive_complexity": 3,
             "nesting_depth": 2
+        },
+        "src/Worker.php::Oeltima\\SimpleQueue\\Worker::emitLostOwnership": {
+            "scope": "production",
+            "file": "src/Worker.php",
+            "class": "Oeltima\\SimpleQueue\\Worker",
+            "method": "emitLostOwnership",
+            "start_line": 766,
+            "end_line": 773,
+            "lines": 8,
+            "cyclomatic_complexity": 1,
+            "cognitive_complexity": 0,
+            "nesting_depth": 0
         },
         "src/Worker.php::Oeltima\\SimpleQueue\\Worker::executeJob": {
             "scope": "production",
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "executeJob",
-            "start_line": 521,
-            "end_line": 559,
+            "start_line": 510,
+            "end_line": 548,
             "lines": 39,
             "cyclomatic_complexity": 6,
             "cognitive_complexity": 4,
@@ -3844,9 +3868,9 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "failJobPermanently",
-            "start_line": 624,
-            "end_line": 652,
-            "lines": 29,
+            "start_line": 609,
+            "end_line": 633,
+            "lines": 25,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 1,
             "nesting_depth": 1
@@ -3856,8 +3880,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "generateWorkerId",
-            "start_line": 785,
-            "end_line": 790,
+            "start_line": 775,
+            "end_line": 780,
             "lines": 6,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 0,
@@ -3868,8 +3892,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "getWorkerId",
-            "start_line": 319,
-            "end_line": 322,
+            "start_line": 312,
+            "end_line": 315,
             "lines": 4,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -3880,9 +3904,9 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "handleJobCompletion",
-            "start_line": 468,
-            "end_line": 504,
-            "lines": 37,
+            "start_line": 461,
+            "end_line": 493,
+            "lines": 33,
             "cyclomatic_complexity": 3,
             "cognitive_complexity": 2,
             "nesting_depth": 1
@@ -3892,8 +3916,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "handleJobFailure",
-            "start_line": 561,
-            "end_line": 594,
+            "start_line": 550,
+            "end_line": 583,
             "lines": 34,
             "cyclomatic_complexity": 3,
             "cognitive_complexity": 2,
@@ -3904,8 +3928,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "handleSerializationFailure",
-            "start_line": 506,
-            "end_line": 519,
+            "start_line": 495,
+            "end_line": 508,
             "lines": 14,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -3916,8 +3940,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "initializeRun",
-            "start_line": 206,
-            "end_line": 221,
+            "start_line": 199,
+            "end_line": 214,
             "lines": 16,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -3928,8 +3952,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "limitsReached",
-            "start_line": 388,
-            "end_line": 409,
+            "start_line": 381,
+            "end_line": 402,
             "lines": 22,
             "cyclomatic_complexity": 7,
             "cognitive_complexity": 6,
@@ -3940,8 +3964,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "processClaimedJob",
-            "start_line": 441,
-            "end_line": 466,
+            "start_line": 434,
+            "end_line": 459,
             "lines": 26,
             "cyclomatic_complexity": 3,
             "cognitive_complexity": 2,
@@ -3952,8 +3976,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "processOne",
-            "start_line": 285,
-            "end_line": 306,
+            "start_line": 278,
+            "end_line": 299,
             "lines": 22,
             "cyclomatic_complexity": 4,
             "cognitive_complexity": 3,
@@ -3964,8 +3988,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "promoteDelayedJobs",
-            "start_line": 429,
-            "end_line": 439,
+            "start_line": 422,
+            "end_line": 432,
             "lines": 11,
             "cyclomatic_complexity": 3,
             "cognitive_complexity": 4,
@@ -3976,8 +4000,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "reconcileDbAndRedis",
-            "start_line": 697,
-            "end_line": 725,
+            "start_line": 678,
+            "end_line": 706,
             "lines": 29,
             "cyclomatic_complexity": 4,
             "cognitive_complexity": 3,
@@ -3988,8 +4012,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "recoverStaleJobs",
-            "start_line": 671,
-            "end_line": 690,
+            "start_line": 652,
+            "end_line": 671,
             "lines": 20,
             "cyclomatic_complexity": 4,
             "cognitive_complexity": 3,
@@ -4000,8 +4024,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "registerSignalHandlers",
-            "start_line": 766,
-            "end_line": 783,
+            "start_line": 747,
+            "end_line": 764,
             "lines": 18,
             "cyclomatic_complexity": 3,
             "cognitive_complexity": 1,
@@ -4012,8 +4036,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "releaseClaimForShutdown",
-            "start_line": 266,
-            "end_line": 278,
+            "start_line": 259,
+            "end_line": 271,
             "lines": 13,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 1,
@@ -4024,8 +4048,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "releaseLock",
-            "start_line": 753,
-            "end_line": 764,
+            "start_line": 734,
+            "end_line": 745,
             "lines": 12,
             "cyclomatic_complexity": 4,
             "cognitive_complexity": 3,
@@ -4036,9 +4060,9 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "retryFailedJob",
-            "start_line": 596,
-            "end_line": 622,
-            "lines": 27,
+            "start_line": 585,
+            "end_line": 607,
+            "lines": 23,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 1,
             "nesting_depth": 1
@@ -4048,8 +4072,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "run",
-            "start_line": 181,
-            "end_line": 204,
+            "start_line": 174,
+            "end_line": 197,
             "lines": 24,
             "cyclomatic_complexity": 3,
             "cognitive_complexity": 2,
@@ -4060,8 +4084,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "runDueMaintenance",
-            "start_line": 411,
-            "end_line": 427,
+            "start_line": 404,
+            "end_line": 420,
             "lines": 17,
             "cyclomatic_complexity": 3,
             "cognitive_complexity": 2,
@@ -4072,8 +4096,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "runLoop",
-            "start_line": 223,
-            "end_line": 244,
+            "start_line": 216,
+            "end_line": 237,
             "lines": 22,
             "cyclomatic_complexity": 5,
             "cognitive_complexity": 6,
@@ -4084,8 +4108,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "runNextIteration",
-            "start_line": 246,
-            "end_line": 264,
+            "start_line": 239,
+            "end_line": 257,
             "lines": 19,
             "cyclomatic_complexity": 4,
             "cognitive_complexity": 4,
@@ -4096,8 +4120,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "scheduleRetry",
-            "start_line": 654,
-            "end_line": 669,
+            "start_line": 635,
+            "end_line": 650,
             "lines": 16,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 3,
@@ -4108,8 +4132,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "setEventListener",
-            "start_line": 148,
-            "end_line": 151,
+            "start_line": 141,
+            "end_line": 144,
             "lines": 4,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -4120,8 +4144,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "stop",
-            "start_line": 311,
-            "end_line": 314,
+            "start_line": 304,
+            "end_line": 307,
             "lines": 4,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
@@ -4132,8 +4156,8 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "truncateTrace",
-            "start_line": 792,
-            "end_line": 799,
+            "start_line": 782,
+            "end_line": 789,
             "lines": 8,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 1,
@@ -4144,9 +4168,9 @@
             "file": "src/Worker.php",
             "class": "Oeltima\\SimpleQueue\\Worker",
             "method": "withOptions",
-            "start_line": 117,
-            "end_line": 141,
-            "lines": 25,
+            "start_line": 125,
+            "end_line": 134,
+            "lines": 10,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
             "nesting_depth": 0
@@ -8864,18 +8888,6 @@
             "occurrence_count": 11
         },
         {
-            "fingerprint": "027e933473b4febc051a30844e7f0090d8773fd0f8e9f9b672021345175d668b",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
-            "fingerprint": "029861d4bed297deac2623b20caed2b88577d4f9e2cada98182efd38019abb3d",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
             "fingerprint": "029d77b6bce48d21449fff22be0c70513b779cb06102fbabac1766a2d5909c01",
             "scope": "tests",
             "token_count": 50,
@@ -9058,12 +9070,6 @@
         {
             "fingerprint": "08440427194ad92fed45b62c33e73d577ca07f35fc73a3e51aa66ccc50196086",
             "scope": "tests",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
-            "fingerprint": "0861f1f7e47c93a27de6439c166ef2e596ff42ff0aff8f0e8d475b13c6ae2cd3",
-            "scope": "production",
             "token_count": 50,
             "occurrence_count": 2
         },
@@ -9308,12 +9314,6 @@
             "occurrence_count": 2
         },
         {
-            "fingerprint": "114561bb6e4e21f52e817d67cc31dad56841e5b7fdf70fb7b6396da569ce6b89",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
             "fingerprint": "116ab0dc5dde254c6f7dff0862a9deef991d77f0871bde0f1797ba2a8255e65a",
             "scope": "tests",
             "token_count": 50,
@@ -9380,12 +9380,6 @@
             "occurrence_count": 2
         },
         {
-            "fingerprint": "1411d7ed41794e4db1070c661a3efd4db380beb577bd7ecb50478a4dc45626bc",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
             "fingerprint": "14476001844dcb44799c94173117ccdecb29fd4e94f6ac7b41bf33c39ecb7e11",
             "scope": "tests",
             "token_count": 50,
@@ -9408,12 +9402,6 @@
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 3
-        },
-        {
-            "fingerprint": "14d688e4a12a5510320f8517132780966ffd5aeb0a2c5f16d25d49cf6c32d688",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
         },
         {
             "fingerprint": "14f044fea30bc80b762b80cca410107ed5e6fc58ec7477606f8725d006c6cddf",
@@ -9490,12 +9478,6 @@
         {
             "fingerprint": "17622d38c285d09eb7a089cc945f1527dd4ec36cfa69ffacf574b7bb64b8ad19",
             "scope": "tests",
-            "token_count": 50,
-            "occurrence_count": 3
-        },
-        {
-            "fingerprint": "17899f20618991b85ded1d9b6107bad113fb747389cbd4f8cbf50e64a23b81e2",
-            "scope": "production",
             "token_count": 50,
             "occurrence_count": 3
         },
@@ -9824,12 +9806,6 @@
             "occurrence_count": 2
         },
         {
-            "fingerprint": "244de446dc16665605b18c6601fa2f684b29e0bedee5ebb498669c3b02316edd",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
             "fingerprint": "246320ff402b985bf699662bcfc60f52405d938be9f130d1c939e12216c33b7d",
             "scope": "tests",
             "token_count": 50,
@@ -9874,12 +9850,6 @@
         {
             "fingerprint": "26962501e6063c0dfc05cbf0e7bfd39132d2239ca8d210863468c73d41818767",
             "scope": "tests",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
-            "fingerprint": "26adc264a209e0b541832097b7e2ea1daedac89bd351910ea29057b31b5de199",
-            "scope": "production",
             "token_count": 50,
             "occurrence_count": 2
         },
@@ -10112,12 +10082,6 @@
             "occurrence_count": 2
         },
         {
-            "fingerprint": "2dcd28ef887e0a463e5f396ed23f72f69d378383a1ecdd685414e8e99431bbad",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
             "fingerprint": "2dfda1601089e2b9e8e078c044558327c6d393af43b2b8b30f821fe7fbbabffa",
             "scope": "tests",
             "token_count": 50,
@@ -10152,12 +10116,6 @@
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 3
-        },
-        {
-            "fingerprint": "2ebf26953c19b6cf2f05b638fa50ff7ae2d8244d56b90e708fab3715b8f3db5c",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
         },
         {
             "fingerprint": "2ed80d61a8a588450879b2f1b9c9f76d3d15230562bbd5721d407045aac3450c",
@@ -10478,12 +10436,6 @@
             "occurrence_count": 2
         },
         {
-            "fingerprint": "38c1ffe8ad2f01e641aa7fbf896b2a4ca70f0291d14166843825146b40e8e41f",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
             "fingerprint": "395a87a724a0aacf0687a7b07836a7b3a0b735bc4ec87cd07b57547dd414bab0",
             "scope": "tests",
             "token_count": 50,
@@ -10760,12 +10712,6 @@
             "occurrence_count": 2
         },
         {
-            "fingerprint": "41fe13b3e7f2a51c623e266825d43a9272d377cdbdf27e54669a39d043ae5f03",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 3
-        },
-        {
             "fingerprint": "4248f16caa62151662d76c85e178455e71b05c6f0d74e6b68b18134fd916bfb9",
             "scope": "tests",
             "token_count": 50,
@@ -10892,12 +10838,6 @@
             "occurrence_count": 2
         },
         {
-            "fingerprint": "469a0757d34f6f0ac9f08b55f90c9c7a11ec4b193c48d6c597d6adeb3a5bc997",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
             "fingerprint": "46a889d41811f7787601d7e6166a138b465e2f8df17fe60e8fe12c071fe67a9d",
             "scope": "tests",
             "token_count": 50,
@@ -10918,12 +10858,6 @@
         {
             "fingerprint": "474ab8f542b0d16c864dbef1f048f7e41edfbbbf22309aa61714126930af0db1",
             "scope": "tests",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
-            "fingerprint": "47651003478bf690f662fd761fd1dddc01539035c272d504c9aad92ac62d700d",
-            "scope": "production",
             "token_count": 50,
             "occurrence_count": 2
         },
@@ -11210,12 +11144,6 @@
             "occurrence_count": 3
         },
         {
-            "fingerprint": "5100b55784d4ef46eecc07ee7722e2e718ecd6633fd1dfde3478f2e1b7eade83",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
             "fingerprint": "512f916a6acae97b6abbb66cb22ef6771e818f0875e4bd2d98dbefd1fff8f2f0",
             "scope": "tests",
             "token_count": 50,
@@ -11440,12 +11368,6 @@
         {
             "fingerprint": "59592847c0ae9f6f5f9bf423c49117991166214c526a7079ab06c35b7b48ffaa",
             "scope": "tests",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
-            "fingerprint": "596a240f0c499dcad605c2555ec063bc75a5a7f7ef54295090972184939afd27",
-            "scope": "production",
             "token_count": 50,
             "occurrence_count": 2
         },
@@ -12122,12 +12044,6 @@
             "occurrence_count": 6
         },
         {
-            "fingerprint": "6fd63d2a516ce701e8781de411150dc67675a16111ed82e246ab6fae0362dabd",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 3
-        },
-        {
             "fingerprint": "7010c84133bdf0baf06a473ecdfe4cade894c18880ad976a90f8f5928ec71558",
             "scope": "tests",
             "token_count": 50,
@@ -12172,12 +12088,6 @@
         {
             "fingerprint": "70f596f2c09cccc804a292a05678fed9437da959a72ea0dbabf7088ae24d5cfc",
             "scope": "tests",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
-            "fingerprint": "7142b3427d4ca1e69166182c2104a3ef43df66ade7c3d8089affe6f690ffa1eb",
-            "scope": "production",
             "token_count": 50,
             "occurrence_count": 2
         },
@@ -12650,12 +12560,6 @@
             "occurrence_count": 2
         },
         {
-            "fingerprint": "7f1e5701b1439f1c60b04663c9e563621b36779e507d8993aaec872c09214752",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
             "fingerprint": "7f9135858ba7209b970161a372be3bf7f76e8918a88ce0519b8b051ebf7be906",
             "scope": "tests",
             "token_count": 50,
@@ -12832,12 +12736,6 @@
         {
             "fingerprint": "87135e13afc089f07af70e636bc7b26aff0c740756be1ebc7d6bf184798dced8",
             "scope": "tests",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
-            "fingerprint": "87180a55fcf9416266cdf8dc416887e0ee6fd4ab050e875a5ad3b1f4334debb0",
-            "scope": "production",
             "token_count": 50,
             "occurrence_count": 2
         },
@@ -13168,12 +13066,6 @@
         {
             "fingerprint": "92d681e91cad5be36110f28b849777fc9f69974486b9589335ebd3ed5a180bc5",
             "scope": "tests",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
-            "fingerprint": "934764cfd98db890a3faae66d51c9c49bcafef6efa11dfd20620a61621c89fc0",
-            "scope": "production",
             "token_count": 50,
             "occurrence_count": 2
         },
@@ -14324,12 +14216,6 @@
             "occurrence_count": 2
         },
         {
-            "fingerprint": "bb2f9719c11a48c31f816e7c7d2c3f61aa335b4b310bdadd0fc11c6f02764bc2",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
             "fingerprint": "bb4d7dd33811e3ea63f0c63c89a13a1ab9980e5e8f2d1eddfdb55a13780a95f7",
             "scope": "tests",
             "token_count": 50,
@@ -14546,12 +14432,6 @@
             "occurrence_count": 2
         },
         {
-            "fingerprint": "c2976fe40855f69436aab0383e80b84561fc28ecdaea90cfaf8cb2a261157d59",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
             "fingerprint": "c2bf8eb15d07247cca03cb46bbfd66ad1c0c8bf917de87ecb1dd513613187268",
             "scope": "tests",
             "token_count": 50,
@@ -14666,12 +14546,6 @@
             "occurrence_count": 3
         },
         {
-            "fingerprint": "c8ddff83e7f1359f0bce4eb34960c7f9901691e5471bb50f57b9e927886e39d8",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 3
-        },
-        {
             "fingerprint": "c9ad807355e17fd7b9c5a3b55504bef26b4a2e7be2966dd2954efd58ea442501",
             "scope": "tests",
             "token_count": 50,
@@ -14752,18 +14626,6 @@
         {
             "fingerprint": "cc16e993aa7e185684aa4768e5c369da066ed41b60f696330d9a18c5501bd9d2",
             "scope": "tests",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
-            "fingerprint": "cc40ec3fde034418a062e48323b9a3749d6dc8d741b3e151aab9eb0c5e6765e6",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
-            "fingerprint": "cd6f5f5993e697d22047508cf5a31dd8e35b1f1a3a2d276dce75679f6a0f4910",
-            "scope": "production",
             "token_count": 50,
             "occurrence_count": 2
         },
@@ -14918,12 +14780,6 @@
             "occurrence_count": 3
         },
         {
-            "fingerprint": "d26b7d8dd5e7e2c548679aacc97b653c7431eedbb3cd6d41cfaf1e9d4bcb70a4",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
             "fingerprint": "d3212d9375f1b6597fc5cf222b478dd58bfe14437f403ba9d26410c0a4509f8b",
             "scope": "tests",
             "token_count": 50,
@@ -15012,12 +14868,6 @@
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 7
-        },
-        {
-            "fingerprint": "d68e5a1aa1cd41d5372bf071fc9dcaa1bde3845fce8b21a0621edbc7d9608a85",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
         },
         {
             "fingerprint": "d69b00c409ccf359d7a6e539b2ff0d5f048cb191baeaebea2b9e7d2af39cf503",
@@ -15126,12 +14976,6 @@
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 4
-        },
-        {
-            "fingerprint": "daf002cc3b7018097846703435ec50d6ca0a7978a51d93cb14d802b84bac62e6",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
         },
         {
             "fingerprint": "db2b7c0063d1b0315e401be33c443cd90b9cb3ad9fb79559d29ffd835e608327",
@@ -15282,12 +15126,6 @@
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 3
-        },
-        {
-            "fingerprint": "dff66ec051c6e82641d54978588e818f79aac4d98b8d9b0b9403dac4b84bd0a8",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
         },
         {
             "fingerprint": "e00a2c48464a5f26b006238acf609fb58218d7e6fc34fa8f6a6a05d12c3b795f",
@@ -15502,12 +15340,6 @@
         {
             "fingerprint": "e8c3dd4bb4fa17d4df9aa7e6c800e1d72d5ace8c88f6e0e1f9df218a0081351a",
             "scope": "tests",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
-            "fingerprint": "e8ddf932040c8b9da28df24dc648642e8cb75911325503c0a30d5c6e7eb79e1a",
-            "scope": "production",
             "token_count": 50,
             "occurrence_count": 2
         },
@@ -15800,12 +15632,6 @@
             "occurrence_count": 2
         },
         {
-            "fingerprint": "f10ea8b05e71ae96fd77bab78a0dd0d22695ae7e187f69473b64946c7e86b8cb",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
             "fingerprint": "f112ed52f68f5eb2f34f721c79e40be8cdd0b0872c94156cf8c68fb89218e195",
             "scope": "tests",
             "token_count": 50,
@@ -15828,12 +15654,6 @@
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 3
-        },
-        {
-            "fingerprint": "f19316d3ccdffc44ab1a8631699301e44ece9fab468099b5520c95552f91a847",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
         },
         {
             "fingerprint": "f1aec8fdc745c0a1682fc794583ad67f883a0f92867f43c1a26169888671f41c",
@@ -15866,12 +15686,6 @@
             "occurrence_count": 5
         },
         {
-            "fingerprint": "f35713b434dffd834e98b2f93fbf82dfe6fa1dd92044f9bcc84de97e6c214985",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
             "fingerprint": "f365f92ebfac680091c34466bf681c1a4ea9f75a6e55df327072b8263cb1d29a",
             "scope": "tests",
             "token_count": 50,
@@ -15898,12 +15712,6 @@
         {
             "fingerprint": "f46c924214ce477a40a03d0fe9488f42a698cb0839350dcdb495853ce7c68827",
             "scope": "tests",
-            "token_count": 50,
-            "occurrence_count": 2
-        },
-        {
-            "fingerprint": "f46d8b224f6008f53a8bbdf74361cc4ad07eaa96defd8bab8ecea8be816686ef",
-            "scope": "production",
             "token_count": 50,
             "occurrence_count": 2
         },
@@ -16290,12 +16098,6 @@
             "scope": "tests",
             "token_count": 50,
             "occurrence_count": 7
-        },
-        {
-            "fingerprint": "ffab2bc8a8258d8b8726c1d069ef0ef13a564a71efb58125550f24824d092a07",
-            "scope": "production",
-            "token_count": 50,
-            "occurrence_count": 2
         },
         {
             "fingerprint": "fffb0842eb8b444450a72c589d68dd0dcabc591634e3a420cac0315491e79173",
