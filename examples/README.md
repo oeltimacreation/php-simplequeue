@@ -1,16 +1,98 @@
-# Examples
+# Runnable Examples & Sample Catalogue
 
-Examples are grouped by the services they require. They are intentionally
-standalone and do not contain the canonical database schema; use
-[docs/database.md](../docs/database.md) for that.
+This directory contains self-contained code examples demonstrating the capabilities of PHP SimpleQueue across in-memory setups, scheduled dispatching, database persistence, Redis drivers, and benchmarks.
 
-| Example | Requirements | Command |
-|---|---|---|
-| [basic/in-memory.php](basic/in-memory.php) | PHP and Composer dependencies | `php examples/basic/in-memory.php` |
-| [basic/scheduled-dispatch.php](basic/scheduled-dispatch.php) | PHP and Composer dependencies | `php examples/basic/scheduled-dispatch.php` |
-| [redis/](redis/README.md) | PDO database, Redis/Valkey, Predis | worker and dispatcher in separate terminals |
-| [benchmark/database.php](benchmark/database.php) | PDO SQLite | `php examples/benchmark/database.php [jobs]` |
-| [migrations/1.3.0-lease-based-claims.sql](migrations/1.3.0-lease-based-claims.sql) | Existing v1.2 installation | apply once before upgrading |
+---
 
-Do not use the in-memory samples for persistent jobs: their contents disappear
-when the PHP process exits.
+## 1. In-Memory Quickstart
+
+- **File**: [`basic/in-memory.php`](basic/in-memory.php)
+- **Requirements**: PHP 8.2+ and Composer autoloader
+- **Use Case**: Fast local development, prototyping, and testing without configuring external services.
+
+### Execution Command
+
+```bash
+php examples/basic/in-memory.php
+```
+
+### Expected Output
+
+```
+Job #1: Hello, queue!
+Status: completed; result: {"message":"Hello, queue!"}
+```
+
+---
+
+## 2. Scheduled Dispatching
+
+- **File**: [`basic/scheduled-dispatch.php`](basic/scheduled-dispatch.php)
+- **Requirements**: PHP 8.2+ and Composer autoloader
+- **Use Case**: Delaying job execution into the future via relative delays (`dispatchAfter()`) or absolute timestamps (`dispatchAt()`).
+
+### Execution Command
+
+```bash
+php examples/basic/scheduled-dispatch.php
+```
+
+### Expected Output
+
+```
+Dispatched job #1; first availability in 2s.
+Immediate processOne(): processed=false, status=pending (not claimable yet)
+Waiting 2s for the job to become due...
+Job #1: Hello from the future!
+Due processOne(): processed=true, status=completed, result={"message":"Hello from the future!"}
+Dispatched job #2 via dispatchAt() with a 1s absolute timestamp.
+Job #2: Absolute timestamp!
+dispatchAt() result status: completed
+```
+
+---
+
+## 3. Production Redis & PDO Database Example
+
+- **Directory**: [`redis/`](redis/README.md)
+- **Requirements**: PDO (MySQL / PostgreSQL / SQLite), Redis 7+ or Valkey 8+, `predis/predis:^3`
+- **Use Case**: High-performance production setup combining authoritative database persistence with Redis delivery notifications.
+
+### Setup & Run
+
+Refer to [`redis/README.md`](redis/README.md) for environment configuration.
+
+```bash
+# Terminal 1: Start background worker
+php examples/redis/worker.php
+
+# Terminal 2: Dispatch background jobs
+php examples/redis/dispatch.php
+```
+
+---
+
+## 4. SQLite Database Benchmark
+
+- **File**: [`benchmark/database.php`](benchmark/database.php)
+- **Requirements**: PHP 8.2+ with `pdo_sqlite`
+- **Use Case**: Benchmarking batch insert, claim, processing, and completion throughput on SQLite.
+
+### Execution Command
+
+```bash
+php examples/benchmark/database.php 1000
+```
+
+---
+
+## 5. Migrations Catalogue
+
+- **File**: [`migrations/1.3.0-lease-based-claims.sql`](migrations/1.3.0-lease-based-claims.sql)
+- **Requirements**: Existing database installation upgrading from v1.2.x
+- **Use Case**: Schema migration required when upgrading to lease-based claims (introduced in v1.3.0).
+
+---
+
+> **Note**: Do not use in-memory drivers or storage backends (`InMemoryJobStorage`, `InMemoryQueueDriver`) for persistent production jobs. Their state is ephemeral and lives only for the lifetime of the active PHP process. For persistent workloads, use `PdoJobStorage` with database schemas from [docs/database.md](../docs/database.md).
+

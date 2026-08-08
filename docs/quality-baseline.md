@@ -1,9 +1,6 @@
-# v1.6 quality baseline
+# Quality Baseline & Inventory (v1.8.0)
 
-This report records the quality baseline captured on 2026-07-26. It measures
-the repository after characterization tests were added and before
-the v1.6 structural refactors. The machine-readable inventory is stored
-in [`quality/quality-baseline.json`](../quality/quality-baseline.json).
+This report records the quality baseline and inventory for **v1.8.0**. The machine-readable baseline is stored in [`quality/quality-baseline.json`](../quality/quality-baseline.json).
 
 ## Reproduce the inventory
 
@@ -38,17 +35,14 @@ exceeds the target, or a new duplicated window appears. An intentional
 exception must be narrowly recorded with its metric and reason in
 `quality/ratchet-exceptions.json`; the checker prints every applied exception.
 
-## Initial inventory
+## v1.8.0 Inventory Summary
 
 | Scope | PHP files | Classes | Methods | Physical lines | Duplicated windows |
 |---|---:|---:|---:|---:|---:|
-| Production | 41 | 41 | 197 | 4,947 | 198 |
-| Tests | 18 | 27 | 238 | 4,673 | 1,424 |
+| Production | 57 | 57 | 282 | 6,156 | **0** |
+| Tests | 29 | 44 | 398 | 6,830 | 1,014 |
 
-The high test duplication count is dominated by repeated worker mock setup.
-Because windows overlap, a single long repeated fixture produces several
-fingerprints. Deduplication refactoring replaces that setup with focused fixtures while
-keeping scenario intent visible.
+The production deduplication program in v1.8.0 reduced production duplicate windows from 37 down to **0**, and test deduplication reduced duplicate windows from 1,424 down to 1,014 while extracting shared test fixtures (`JobDataFactory`, `ClaimedJobFactory`, `WorkerHarness`).
 
 ### Method hotspots
 

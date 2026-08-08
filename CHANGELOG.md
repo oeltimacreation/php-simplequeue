@@ -23,7 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Introduced `@phpstan-type JobDefinitionShape` in `JobStorageInterface` and `@phpstan-type StorageRowShape` in `JobDataHydrator`, enforcing precise array-shape types across `createJobs()`, `JobDispatcher`, and storage boundaries.
 - Documented `JobDefinitionShape` structure in `docs/architecture.md` and re-baselined `docs/type-safety.md` for v1.8.0, confirming `declare(strict_types=1)` across all 57 production files and PHP 8.2+ `readonly` compliance.
 - Added edge-case unit characterization tests in `JobDataTest.php` verifying `SerializationException` message contracts, invalid JSON decoding, unencodable inputs, and non-UTC `DateTimeInterface` timezone normalization in `normalizeAvailableAt()`.
-- Re-published `quality/quality-baseline.json` following Stage 3 quality, complexity, and type safety refactoring, keeping all test suites, PHPStan Level 9 strict rules, PHPCS, and quality ratchets green.
+- Overhauled documentation structure: `docs/README.md` reorganized into a role-based index (Users, Integrators, Maintainers) with reading order and descriptions.
+- Refreshed root `README.md` with sharpened lightweight positioning, feature overview table, quick API reference, named arguments in code samples, and updated guide links.
+- Expanded `docs/architecture.md` with detailed two-layer engine model diagram, job lifecycle state machine, optimistic claim fencing, scheduled promotion, queue repair, and backend parity map.
+- Updated version upgrade guidance in `docs/upgrading.md` with v1.7.x and v1.8.x transition details.
+- Overhauled `CONTRIBUTING.md` developer guide with local setup, complete quality program toolchain, 15/15/3 quality ratchet rules, and contract testing guide for custom drivers/storage/handlers.
+- Polished `examples/README.md` as the canonical sample catalogue with expected terminal output for all runnable examples.
+- Re-published `quality/quality-baseline.json` following Stage 3 and Stage 4 refactoring, keeping all test suites, PHPStan Level 9 strict rules, PHPCS, and quality ratchets green.
+
 
 ## [1.7.0] - 2026-08-01
 

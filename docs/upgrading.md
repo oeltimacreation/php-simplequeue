@@ -1,5 +1,22 @@
 # Upgrading
 
+## To v1.8.x
+
+v1.8 is a consolidation and quality release focused on code de-duplication, precise array-shape typing (`JobDefinitionShape`, `StorageRowShape`), test suite refactoring, and documentation overhaul. It is 100% backward compatible with v1.7.x and v1.6.x, requiring zero database schema or public API changes.
+
+- **Public APIs and Interfaces**: All public interfaces (`JobStorageInterface`, `QueueDriverInterface`, `JobHandlerInterface`) remain unchanged.
+- **Claim Performance**: `PdoJobStorage` claim execution paths are unified internally without altering locking or transaction behavior (`FOR UPDATE SKIP LOCKED` / RETURNING).
+- **Worker Configuration**: `WorkerOptions` object configuration is passed directly to workers without array flattening and re-parsing.
+- **Array Shape Types**: `JobStorageInterface::createJobs()` explicitly documents `@phpstan-type JobDefinitionShape`.
+
+## To v1.7.x
+
+v1.7 introduced scheduled initial dispatch and performance optimizations while preserving backward compatibility with v1.6.x.
+
+- **Scheduled Dispatch**: Added `JobDispatcher::dispatchAfter()`, `dispatchAt()`, and optional `$availableAt` parameter on `dispatch()`.
+- **Redis Performance**: Utilizes `EVALSHA` for Redis Lua script execution with transparent fallback to `EVAL` on script cache missing.
+- **Atomic Batch Scheduling**: Introduced pipelined scheduled batch enqueue (`enqueueDelayedBatch()`) for driver implementations supporting it.
+
 ## To v1.6.x
 
 v1.6 is a consolidation release focused on code quality, type safety, performance, and stability hardening. It is 100% backward compatible with v1.5.x and requires no database schema or public API changes.
@@ -45,3 +62,4 @@ Apply [the lease migration](../examples/migrations/1.3.0-lease-based-claims.sql)
 Custom storage implementations must use `claimNextAvailable()` / `claimById()`
 and accept `ClaimedJob` for fenced completion, failure, retry, progress, and
 heartbeat updates. `Worker::run()` returns an exit code.
+
