@@ -40,20 +40,12 @@ final class Worker
     private $lockHandle = null;
     private ?string $lockFile;
 
-    private int $pollTimeout;
-    private int $stuckJobTtl;
-    private ClockInterface $clock;
-    private WorkerPolicy $policy;
-    private WorkerLoopFailureHandler $loopFailureHandler;
-    private int $maxJobs;
-    private int $maxTime;
-    private int $memoryLimit;
-    private bool $stopWhenEmpty;
+    private readonly WorkerOptions $options;
+    private readonly ClockInterface $clock;
+    private readonly WorkerPolicy $policy;
+    private readonly WorkerLoopFailureHandler $loopFailureHandler;
     private int $processedJobsCount = 0;
     private float $startTime = 0.0;
-    private float $promoteInterval;
-    private int $promoteLimit;
-    private float $recoveryInterval;
     private float $lastPromoteTime = 0.0;
     private float $lastRecoveryTime = 0.0;
     private ?int $reconcileCursor = null;
@@ -85,41 +77,39 @@ final class Worker
             $driver->setWorkerId($this->workerId);
         }
 
-        $workerOptions = $options instanceof WorkerOptions ? $options : WorkerOptions::fromArray($options);
-        if ($options instanceof WorkerOptions) {
-            $this->lockFile = $options->lockFile ?? sprintf(
-                '/tmp/simplequeue-worker-%s.lock',
-                preg_replace('/[^a-zA-Z0-9_-]/', '', $queue)
-            );
-        } elseif (array_key_exists('lock_file', $options)) {
-            $lockFileOpt = $workerOptions->lockFile;
-            $this->lockFile = is_string($lockFileOpt) ? $lockFileOpt : null;
-        } else {
-            $this->lockFile = sprintf(
-                '/tmp/simplequeue-worker-%s.lock',
-                preg_replace('/[^a-zA-Z0-9_-]/', '', $queue)
-            );
-        }
-        $this->pollTimeout = $workerOptions->pollTimeout;
-        $this->stuckJobTtl = $workerOptions->stuckJobTtl;
-        $this->policy = new WorkerPolicy($workerOptions->retryBaseDelay, $workerOptions->retryMaxDelay);
+        $this->options = $options instanceof WorkerOptions ? $options : WorkerOptions::fromArray($options);
+        $this->lockFile = $this->resolveLockFile($queue, $options);
+        $this->policy = new WorkerPolicy($this->options->retryBaseDelay, $this->options->retryMaxDelay);
         $this->loopFailureHandler = new WorkerLoopFailureHandler($this->logger, $this->policy);
-        $this->clock = $workerOptions->clock ?? new SystemClock();
-        $this->maxJobs = $workerOptions->maxJobs;
-        $this->maxTime = $workerOptions->maxTime;
-        $this->memoryLimit = $workerOptions->memoryLimit;
-        $this->stopWhenEmpty = $workerOptions->stopWhenEmpty;
-        $this->promoteInterval = $workerOptions->promoteInterval;
-        $this->promoteLimit = $workerOptions->promoteLimit;
-        $this->recoveryInterval = $workerOptions->recoveryInterval;
+        $this->clock = $this->options->clock ?? new SystemClock();
 
         if ($driver instanceof SupportsTimeoutValidation) {
-            $driver->validateTimeout($this->pollTimeout);
+            $driver->validateTimeout($this->options->pollTimeout);
         }
 
-        if (is_callable($workerOptions->eventListener)) {
-            $this->eventListener = $workerOptions->eventListener;
+        if (is_callable($this->options->eventListener)) {
+            $this->eventListener = $this->options->eventListener;
         }
+    }
+
+    /**
+     * @param array<string, mixed>|WorkerOptions $options
+     */
+    private function resolveLockFile(string $queue, array|WorkerOptions $options): ?string
+    {
+        if ($options instanceof WorkerOptions) {
+            return $options->lockFile ?? sprintf(
+                '/tmp/simplequeue-worker-%s.lock',
+                preg_replace('/[^a-zA-Z0-9_-]/', '', $queue)
+            );
+        }
+        if (array_key_exists('lock_file', $options)) {
+            return $this->options->lockFile;
+        }
+        return sprintf(
+            '/tmp/simplequeue-worker-%s.lock',
+            preg_replace('/[^a-zA-Z0-9_-]/', '', $queue)
+        );
     }
 
     public static function withOptions(
@@ -238,9 +228,9 @@ final class Worker
 
     private function runNextIteration(QueueDriverInterface $driver): bool
     {
-        $claim = $this->claimNextJob($this->pollTimeout);
+        $claim = $this->claimNextJob($this->options->pollTimeout);
         if ($claim === null) {
-            if ($this->stopWhenEmpty) {
+            if ($this->options->stopWhenEmpty) {
                 $this->logger->info('Queue is empty and stop_when_empty is enabled. Stopping worker.');
                 return false;
             }
@@ -281,7 +271,7 @@ final class Worker
 
         // Promote any delayed jobs that are now due
         if ($driver instanceof SupportsDelayedJobs) {
-            $driver->promoteDelayedJobs($this->queue, $this->promoteLimit);
+            $driver->promoteDelayedJobs($this->queue, $this->options->promoteLimit);
         }
 
         try {
@@ -391,19 +381,19 @@ final class Worker
 
     private function limitsReached(): bool
     {
-        if ($this->maxJobs > 0 && $this->processedJobsCount >= $this->maxJobs) {
-            $this->logger->info('Worker limit reached: max_jobs', ['max_jobs' => $this->maxJobs]);
+        if ($this->options->maxJobs > 0 && $this->processedJobsCount >= $this->options->maxJobs) {
+            $this->logger->info('Worker limit reached: max_jobs', ['max_jobs' => $this->options->maxJobs]);
             return true;
         }
 
-        if ($this->maxTime > 0 && ($this->clock->monotonic() - $this->startTime) >= $this->maxTime) {
-            $this->logger->info('Worker limit reached: max_time', ['max_time' => $this->maxTime]);
+        if ($this->options->maxTime > 0 && ($this->clock->monotonic() - $this->startTime) >= $this->options->maxTime) {
+            $this->logger->info('Worker limit reached: max_time', ['max_time' => $this->options->maxTime]);
             return true;
         }
 
-        if ($this->memoryLimit > 0 && memory_get_usage(true) >= $this->memoryLimit) {
+        if ($this->options->memoryLimit > 0 && memory_get_usage(true) >= $this->options->memoryLimit) {
             $this->logger->info('Worker limit reached: memory_limit', [
-                'memory_limit' => $this->memoryLimit,
+                'memory_limit' => $this->options->memoryLimit,
                 'current_memory' => memory_get_usage(true)
             ]);
             return true;
@@ -417,13 +407,13 @@ final class Worker
         $now = $this->clock->monotonic();
 
         // Promote delayed jobs
-        if ($now - $this->lastPromoteTime >= $this->promoteInterval) {
+        if ($now - $this->lastPromoteTime >= $this->options->promoteInterval) {
             $this->promoteDelayedJobs();
             $this->lastPromoteTime = $now;
         }
 
         // Recover stale jobs
-        if ($now - $this->lastRecoveryTime >= $this->recoveryInterval) {
+        if ($now - $this->lastRecoveryTime >= $this->options->recoveryInterval) {
             $this->recoverStaleJobs();
             $this->reconcileDbAndRedis();
             $this->lastRecoveryTime = $now;
@@ -435,7 +425,7 @@ final class Worker
         $driver = $this->queueManager->driver();
         if ($driver instanceof SupportsDelayedJobs) {
             try {
-                $driver->promoteDelayedJobs($this->queue, $this->promoteLimit);
+                $driver->promoteDelayedJobs($this->queue, $this->options->promoteLimit);
             } catch (\Throwable $e) {
                 $this->logger->error('Failed to promote delayed jobs', ['error' => $e->getMessage()]);
             }
@@ -662,21 +652,22 @@ final class Worker
 
     private function recoverStaleJobs(): void
     {
+        $stuckJobTtl = $this->options->stuckJobTtl;
         $recovered = $this->storage instanceof \Oeltima\SimpleQueue\Contract\SupportsQueueScopedStaleRecovery
-            ? $this->storage->recoverStaleJobsForQueue($this->queue, $this->stuckJobTtl, 100)
-            : $this->storage->recoverStaleJobs($this->stuckJobTtl);
+            ? $this->storage->recoverStaleJobsForQueue($this->queue, $stuckJobTtl, 100)
+            : $this->storage->recoverStaleJobs($stuckJobTtl);
 
         // Also recover from driver if supported
         $driver = $this->queueManager->driver();
         if ($driver instanceof SupportsStaleRecovery) {
-            $driverRecovered = $driver->recoverStaleProcessing($this->queue, $this->stuckJobTtl);
+            $driverRecovered = $driver->recoverStaleProcessing($this->queue, $stuckJobTtl);
             $recovered += $driverRecovered;
         }
 
         if ($recovered > 0) {
             $this->logger->warning(
                 'Recovered stale jobs',
-                ['count' => $recovered, 'ttl_seconds' => $this->stuckJobTtl]
+                ['count' => $recovered, 'ttl_seconds' => $stuckJobTtl]
             );
         }
     }

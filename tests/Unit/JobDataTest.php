@@ -6,28 +6,37 @@ namespace Oeltima\SimpleQueue\Tests\Unit;
 
 use Oeltima\SimpleQueue\Contract\JobData;
 use Oeltima\SimpleQueue\Exception\SerializationException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 class JobDataTest extends TestCase
 {
-    public function testFromRawRejectsPayloadJsonThatDecodesToScalar(): void
+    /**
+     * @param array<string, mixed> $overrides
+     */
+    #[DataProvider('invalidRawJobDataProvider')]
+    public function testFromRawRejectsInvalidData(array $overrides, ?string $expectedMessage = null): void
     {
         $this->expectException(SerializationException::class);
-        JobData::fromRaw([
-            'id' => 1,
-            'type' => 'test.job',
-            'payload' => '"not-an-array"',
-        ]);
+        if ($expectedMessage !== null) {
+            $this->expectExceptionMessage($expectedMessage);
+        }
+
+        $raw = array_merge(['id' => 1, 'type' => 'test.job'], $overrides);
+        JobData::fromRaw($raw);
     }
 
-    public function testFromRawRejectsScalarPayload(): void
+    /**
+     * @return array<string, array{0: array<string, mixed>, 1?: string|null}>
+     */
+    public static function invalidRawJobDataProvider(): array
     {
-        $this->expectException(SerializationException::class);
-        JobData::fromRaw([
-            'id' => 1,
-            'type' => 'test.job',
-            'payload' => 123,
-        ]);
+        return [
+            'payload json scalar' => [['payload' => '"not-an-array"']],
+            'scalar payload' => [['payload' => 123]],
+            'invalid json payload' => [['payload' => '{invalid-json'], 'Stored job payload contains invalid JSON'],
+            'invalid json result' => [['result' => '{invalid-result-json'], 'Stored job result contains invalid JSON'],
+        ];
     }
 
     public function testFromRawMapsLeaseToken(): void
@@ -40,30 +49,6 @@ class JobDataTest extends TestCase
 
         $this->assertSame('lease-abc', $job->leaseToken);
         $this->assertSame('lease-abc', $job->toArray()['lease_token']);
-    }
-
-    public function testFromRawRejectsInvalidJsonPayloadString(): void
-    {
-        $this->expectException(SerializationException::class);
-        $this->expectExceptionMessage('Stored job payload contains invalid JSON');
-
-        JobData::fromRaw([
-            'id' => 1,
-            'type' => 'test.job',
-            'payload' => '{invalid-json',
-        ]);
-    }
-
-    public function testFromRawRejectsInvalidJsonResultString(): void
-    {
-        $this->expectException(SerializationException::class);
-        $this->expectExceptionMessage('Stored job result contains invalid JSON');
-
-        JobData::fromRaw([
-            'id' => 1,
-            'type' => 'test.job',
-            'result' => '{invalid-result-json',
-        ]);
     }
 
     public function testNormalizeAvailableAtConvertsNonUtcTimezoneToUtcString(): void
