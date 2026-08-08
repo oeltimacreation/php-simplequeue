@@ -9,6 +9,15 @@ namespace Oeltima\SimpleQueue\Contract;
  *
  * Job storage handles persistence of job data including creation,
  * status updates, progress tracking, and querying.
+ *
+ * @phpstan-type JobDefinitionShape array{
+ *     type: string,
+ *     payload: array<string, mixed>,
+ *     queue?: string,
+ *     maxAttempts?: int,
+ *     requestId?: string|null,
+ *     availableAt?: int|\DateTimeInterface|string|null
+ * }
  */
 interface JobStorageInterface
 {
@@ -33,7 +42,7 @@ interface JobStorageInterface
     /**
      * Batch create multiple job records in a single operation.
      *
-     * @param array<int, array<string, mixed>> $jobs Array of job definitions
+     * @param array<int, JobDefinitionShape> $jobs Array of job definitions
      * @return int[] Array of created job IDs
      */
     public function createJobs(array $jobs): array;

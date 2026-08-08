@@ -29,6 +29,8 @@ use PDOStatement;
  * Provides a database-agnostic implementation using PDO.
  * Works with MySQL, PostgreSQL, SQLite, and other PDO-supported databases.
  *
+ * @phpstan-import-type JobDefinitionShape from JobStorageInterface
+ *
  * Supports auto-reconnect for long-running workers via connection factory.
  */
 class PdoJobStorage implements
@@ -219,7 +221,7 @@ class PdoJobStorage implements
     /**
      * Batch create multiple job records in a single operation.
      *
-     * @param array<int, array<string, mixed>> $jobs Array of job definitions
+     * @param array<int, JobDefinitionShape> $jobs Array of job definitions
      * @return int[] Array of created job IDs
      */
     public function createJobs(array $jobs): array
@@ -316,41 +318,59 @@ class PdoJobStorage implements
     ): IdempotentJobResult {
         // The database conditional/generated unique index is the concurrency authority.
         for ($attempt = 0; $attempt < 2; $attempt++) {
-            $existing = $this->findActiveByRequestId($requestId);
-            if ($existing !== null) {
-                return new IdempotentJobResult($existing->id, false);
-            }
-
-            $pdo = $this->getPdo();
-            $hasSavepoint = $pdo->inTransaction();
-            if ($hasSavepoint) {
-                $pdo->exec('SAVEPOINT simplequeue_idempotent_job');
-            }
-
-            try {
-                $result = new IdempotentJobResult(
-                    $this->createJob($type, $payload, $queue, $maxAttempts, $requestId),
-                    true
-                );
-                if ($hasSavepoint) {
-                    $pdo->exec('RELEASE SAVEPOINT simplequeue_idempotent_job');
-                }
+            $result = $this->attemptCreateIdempotentJob($type, $payload, $requestId, $queue, $maxAttempts);
+            if ($result !== null) {
                 return $result;
-            } catch (PDOException $exception) {
-                if (!$this->isUniqueConstraintViolation($exception)) {
-                    throw $exception;
-                }
-
-                $this->rollbackIdempotentSavepoint($pdo, $hasSavepoint);
-
-                $existing = $this->findActiveByRequestId($requestId);
-                if ($existing !== null) {
-                    return new IdempotentJobResult($existing->id, false);
-                }
             }
         }
 
         throw new \RuntimeException('Could not resolve concurrent idempotent job creation');
+    }
+
+    /**
+     * @param array<string, mixed> $payload Job payload
+     */
+    private function attemptCreateIdempotentJob(
+        string $type,
+        array $payload,
+        string $requestId,
+        string $queue,
+        int $maxAttempts
+    ): ?IdempotentJobResult {
+        $existing = $this->findActiveByRequestId($requestId);
+        if ($existing !== null) {
+            return new IdempotentJobResult($existing->id, false);
+        }
+
+        $pdo = $this->getPdo();
+        $hasSavepoint = $pdo->inTransaction();
+        if ($hasSavepoint) {
+            $pdo->exec('SAVEPOINT simplequeue_idempotent_job');
+        }
+
+        try {
+            $result = new IdempotentJobResult(
+                $this->createJob($type, $payload, $queue, $maxAttempts, $requestId),
+                true
+            );
+            if ($hasSavepoint) {
+                $pdo->exec('RELEASE SAVEPOINT simplequeue_idempotent_job');
+            }
+            return $result;
+        } catch (PDOException $exception) {
+            if (!$this->isUniqueConstraintViolation($exception)) {
+                throw $exception;
+            }
+
+            $this->rollbackIdempotentSavepoint($pdo, $hasSavepoint);
+
+            $existing = $this->findActiveByRequestId($requestId);
+            if ($existing !== null) {
+                return new IdempotentJobResult($existing->id, false);
+            }
+        }
+
+        return null;
     }
 
     /**

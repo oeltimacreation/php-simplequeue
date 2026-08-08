@@ -19,6 +19,8 @@ use Oeltima\SimpleQueue\Internal\PositiveJobId;
  * Service for dispatching jobs to the queue.
  *
  * Provides a simple API for creating jobs and adding them to the queue.
+ *
+ * @phpstan-import-type JobDefinitionShape from JobStorageInterface
  */
 final class JobDispatcher
 {
@@ -291,7 +293,7 @@ final class JobDispatcher
      * Build one job definition array for createJobs().
      *
      * @param array<string, mixed> $payload
-     * @return array<string, mixed>
+     * @return JobDefinitionShape
      */
     private function jobDefinition(
         string $type,
@@ -325,7 +327,7 @@ final class JobDispatcher
      * @param string $queue Queue name
      * @param int $maxAttempts Maximum retry attempts
      * @param int|null $resolvedAt Resolved availability timestamp or null for immediate dispatch
-     * @return array<int, array<string, mixed>> Job definitions
+     * @return array<int, JobDefinitionShape> Job definitions
      */
     private function batchDefinitions(
         string $type,

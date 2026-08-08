@@ -26,6 +26,7 @@ use Oeltima\SimpleQueue\SystemClock;
  * All data is lost when the process terminates.
  *
  * @phpstan-import-type StoredJobRow from \Oeltima\SimpleQueue\Internal\InMemoryJobRow
+ * @phpstan-import-type JobDefinitionShape from JobStorageInterface
  */
 class InMemoryJobStorage implements
     JobStorageInterface,
@@ -123,22 +124,18 @@ class InMemoryJobStorage implements
     /**
      * Batch create multiple job records in a single operation.
      *
-     * @param array<int, array<string, mixed>> $jobs Array of job definitions
+     * @param array<int, JobDefinitionShape> $jobs Array of job definitions
      * @return int[] Array of created job IDs
      */
     public function createJobs(array $jobs): array
     {
         $ids = [];
         foreach ($jobs as $job) {
-            $type = is_string($job['type'] ?? null) ? $job['type'] : '';
-            $payloadRaw = $job['payload'] ?? [];
-            /** @var array<string, mixed> $payload */
-            $payload = is_array($payloadRaw) ? $payloadRaw : [];
-            $queue = isset($job['queue']) && is_string($job['queue']) ? $job['queue'] : 'default';
-            $maxAttempts = isset($job['maxAttempts']) && is_numeric($job['maxAttempts'])
-                ? (int) $job['maxAttempts']
-                : 3;
-            $requestId = isset($job['requestId']) && is_string($job['requestId']) ? $job['requestId'] : null;
+            $type = $job['type'];
+            $payload = $job['payload'];
+            $queue = $job['queue'] ?? 'default';
+            $maxAttempts = $job['maxAttempts'] ?? 3;
+            $requestId = $job['requestId'] ?? null;
             $now = $this->now();
             $availableAtRaw = $job['availableAt'] ?? null;
             $availableAt = $availableAtRaw === null
@@ -216,25 +213,13 @@ class InMemoryJobStorage implements
         $candidateAvailableAt = null;
 
         foreach ($this->jobs as $id => $job) {
-            if ($job['status'] !== JobStatus::Pending) {
+            if (!$this->isClaimableCandidate($job, $queue, $now)) {
                 continue;
             }
-            if ($job['queue'] !== $queue) {
-                continue;
+            if ($this->isBetterCandidate($job, $id, $candidateAvailableAt, $candidateId)) {
+                $candidateId = $id;
+                $candidateAvailableAt = $job['available_at'];
             }
-            if ($job['available_at'] > $now) {
-                continue;
-            }
-            if (
-                $candidateAvailableAt !== null
-                && ($job['available_at'] > $candidateAvailableAt
-                    || ($job['available_at'] === $candidateAvailableAt && $id > (int) $candidateId))
-            ) {
-                continue;
-            }
-
-            $candidateId = $id;
-            $candidateAvailableAt = $job['available_at'];
         }
 
         if ($candidateId === null) {
@@ -242,6 +227,30 @@ class InMemoryJobStorage implements
         }
 
         return $this->claimAvailableJob($candidateId, $workerId, $now);
+    }
+
+    /**
+     * @param array<string, mixed> $job Storage job row
+     */
+    private function isClaimableCandidate(array $job, string $queue, string $now): bool
+    {
+        return $job['status'] === JobStatus::Pending
+            && $job['queue'] === $queue
+            && $job['available_at'] <= $now;
+    }
+
+    /**
+     * @param array<string, mixed> $job Storage job row
+     */
+    private function isBetterCandidate(array $job, int $id, ?string $candidateAvailableAt, ?int $candidateId): bool
+    {
+        if ($candidateAvailableAt === null) {
+            return true;
+        }
+        if ($job['available_at'] < $candidateAvailableAt) {
+            return true;
+        }
+        return $job['available_at'] === $candidateAvailableAt && $id < (int) $candidateId;
     }
 
     /**

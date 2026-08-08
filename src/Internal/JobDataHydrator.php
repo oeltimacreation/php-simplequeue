@@ -12,6 +12,29 @@ use Oeltima\SimpleQueue\Exception\SerializationException;
  * Converts untrusted storage rows into trusted job data.
  *
  * @internal
+ * @phpstan-type StorageRowShape array{
+ *     id?: int|string|null,
+ *     queue?: string|null,
+ *     type?: string|null,
+ *     status?: string|JobStatus|null,
+ *     payload?: string|array<string, mixed>|null,
+ *     attempts?: int|string|null,
+ *     max_attempts?: int|string|null,
+ *     available_at?: string|\DateTimeInterface|int|null,
+ *     started_at?: string|\DateTimeInterface|int|null,
+ *     completed_at?: string|\DateTimeInterface|int|null,
+ *     locked_by?: string|null,
+ *     locked_at?: string|\DateTimeInterface|int|null,
+ *     lease_token?: string|null,
+ *     error_message?: string|null,
+ *     error_trace?: string|null,
+ *     progress?: int|string|null,
+ *     progress_message?: string|null,
+ *     result?: mixed,
+ *     request_id?: string|null,
+ *     created_at?: string|\DateTimeInterface|int|null,
+ *     updated_at?: string|\DateTimeInterface|int|null
+ * }
  */
 final class JobDataHydrator
 {
@@ -43,7 +66,7 @@ final class JobDataHydrator
     /**
      * Hydrate job data from a database row or storage object.
      *
-     * @param array<string, mixed>|object $data Raw storage data
+     * @param StorageRowShape|array<string, mixed>|object $data Raw storage data
      * @return JobData Normalized job data
      */
     public static function hydrate(array|object $data): JobData

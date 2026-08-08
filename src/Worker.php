@@ -336,35 +336,14 @@ final class Worker
 
             $claim = $this->storage->claimById($jobId, $this->workerId);
         } catch (\Throwable $e) {
-            // Requeue on post-pop claim failure
             if ($jobId !== null) {
-                $this->logger->error('Failed to claim job from storage', [
-                    'job_id' => $jobId,
-                    'error' => $e->getMessage(),
-                ]);
-                try {
-                    $driver->nack($this->queue, $jobId, 0);
-                } catch (\Throwable $nackError) {
-                    $this->logger->error('Failed to requeue job after claim failure', [
-                        'job_id' => $jobId,
-                        'error' => $nackError->getMessage(),
-                    ]);
-                }
+                $this->handlePostPopClaimFailure($driver, $jobId, $e);
             }
-
             throw $e;
         }
 
         if ($claim === null) {
-            $this->logger->warning(
-                'Failed to claim job, may have been claimed by another process',
-                ['job_id' => $jobId]
-            );
-            try {
-                $driver->ack($this->queue, $jobId);
-            } catch (\Throwable $e) {
-                $this->logger->error('Failed to ack unclaimed job', ['job_id' => $jobId, 'error' => $e->getMessage()]);
-            }
+            $this->handleUnclaimedJobAck($driver, $jobId);
             return null;
         }
 
@@ -376,6 +355,38 @@ final class Worker
         ]);
 
         return $claim;
+    }
+
+    private function handlePostPopClaimFailure(
+        Contract\QueueDriverInterface $driver,
+        int $jobId,
+        \Throwable $e
+    ): void {
+        $this->logger->error('Failed to claim job from storage', [
+            'job_id' => $jobId,
+            'error' => $e->getMessage(),
+        ]);
+        try {
+            $driver->nack($this->queue, $jobId, 0);
+        } catch (\Throwable $nackError) {
+            $this->logger->error('Failed to requeue job after claim failure', [
+                'job_id' => $jobId,
+                'error' => $nackError->getMessage(),
+            ]);
+        }
+    }
+
+    private function handleUnclaimedJobAck(Contract\QueueDriverInterface $driver, int $jobId): void
+    {
+        $this->logger->warning(
+            'Failed to claim job, may have been claimed by another process',
+            ['job_id' => $jobId]
+        );
+        try {
+            $driver->ack($this->queue, $jobId);
+        } catch (\Throwable $e) {
+            $this->logger->error('Failed to ack unclaimed job', ['job_id' => $jobId, 'error' => $e->getMessage()]);
+        }
     }
 
     private function limitsReached(): bool
