@@ -15,7 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated `Worker::withOptions()` and `Worker` constructor to construct directly from a `WorkerOptions` instance without array flattening and re-parsing.
 - Updated `InMemoryQueueDriver::enqueueBatch()` to use per-item `enqueue()` semantics (including job ID validation and ordering parity).
 - Extracted driver-selection decision tree in `QueueManager::create()` into a private `selectDriver()` helper to improve readability while maintaining public signatures and error exception handling.
-- Re-published `quality/quality-baseline.json` following Stage 1 production de-duplication, bringing production duplicated windows down to 0 while keeping all static checks and quality ratchets green.
+- Added `JobDataFactory` and `ClaimedJobFactory` test support helpers in `tests/Support/` to centralize typed `JobData` and `ClaimedJob` construction across test suites.
+- Added `WorkerHarness` test support helper in `tests/Support/` to streamline worker test dependency wiring and execution.
+- Refactored `WorkerTest.php` using test support factories, reducing class size from 1,182 lines to 931 lines and cutting test duplicate windows.
+- Streamlined `QueueReconcilerTest.php` timezone characterization tests using a `withTimezone()` helper method.
+- Re-published `quality/quality-baseline.json` following Stage 2 test de-duplication, keeping all static checks, test suites, and quality ratchets green.
 
 ## [1.7.0] - 2026-08-01
 
