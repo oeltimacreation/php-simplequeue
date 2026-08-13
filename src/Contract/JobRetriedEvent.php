@@ -11,20 +11,22 @@ final readonly class JobRetriedEvent extends AbstractWorkerEvent
 {
     public const NAME = 'retried';
 
+    public readonly int $jobId;
+    public readonly string $type;
+    public readonly float $durationMs;
+    public readonly int $attempts;
+    public readonly string $error;
+
     /**
-     * @param int $jobId Retried job identifier
-     * @param string $type Retried job type
-     * @param float $durationMs Handler duration in milliseconds
-     * @param int $attempts One-based execution attempt
-     * @param string $error Failure message that triggered the retry
+     * @param array<string, mixed> $data Event payload
      */
-    public function __construct(
-        public int $jobId,
-        public string $type,
-        public float $durationMs,
-        public int $attempts,
-        public string $error
-    ) {
+    private function __construct(array $data)
+    {
+        $this->jobId = self::integer($data, 'job_id');
+        $this->type = self::string($data, 'type');
+        $this->durationMs = self::decimal($data, 'duration_ms');
+        $this->attempts = self::integer($data, 'attempts');
+        $this->error = self::string($data, 'error');
     }
 
     /**
@@ -33,13 +35,7 @@ final readonly class JobRetriedEvent extends AbstractWorkerEvent
      */
     public static function fromArray(array $data): static
     {
-        return new static(
-            self::integer($data, 'job_id'),
-            self::string($data, 'type'),
-            self::decimal($data, 'duration_ms'),
-            self::integer($data, 'attempts'),
-            self::string($data, 'error')
-        );
+        return new static($data);
     }
 
     /**

@@ -594,13 +594,13 @@ final class Worker
         }
 
         $driver->nack($this->queue, $claim->job->id, $delay);
-        $this->emit(new JobRetriedEvent(
-            $claim->job->id,
-            $claim->job->type,
-            $durationMs,
-            $attempts,
-            $exception->getMessage()
-        ));
+        $this->emit(JobRetriedEvent::fromArray([
+            'job_id' => $claim->job->id,
+            'type' => $claim->job->type,
+            'duration_ms' => $durationMs,
+            'attempts' => $attempts,
+            'error' => $exception->getMessage(),
+        ]));
     }
 
     private function failJobPermanently(
