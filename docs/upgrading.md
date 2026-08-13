@@ -1,5 +1,27 @@
 # Upgrading
 
+## To v1.9.x
+
+v1.9 adds middleware, typed worker event value objects, and failed-job
+administration without changing the existing storage or queue-driver contracts.
+The release requires no database schema migration and keeps the no-middleware
+worker path unchanged.
+
+- **Middleware**: register `JobMiddlewareInterface` implementations through
+  `$registry->middleware`. Middleware runs in registration order on entry and
+  reverse order on exit; exceptions use the existing retry/failure path.
+- **Worker events**: the worker now constructs typed readonly event objects
+  internally, but `setEventListener()` still receives the same event names and
+  array keys. No PSR-14 dependency is required.
+- **Failed jobs**: construct `AdminManager` with the existing storage and queue
+  manager to list, inspect, re-queue, or purge failed rows. Re-queue resets
+  attempts and terminal metadata. Purge requires the queue driver's optional
+  `SupportsJobRemoval` capability; database polling provides a safe storage-gated
+  no-op.
+- **Operations**: review the [operations guide](operations.md) for failed-job
+  backlog monitoring and listener failure handling, then run the compatibility
+  smoke test and the published benchmark command in [performance.md](performance.md).
+
 ## To v1.8.x
 
 v1.8 is a consolidation and quality release focused on code de-duplication, precise array-shape typing (`JobDefinitionShape`, `StorageRowShape`), test suite refactoring, and documentation overhaul. It is 100% backward compatible with v1.7.x and v1.6.x, requiring zero database schema or public API changes.
@@ -62,4 +84,3 @@ Apply [the lease migration](../examples/migrations/1.3.0-lease-based-claims.sql)
 Custom storage implementations must use `claimNextAvailable()` / `claimById()`
 and accept `ClaimedJob` for fenced completion, failure, retry, progress, and
 heartbeat updates. `Worker::run()` returns an exit code.
-

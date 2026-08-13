@@ -59,6 +59,12 @@ PSR-14 is intentionally not a runtime dependency. The typed event boundary and
 existing callable listener provide the stable framework-agnostic integration
 surface without requiring an event dispatcher package.
 
+Listener callbacks are observability hooks, not part of the job transaction. If
+one throws, the worker logs the event name and error message, swallows the
+exception, and continues the normal completion, retry, or failure transition.
+Monitor the error log for repeated listener failures rather than retrying jobs
+because telemetry delivery failed.
+
 ## Scheduled workloads
 
 A scheduled job is stored with an absolute UTC `available_at` and, on
@@ -132,6 +138,13 @@ their existing schema and are not included in `pruneCompleted()`; operators
 choose explicit purge timing through `AdminManager` after incident-retention
 requirements are known.
 
+For backlog operations, page `listFailed()` and process each page with
+`requeueFailed()` or `purgeFailed()` rather than loading the entire failed set.
+The benchmark and soak profile records one queue notification per re-queued job;
+the administration API does not add a worker-loop roundtrip to unrelated jobs.
+Keep an alert on failed-row count and age, and make the retention decision
+explicit for each workload.
+
 ## Failure model
 
 At-least-once delivery means external side effects must be idempotent. Monitor
@@ -139,6 +152,12 @@ pending, delayed, and processing counts, stale recovery, failed jobs, and
 reconciliation errors. A storage write is authoritative; a notifier cleanup
 failure indicates an inconsistency to repair and must not be treated as a
 storage rollback.
+
+The v1.9 validation profile is published in [performance.md](performance.md).
+It covers the unchanged dispatch/claim/worker paths, middleware execution, and
+failed-job re-queue operation counts. Run the same command after changing a
+driver, storage implementation, or worker middleware pipeline and compare the
+medians and counters before deploying.
 
 ## Upgrade safety
 

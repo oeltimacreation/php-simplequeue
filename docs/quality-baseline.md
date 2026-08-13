@@ -15,6 +15,22 @@ composer quality-report
 composer quality-ratchet
 ```
 
+## v1.9.0 candidate inventory
+
+The Stage 4–5 re-baseline was written after the middleware, typed-event,
+failed-job administration, benchmark, contract, fault-injection, and soak
+coverage landed:
+
+| Scope | PHP files | Classes | Methods | Physical lines | Duplicated windows |
+|---|---:|---:|---:|---:|---:|
+| Production | 80 | 80 | 342 | 7,408 | **0** |
+| Tests | 36 | 63 | 444 | 7,878 | 1,059 |
+
+All production methods remain within the 15/15/3 complexity and 100-line
+ratchet targets. No existing production class grew beyond its prior baseline;
+the new production surface is represented by additive contracts, value objects,
+administration helpers, and middleware/event boundaries.
+
 `quality-report` scans every PHP file below `src/` and `tests/`. The analyzer
 uses these stable definitions:
 

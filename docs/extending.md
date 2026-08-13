@@ -104,9 +104,23 @@ validated no-op when it has no separate notification structure.
 Use capability interfaces rather than adding methods to base contracts.
 Document crash/recovery windows and preserve at-least-once semantics.
 
+When adding middleware or event-aware integrations, keep the worker-layer
+boundary backend-neutral. A middleware implementation must call
+`JobContextInterface::proceed()` to continue the pipeline and must tolerate
+duplicate delivery. A listener must treat its `(event, data)` arguments as a
+compatibility projection; listener exceptions are intentionally swallowed after
+logging so telemetry cannot change durable job state.
+
 ## Testing an integration
 
 Use `InMemoryJobStorage` and `InMemoryQueueDriver` for fast lifecycle tests.
 Add service-backed contract tests for production drivers or stores, especially
 for concurrent claims, retries, cancellation, stale recovery, and a failure
 between handler completion and acknowledgement.
+
+Capability changes should also add a contract suite under `tests/Contract/`:
+`JobMiddlewareContractTest` exercises a real claim/complete cycle across the
+available backends, `WorkerEventContractTest` checks every typed event's stable
+payload, and `FailedJobAdminContractTest` compares failed-job transitions across
+in-memory and PDO storage. Run `composer benchmark` when a worker or driver path
+changes; operation-count assertions are part of that command.

@@ -16,6 +16,8 @@ only rules with the same observable contract share an implementation.
 | Claim ownership | Immutable `ClaimedJob`, plus backend-local ownership checks | PDO fences every write in SQL; in-memory storage compares the typed row | Contract tests exercise wrong worker/token writes and stale-lease replacement |
 | Terminal and retry transitions | Storage contract plus shared rules above | SQL assignments and in-memory field updates remain explicit | Contract tests compare status, timestamps, attempts, ownership clearing, and terminality |
 | Failed-job administration | `SupportsFailedJobAdministration` and `AdminManager` | PDO uses guarded `status = 'failed'` SQL; in-memory storage mutates the private row | Failed-job contract tests compare listing, inspection, reset fields, deletion, and notification cleanup |
+| Middleware execution | `JobMiddlewareInterface`, `JobContextInterface`, and `JobMiddlewareRunner` | Worker-layer pipeline is independent of storage and notification implementation | `JobMiddlewareContractTest` runs a real claim/complete cycle against in-memory, SQLite, and Redis when configured |
+| Typed worker events | `WorkerEventInterface` value objects | All drivers observe the same worker lifecycle; only listener delivery remains callable-compatible | `WorkerEventContractTest` covers every event factory and stable payload, while observability tests cover listener conversion |
 
 PDO statement preparation, bounded parameter binding, result hydration, list/count
 filter construction, and the repeated `id`/`running`/`lease_token` predicate are
@@ -32,7 +34,7 @@ database-specific claim SQL remain separate.
 | Redis response normalization | `Internal\RedisResponseNormalizer` | Redis commands and Lua scripts remain visible in the driver | Unit tests cover malformed dequeue cleanup and integer-like script results |
 | Positive job IDs | `Internal\PositiveJobId` | Each driver retains its public error context | Queue contract tests assert validation behavior across drivers |
 | Queue lifecycle | `QueueDriverInterface` | Database polling, in-memory collections, and Redis atomic commands remain independent | One contract suite covers base lifecycle and queue isolation for every driver, with capability cases for ACK/NACK state, delay, ordering, and counts |
-| Failed-job notification cleanup | `SupportsJobRemoval` | Redis and in-memory remove list/ZSET members; database polling has no separate notification structure | Administration tests assert pending, delayed, and processing notifications are removed where they exist |
+| Failed-job notification cleanup | `SupportsJobRemoval` | Redis and in-memory remove list/ZSET members; database polling has no separate notification structure | Administration tests assert pending, delayed, and processing notifications are removed where they exist; the Stage 4 race test covers re-queue versus claim |
 
 The base queue contract runs against database polling and the in-memory driver,
 and also runs against Redis when `REDIS_HOST` is configured. Batch, delayed-job,
@@ -46,4 +48,6 @@ The pre-consolidation starting inventory contained 128 production duplicated win
 1,424 test duplicated windows. After this consolidation, the same analyzer
 reports 37 production duplicated windows and 1,107 test duplicated windows.
 No quality-ratchet exception, public API change, extra backend command, or
-weakened lease predicate was introduced.
+weakened lease predicate was introduced. Middleware adds no storage or driver
+operations, and administrative re-queue is bounded to one queue notification per
+job; both budgets are enforced by the benchmark operation-count checks.

@@ -48,9 +48,35 @@ Status: completed
 
 The duration is runtime-dependent.
 
+Middleware is a worker-layer feature and does not add storage or queue-driver
+operations. The same registration and execution order applies to the Redis,
+database, and in-memory backends.
+
 ---
 
-## 3. Scheduled Dispatching
+## 3. Failed-Job Administration
+
+- **File**: [`basic/failed-job-admin.php`](basic/failed-job-admin.php)
+- **Requirements**: PHP 8.2+ and Composer autoloader
+- **Use Case**: Inspect a terminal failure and re-queue it through the additive
+  `AdminManager` API.
+
+### Execution Command
+
+```bash
+php examples/basic/failed-job-admin.php
+```
+
+### Expected Output
+
+```
+Failed jobs: 1
+Re-queued job #1: pending
+```
+
+---
+
+## 4. Scheduled Dispatching
 
 - **File**: [`basic/scheduled-dispatch.php`](basic/scheduled-dispatch.php)
 - **Requirements**: PHP 8.2+ and Composer autoloader
@@ -77,7 +103,7 @@ dispatchAt() result status: completed
 
 ---
 
-## 4. Production Redis & PDO Database Example
+## 5. Production Redis & PDO Database Example
 
 - **Directory**: [`redis/`](redis/README.md)
 - **Requirements**: PDO (MySQL / PostgreSQL / SQLite), Redis 7+ or Valkey 8+, `predis/predis:^3`
@@ -97,7 +123,7 @@ php examples/redis/dispatch.php
 
 ---
 
-## 5. SQLite Database Benchmark
+## 6. SQLite Database Benchmark
 
 - **File**: [`benchmark/database.php`](benchmark/database.php)
 - **Requirements**: PHP 8.2+ with `pdo_sqlite`
@@ -111,7 +137,7 @@ php examples/benchmark/database.php 1000
 
 ---
 
-## 6. Migrations Catalogue
+## 7. Migrations Catalogue
 
 - **File**: [`migrations/1.3.0-lease-based-claims.sql`](migrations/1.3.0-lease-based-claims.sql)
 - **Requirements**: Existing database installation upgrading from v1.2.x

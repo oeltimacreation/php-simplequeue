@@ -20,7 +20,9 @@ REDIS_HOST=127.0.0.1 REDIS_PORT=6379 composer benchmark -- --jobs=1000
 ```
 
 Results are JSON so benchmark invocations can be archived and compared without
-parsing terminal formatting. Compare medians across multiple samples; individual
+parsing terminal formatting. The report includes generic `driver_roundtrips` for
+instrumented non-Redis drivers alongside the existing PDO and Redis counters.
+Compare medians across multiple samples; individual
 microbenchmark timings are affected by CPU scheduling, allocator state, PHP
 version, database server latency, and Redis/Valkey transport latency.
 

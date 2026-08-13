@@ -14,6 +14,9 @@ SimpleQueue is designed to be physically compact and easy to hold in one head wh
 | **At-Least-Once Delivery & Fencing** | Worker claims use worker IDs and lease tokens to fence completion, retry, and progress updates. |
 | **Idempotency & Deduplication** | `dispatchIdempotent()` prevents duplicate active jobs for a given request ID. |
 | **Bounded Queue Repair** | Built-in `QueueReconciler` detects lost notifications and repairs stale leases safely. |
+| **Middleware & Execution Context** | Wrap handlers in ordered middleware with typed job identity, payload, queue, and attempt context. |
+| **Typed Worker Events** | Stable readonly lifecycle event objects retain the existing string/array listener compatibility layer. |
+| **Failed-Job Administration** | List, inspect, re-queue, and purge failed jobs through `AdminManager`. |
 | **PHP 8.2+ Modernization** | Strict types everywhere (`declare(strict_types=1)`), `readonly` value objects, and PHPStan Level 9 strict compliance. |
 
 ## Requirements
@@ -123,8 +126,10 @@ $jobId = $dispatcher->dispatch(
 |---|---|---|
 | `JobDispatcher` | `dispatch()`, `dispatchAfter()`, `dispatchAt()`, `dispatchBatch()`, `dispatchIdempotent()`, `getStatus()` | Main entry point for enqueueing jobs and querying status. |
 | `Worker` | `run()`, `processOne()`, `withOptions()` | Worker loop executing jobs with signal handling and lease heartbeat. |
+| `JobMiddlewareRegistry` | `register()`, `all()`, `clear()` | Ordered worker middleware registration. |
 | `QueueManager` | `create()`, `redis()`, `database()`, `inMemory()` | Driver factory supporting auto-selection and driver resolution. |
 | `JobRegistry` | `register()`, `get()`, `has()` | Handler registry mapping job type strings to handler classes or callables. |
+| `AdminManager` | `listFailed()`, `inspectFailed()`, `requeueFailed()`, `purgeFailed()` | Failed-job and dead-letter operations. |
 | `PdoJobStorage` | `createJobs()`, `claimNextAvailable()`, `complete()`, `fail()`, `retry()` | Durable database persistence implementing `JobStorageInterface`. |
 
 ## Documentation Index
@@ -155,5 +160,4 @@ composer cs-fix       # Auto-fix code style issues
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [LICENSE](LICENSE) for license details.
-
 

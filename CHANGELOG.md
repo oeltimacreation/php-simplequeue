@@ -13,12 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a runnable middleware and execution-context example at `examples/basic/middleware.php`.
 - Added typed readonly worker event value objects for `claimed`, `completed`, `retried`, `failed`, `lost_ownership`, `infrastructure_failure`, `infra_error`, and `backoff`, each with `fromArray()` and `toArray()` factories.
 - Added `FailedJobAdminInterface`, `AdminManager`, and the `SupportsFailedJobAdministration` capability for listing, inspecting, re-queueing, and purging failed jobs.
+- Added Stage 4–5 contract coverage for the complete typed event catalog, deterministic middleware/dead-letter/listener fault injection, middleware worker recycling, and failed-job backlog draining.
 
 ### Changed
 
 - Updated `JobRegistry` and `Worker` to apply middleware around handler execution without changing storage or queue-driver contracts. Middleware follows registration order on entry, reverse order on exit, and exceptions use the existing retry/failure lifecycle; the no-middleware path remains direct.
 - Updated `Worker` and the worker-loop failure handler to emit typed event objects internally while preserving the existing string/array listener names and payload keys through a compatibility shim. PSR-14 was evaluated and remains optional rather than a runtime dependency.
 - Added guarded failed-job reset/delete operations to PDO and in-memory storage, with queue notification cleanup through `SupportsJobRemoval`; database polling advertises its storage-gated no-op removal capability. Failed-job pruning remains explicit because `pruneCompleted()` does not prune failed rows.
+- Extended the benchmark harness with generic driver roundtrip counters and executable middleware and failed-job re-queue scenarios; operation-count assertions now enforce their bounded hot-path budgets.
+- Re-ran the v1.8.0 and v1.9 Stage 1–3 benchmark profiles and refreshed the performance, parity, failure, operations, extending, upgrading, and README documentation for the v1.9 validation surface.
+- Re-published `quality/quality-baseline.json` after Stage 4–5 coverage; production remains at zero duplicated windows and all new methods stay within the quality targets.
 
 ## [1.8.0] - 2026-08-08
 
