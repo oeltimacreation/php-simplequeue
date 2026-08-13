@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added optional worker middleware through `JobMiddlewareInterface`, `JobContextInterface`, and the ordered `JobMiddlewareRegistry`, with typed access to job identity, payload, queue, and execution attempt.
+- Added a runnable middleware and execution-context example at `examples/basic/middleware.php`.
+
+### Changed
+
+- Updated `JobRegistry` and `Worker` to apply middleware around handler execution without changing storage or queue-driver contracts. Middleware follows registration order on entry, reverse order on exit, and exceptions use the existing retry/failure lifecycle; the no-middleware path remains direct.
+
 ## [1.8.0] - 2026-08-08
 
 ### Added
