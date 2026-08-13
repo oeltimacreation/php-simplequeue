@@ -11,8 +11,8 @@ REDIS_HOST=127.0.0.1 REDIS_PORT=6379 composer benchmark -- \
   --jobs=1000 --iterations=5 --warmup=1 --idle-cycles=500
 ```
 
-The baseline was run from the `v1.8.0` tag and the after profile from
-`feat/1.9-candidate` after Stages 1–3. Timings are local microbenchmark
+The baseline was run from the `v1.8.0` tag and the after profile from the v1.9
+implementation branch after Stages 1–3. Timings are local microbenchmark
 measurements and should be compared as ranges, not as release-level capacity
 guarantees.
 

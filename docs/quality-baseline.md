@@ -1,6 +1,6 @@
 # Quality Baseline & Inventory (v1.9.0)
 
-This report records the quality baseline and inventory for the **v1.9.0** candidate. The machine-readable baseline is stored in [`quality/quality-baseline.json`](../quality/quality-baseline.json).
+This report records the quality baseline and inventory for the **v1.9.0** release. The machine-readable baseline is stored in [`quality/quality-baseline.json`](../quality/quality-baseline.json).
 
 ## Reproduce the inventory
 
@@ -15,7 +15,7 @@ composer quality-report
 composer quality-ratchet
 ```
 
-## v1.9.0 Candidate Inventory
+## v1.9.0 Inventory
 
 The Stage 4–5 re-baseline was written after the middleware, typed-event,
 failed-job administration, benchmark, contract, fault-injection, and soak
@@ -81,7 +81,7 @@ paths are P0 because they are frequently changed and a regression can lose
 ownership, duplicate delivery, or strand a notification. `JobData::fromRaw()`
 has the second-highest raw scores, but its control flow is flat and its
 normalization behavior is already isolated, so it was addressed during
-type-safety normalization. The measurements confirm all four initial candidate classes:
+type-safety normalization. The measurements confirm all four reviewed target classes:
 `Worker`, `PdoJobStorage`, `InMemoryJobStorage`, and `RedisQueueDriver`.
 
 The largest production classes are `PdoJobStorage` (1,115 lines), `Worker`

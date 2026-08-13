@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-08-13
+
 ### Added
 
 - Added worker middleware support via `JobMiddlewareInterface`, `JobContextInterface`, and `JobMiddlewareRegistry`, enabling typed execution context and request pipelines (with example at `examples/basic/middleware.php`).
