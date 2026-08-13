@@ -14,6 +14,52 @@ $registry->register('invoice.generate', GenerateInvoice::class);
 Handlers receive the job ID, decoded payload, and an optional progress callback.
 They must be idempotent because delivery is at least once.
 
+## Middleware and execution context
+
+Register middleware on the registry's ordered `JobMiddlewareRegistry`. The
+worker runs middleware in registration order before the handler and in reverse
+order after the handler:
+
+```php
+use Oeltima\SimpleQueue\Contract\JobContextInterface;
+use Oeltima\SimpleQueue\Contract\JobMiddlewareInterface;
+
+final class AuditMiddleware implements JobMiddlewareInterface
+{
+    public function process(JobContextInterface $context): mixed
+    {
+        $startedAt = microtime(true);
+        $result = $context->proceed();
+
+        error_log(sprintf(
+            'Job %d (%s) attempt %d completed in %.2f ms',
+            $context->getJobId(),
+            $context->getType(),
+            $context->getAttempts(),
+            (microtime(true) - $startedAt) * 1000,
+        ));
+
+        return $result;
+    }
+}
+
+$registry->middleware->register(new AuditMiddleware());
+```
+
+`JobContextInterface` provides typed access to the job ID, type, decoded
+payload, queue, and one-based execution attempt. Call `proceed()` exactly once
+to continue to the next middleware or handler. Middleware may run before and
+after logic around that call and may return the continuation's result.
+
+Registration order is deterministic: the first registered middleware is the
+outermost wrapper. If middleware or the continuation throws, the exception
+propagates to the worker's existing retry and permanent-failure handling path.
+The context is populated from the claimed job before the first middleware runs.
+With no registered middleware, the worker invokes the handler directly through
+the unchanged v1.8 execution path. Middleware is a worker-layer feature, so it
+does not add storage or queue-driver operations and behaves the same with
+Redis, database, and in-memory drivers.
+
 ## Custom storage
 
 Implement `JobStorageInterface` to store jobs elsewhere. The claim and fenced
