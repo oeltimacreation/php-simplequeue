@@ -16,6 +16,7 @@ use Oeltima\SimpleQueue\Contract\SupportsTimeoutValidation;
 use Oeltima\SimpleQueue\Contract\SupportsClaimedDequeue;
 use Oeltima\SimpleQueue\Exception\HandlerNotFoundException;
 use Oeltima\SimpleQueue\Exception\SerializationException;
+use Oeltima\SimpleQueue\Internal\JobMiddlewareRunner;
 use Oeltima\SimpleQueue\Internal\WorkerLoopFailureHandler;
 use Oeltima\SimpleQueue\Internal\WorkerPolicy;
 use Psr\Log\LoggerInterface;
@@ -543,7 +544,7 @@ final class Worker
             }
         };
 
-        $result = $handler->handle($job->id, $job->payload, $progressCallback);
+        $result = JobMiddlewareRunner::run($this->registry->middleware->all(), $claim, $handler, $progressCallback);
 
         return $this->storage->markCompleted($claim, $result);
     }
