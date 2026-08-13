@@ -99,7 +99,7 @@ function middlewareWorkerBenchmark(BenchmarkOptions $options): array
 
             return [
                 'operations' => $processed,
-                'driver_roundtrips' => $driver->roundTrips,
+                'driver_roundtrips' => $driver->roundTrips(),
             ];
         };
     });

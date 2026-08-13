@@ -82,7 +82,7 @@ function failedJobRequeueBenchmark(BenchmarkOptions $options): array
 
             return [
                 'operations' => $requeued,
-                'driver_roundtrips' => $driver->roundTrips,
+                'driver_roundtrips' => $driver->roundTrips(),
             ];
         };
     });

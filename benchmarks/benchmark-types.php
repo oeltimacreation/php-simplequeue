@@ -43,11 +43,32 @@ final class BenchmarkPdo extends \PDO
     }
 }
 
+final class BenchmarkCounter
+{
+    private int $value = 0;
+
+    public function increment(): void
+    {
+        $this->value++;
+    }
+
+    public function value(): int
+    {
+        return $this->value;
+    }
+
+    public function reset(): void
+    {
+        $this->value = 0;
+    }
+}
+
 final class BenchmarkQueueDriver implements QueueDriverInterface
 {
-    public int $roundTrips = 0;
-
-    public function __construct(private readonly InMemoryQueueDriver $inner)
+    public function __construct(
+        private readonly InMemoryQueueDriver $inner,
+        private readonly BenchmarkCounter $counter = new BenchmarkCounter()
+    )
     {
     }
 
@@ -58,32 +79,37 @@ final class BenchmarkQueueDriver implements QueueDriverInterface
 
     public function enqueue(string $queue, int $jobId): void
     {
-        $this->roundTrips++;
+        $this->counter->increment();
         $this->inner->enqueue($queue, $jobId);
     }
 
     public function dequeue(string $queue, int $timeoutSeconds): ?int
     {
-        $this->roundTrips++;
+        $this->counter->increment();
 
         return $this->inner->dequeue($queue, $timeoutSeconds);
     }
 
     public function ack(string $queue, int $jobId): void
     {
-        $this->roundTrips++;
+        $this->counter->increment();
         $this->inner->ack($queue, $jobId);
     }
 
     public function nack(string $queue, int $jobId, int $delaySeconds = 0): void
     {
-        $this->roundTrips++;
+        $this->counter->increment();
         $this->inner->nack($queue, $jobId, $delaySeconds);
+    }
+
+    public function roundTrips(): int
+    {
+        return $this->counter->value();
     }
 
     public function resetCounts(): void
     {
-        $this->roundTrips = 0;
+        $this->counter->reset();
     }
 }
 
