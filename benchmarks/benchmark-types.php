@@ -77,26 +77,26 @@ final class BenchmarkQueueDriver implements QueueDriverInterface
         return $this->inner->isAvailable();
     }
 
-    public function enqueue(string $queue, int $jobId): void
+    public function enqueue($queue, $jobId): void
     {
         $this->counter->increment();
         $this->inner->enqueue($queue, $jobId);
     }
 
-    public function dequeue(string $queue, int $timeoutSeconds): ?int
+    public function dequeue($queue, $timeoutSeconds): ?int
     {
         $this->counter->increment();
 
         return $this->inner->dequeue($queue, $timeoutSeconds);
     }
 
-    public function ack(string $queue, int $jobId): void
+    public function ack($queue, $jobId): void
     {
         $this->counter->increment();
         $this->inner->ack($queue, $jobId);
     }
 
-    public function nack(string $queue, int $jobId, int $delaySeconds = 0): void
+    public function nack($queue, $jobId, $delaySeconds = 0): void
     {
         $this->counter->increment();
         $this->inner->nack($queue, $jobId, $delaySeconds);
