@@ -5,7 +5,7 @@
 ## Project Identity
 
 - **Name**: OeltimaCreation PHP SimpleQueue
-- **Version**: 1.8.0
+- **Version**: 1.9.0
 - **Language**: PHP 8.2+
 - **Type**: Framework-agnostic background job queue library
 - **License**: MIT
@@ -367,4 +367,3 @@ Never move, recreate, or reuse a published stable tag. If a release must be corr
 - **In-memory parity**: `InMemoryJobStorage` and `InMemoryQueueDriver` must implement the same behavior as their real counterparts for reliable testing
 - **Release policy**: Follow the release workflow above exactly. Git tags and GitHub release titles use `v` (for example, `v1.6.0`); Composer/Packagist versions use no prefix (for example, `1.6.0`).
 - **Changelog Quality**: Keep `CHANGELOG.md` entries concise, high-level, and focused strictly on important public-facing changes. Never log internal micro-steps, internal stage numbers (e.g. Stage 1–5), `quality-baseline.json` updates, or test line-count statistics.
-

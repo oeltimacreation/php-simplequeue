@@ -44,7 +44,7 @@ while sharing only connection and lifecycle setup.
 
 ## Deduplication and parity results
 
-The current v1.9.0 candidate inventory reports **0 production duplicated
+The current v1.9.0 inventory reports **0 production duplicated
 windows** and 1,059 test duplicated windows. For historical comparison, the
 earlier v1.8 consolidation started at 128 production and 1,424 test windows,
 then reported 37 production and 1,107 test windows before the current baseline.
