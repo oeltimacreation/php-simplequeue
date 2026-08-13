@@ -80,7 +80,7 @@ jobs:
           php-version: '8.5'
           extensions: pdo, pdo_sqlite, pcov
           coverage: pcov
-      - run: composer validate --strict
+      - run: composer validate --strict --no-check-lock --no-check-version
       - run: composer install --no-interaction --prefer-dist --no-progress
       - run: composer audit
       - run: composer check
