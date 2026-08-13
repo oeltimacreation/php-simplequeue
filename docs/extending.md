@@ -72,6 +72,11 @@ interfaces only when the storage supports their guarantees, including
 `JobStorageAdminInterface` adds listing, counting, and retention pruning for
 operational tools.
 
+`SupportsFailedJobAdministration` adds guarded reset and delete transitions for
+failed jobs. Implement it together with `JobStorageAdminInterface` when a
+custom store should be usable with `AdminManager`; the manager handles queue
+re-notification and notification cleanup.
+
 ## Custom drivers
 
 Implement `QueueDriverInterface` for a different delivery system. A driver
@@ -90,6 +95,11 @@ advertise additional behavior without breaking third-party implementations:
 `promoteDelayedJobs()`. `enqueueDelayedBatch()` is additive: drivers that skip
 it are still correct, because `QueueManager::enqueueDelayedBatch()` falls back
 to one `enqueueDelayed()` call per job.
+
+`AdminManager::purgeFailed()` requires `SupportsJobRemoval` so an administrative
+purge can remove pending, delayed, and processing notifications. A storage-
+gated driver such as `DatabaseQueueDriver` can implement the capability as a
+validated no-op when it has no separate notification structure.
 
 Use capability interfaces rather than adding methods to base contracts.
 Document crash/recovery windows and preserve at-least-once semantics.

@@ -6,7 +6,7 @@ normalization happens after values enter the library.
 
 ## PHP 8.2+ Audit & Invariants
 
-- **Strict Types**: `declare(strict_types=1)` is verified across all 57 production source files and all unit/integration test files.
+- **Strict Types**: `declare(strict_types=1)` is verified across all 75 production source files and all 33 unit/integration test files.
 - **Readonly Classes**: Immutable value objects (`DelayedBatch`, `IdempotentJobResult`, `WorkerOptions`, `ReconcileOptions`, `ReconcileResult`, `PositiveJobId`, `WorkerPolicy`, `ClaimedJob`, `JobData`) utilize `final readonly class` or `readonly` properties.
 - **Language Compatibility**: Strictly targets PHP 8.2+ features (backed enums, standalone types, `readonly` classes). No PHP 8.3+ features (such as `#[Override]` or typed class constants) are used.
 
@@ -27,6 +27,7 @@ normalization happens after values enter the library.
 | Redis command results | Predis boundary | `RedisResponseNormalizer` | Scalar, null, malformed, and integer responses are normalized before queue orchestration uses them. |
 | Timestamps | Clock and persistence boundaries | UTC database strings and integer backend scores | Retained because their format and comparison semantics are part of the storage and Redis protocols. `ClockInterface` remains the source of time. |
 | Worker event payloads | Worker emitter and public event-listener callback | `WorkerEventInterface` plus typed readonly event value objects | Typed objects enforce each event's fields internally; the listener remains the documented `(string, array)` contract through `getName()` and `toArray()`. |
+| Failed-job administration | Admin service and storage transition boundary | `FailedJobAdminInterface` plus `SupportsFailedJobAdministration` | The manager exposes operator actions while storage implementations guard the `failed` status transition; queue cleanup remains an explicit `SupportsJobRemoval` capability. |
 
 ## Trusted transitions
 

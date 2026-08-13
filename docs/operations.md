@@ -98,6 +98,40 @@ is a soft deadline checked between bounded membership operations. Redis pending
 membership uses a bounded `LPOS`; a false negative can enqueue a duplicate,
 which is safe under the library's at-least-once delivery contract.
 
+## Failed-job administration
+
+Construct `AdminManager` with the same storage and `QueueManager` used by the
+dispatcher:
+
+```php
+$admin = new AdminManager($storage, $queues);
+
+$failed = $admin->listFailed(queue: 'billing', limit: 50);
+$job = $admin->inspectFailed($jobId);
+$admin->requeueFailed($jobId);
+$admin->purgeFailed($jobId);
+```
+
+`listFailed()` is paginated and `inspectFailed()` returns only jobs that are
+still in the `failed` state. Re-queueing resets attempts to zero, clears
+terminal/error/progress metadata, makes the job immediately pending, and then
+adds one queue notification. If notification enqueue fails, the pending state
+remains durable and the operation reports a `QueueException` so bounded
+reconciliation can repair it.
+
+Purging deletes the failed row and then removes pending, delayed, and
+processing notifications through `SupportsJobRemoval`. A notification cleanup
+failure is reported as a `QueueException`; the durable deletion is not rolled
+back. The built-in Redis and in-memory drivers remove their notification
+structures, while database polling advertises a safe no-op because claims are
+storage-gated. Custom drivers must implement `SupportsJobRemoval` before
+purge is available.
+
+There is no automatic failed-job age or backlog policy. Failed rows retain
+their existing schema and are not included in `pruneCompleted()`; operators
+choose explicit purge timing through `AdminManager` after incident-retention
+requirements are known.
+
 ## Failure model
 
 At-least-once delivery means external side effects must be idempotent. Monitor

@@ -15,6 +15,10 @@ longer represents claimable work.
 | Past/now schedule clamping | `pending` with `available_at` equal to now | Immediate notification | None | The schedule path is skipped entirely; the storage claim is immediately eligible | Immediate dispatch path unchanged |
 | Cancel of a scheduled job | `cancelled`, ownership cleared, completion time set | Delayed notification removed | Removal of the delayed member | Repeating cancellation retries idempotent notification removal | `cancelJob()` returns `true` |
 | Max-attempts exhaustion with scheduled retries | `failed` after the final attempt; retry delays kept the job out of `pending` while waiting | Processing notification removed after the fenced failure write | ACK only after the fenced terminal write | No further notifications are produced; administrative redispatch may re-schedule | Failure log plus `failed` event |
+| Failed job is re-queued administratively | `pending`, attempts reset to `0`, terminal/error/progress fields cleared | A fresh notification is enqueued | None beyond normal worker claim | The job follows the ordinary claim, retry, and completion path | `AdminManager::requeueFailed()` returns `true` |
+| Failed-job re-queue notification fails | `pending` reset is durable | No new notification | None | Bounded reconciliation restores the pending notification; the re-queue call reports a `QueueException` | Deterministic fault injection in `FailedJobAdministrationTest` |
+| Failed job is purged administratively | Row is deleted | Pending, delayed, and processing notifications are removed | None | Purge is terminal; repeated purge is idempotent and returns `false` | `AdminManager::purgeFailed()` returns `true` |
+| Failed-job purge cleanup fails | Failed row has already been deleted | A stale notification may remain | Cleanup exception is reported; no storage rollback | Queue removal retry or a worker later ACKs the notification after the missing row is observed | Deterministic fault injection in `FailedJobAdministrationTest` |
 | Connection is lost while claiming after a notification is popped | Job normally remains `pending`; a completed claim transaction remains authoritative if the response was lost | Notification is in processing | Immediate NACK when possible | PDO reconnect retries recognized connection-loss errors once; failed NACK is repaired by stale queue recovery and storage fencing rejects duplicate claims | Claim/requeue error log; loop-level infrastructure event and bounded backoff |
 | Backend returns a malformed notification or stored JSON | Valid durable jobs are unchanged; malformed stored JSON cannot be hydrated | Malformed Redis member is removed instead of becoming job `0` | Discard malformed member; do not ACK a valid job | Producer/data repair is required for malformed durable JSON; queue processing continues after malformed notification cleanup | Contextual `SerializationException`, or a `null` dequeue plus removed malformed member |
 | Handler throws before the final attempt | `pending`, attempts incremented, retry time and error recorded | Processing notification moves to delayed/pending | NACK with the selected delay, only after durable retry scheduling | Delayed promotion and normal worker processing | Failure log plus `retried` event |
@@ -53,6 +57,11 @@ PDO factories, checks memory growth, drives a long infrastructure-error
 sequence, and sends a real `SIGTERM`. Existing deterministic worker tests keep
 maintenance cadence and infrastructure retry/reset behavior observable without
 wall-clock-dependent assertions.
+
+`tests/Contract/FailedJobAdminContractTest.php` compares failed-job listing,
+inspection, reset, purge, and notification cleanup across in-memory and PDO
+storage. `tests/Integration/FailedJobAdministrationTest.php` injects queue
+failures during re-queue and purge.
 
 ## Operational rule
 

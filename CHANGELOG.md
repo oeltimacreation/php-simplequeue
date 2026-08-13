@@ -12,11 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added optional worker middleware through `JobMiddlewareInterface`, `JobContextInterface`, and the ordered `JobMiddlewareRegistry`, with typed access to job identity, payload, queue, and execution attempt.
 - Added a runnable middleware and execution-context example at `examples/basic/middleware.php`.
 - Added typed readonly worker event value objects for `claimed`, `completed`, `retried`, `failed`, `lost_ownership`, `infrastructure_failure`, `infra_error`, and `backoff`, each with `fromArray()` and `toArray()` factories.
+- Added `FailedJobAdminInterface`, `AdminManager`, and the `SupportsFailedJobAdministration` capability for listing, inspecting, re-queueing, and purging failed jobs.
 
 ### Changed
 
 - Updated `JobRegistry` and `Worker` to apply middleware around handler execution without changing storage or queue-driver contracts. Middleware follows registration order on entry, reverse order on exit, and exceptions use the existing retry/failure lifecycle; the no-middleware path remains direct.
 - Updated `Worker` and the worker-loop failure handler to emit typed event objects internally while preserving the existing string/array listener names and payload keys through a compatibility shim. PSR-14 was evaluated and remains optional rather than a runtime dependency.
+- Added guarded failed-job reset/delete operations to PDO and in-memory storage, with queue notification cleanup through `SupportsJobRemoval`; database polling advertises its storage-gated no-op removal capability. Failed-job pruning remains explicit because `pruneCompleted()` does not prune failed rows.
 
 ## [1.8.0] - 2026-08-08
 
