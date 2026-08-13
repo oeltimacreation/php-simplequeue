@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue\Internal;
 
+use Oeltima\SimpleQueue\Contract\InfrastructureErrorEvent;
+use Oeltima\SimpleQueue\Contract\WorkerBackoffEvent;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -28,7 +30,7 @@ final class WorkerLoopFailureHandler
      *
      * @param \Throwable $exception Loop failure
      * @param int $consecutiveErrors Current consecutive infrastructure-error count
-     * @param callable(string, array<string, mixed>): void $emit Lifecycle event emitter
+     * @param callable(\Oeltima\SimpleQueue\Contract\WorkerEventInterface): void $emit Lifecycle event emitter
      * @return int Updated consecutive infrastructure-error count
      */
     public function handle(\Throwable $exception, int $consecutiveErrors, callable $emit): int
@@ -49,14 +51,8 @@ final class WorkerLoopFailureHandler
             'backoff_seconds' => round($totalDelaySeconds, 3),
             'consecutive_errors' => $consecutiveErrors,
         ]);
-        $emit('infra_error', [
-            'error' => $exception->getMessage(),
-            'exception_class' => $exception::class,
-        ]);
-        $emit('backoff', [
-            'error' => $exception->getMessage(),
-            'backoff_seconds' => $totalDelaySeconds,
-        ]);
+        $emit(new InfrastructureErrorEvent($exception->getMessage(), $exception::class));
+        $emit(new WorkerBackoffEvent($exception->getMessage(), $totalDelaySeconds));
         $this->sleep($totalDelaySeconds);
 
         return $consecutiveErrors;
