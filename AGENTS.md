@@ -320,6 +320,14 @@ Never move, recreate, or reuse a published stable tag. If a release must be corr
 - Update ALL implementations (including `InMemory*` variants)
 - Update CHANGELOG.md under `[Unreleased]` with `### Changed` and `BREAKING` prefix
 
+### Updating CHANGELOG.md
+
+1. Maintain `CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) standards under `[Unreleased]`.
+2. Group entries strictly under standard section headers (`Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`).
+3. Keep only notable, user-facing and developer-facing changes (new capabilities, public API updates, bug fixes, deprecations, breaking changes).
+4. Do NOT record internal development churn: omit internal task/stage references (e.g., "Stage 1–5"), quality baseline re-publication notes (`quality-baseline.json`), micro-benchmark reruns, internal helper extractions, and test line-count changes.
+5. Avoid duplication: do not list the same feature under both `Added` and `Changed`. Keep entries concise, clear, and high-level.
+
 ## Dependencies
 
 ### Required (Runtime)
@@ -358,3 +366,5 @@ Never move, recreate, or reuse a published stable tag. If a release must be corr
 - **Backward compatibility**: Interface changes are breaking — document in CHANGELOG.md and consider carefully
 - **In-memory parity**: `InMemoryJobStorage` and `InMemoryQueueDriver` must implement the same behavior as their real counterparts for reliable testing
 - **Release policy**: Follow the release workflow above exactly. Git tags and GitHub release titles use `v` (for example, `v1.6.0`); Composer/Packagist versions use no prefix (for example, `1.6.0`).
+- **Changelog Quality**: Keep `CHANGELOG.md` entries concise, high-level, and focused strictly on important public-facing changes. Never log internal micro-steps, internal stage numbers (e.g. Stage 1–5), `quality-baseline.json` updates, or test line-count statistics.
+
