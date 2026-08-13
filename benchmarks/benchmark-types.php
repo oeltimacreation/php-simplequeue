@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 use Oeltima\SimpleQueue\Contract\ClockInterface;
+use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
+use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
 
 final class BenchmarkPdo extends \PDO
 {
@@ -38,6 +40,50 @@ final class BenchmarkPdo extends \PDO
     {
         $this->queries = 0;
         $this->transactions = 0;
+    }
+}
+
+final class BenchmarkQueueDriver implements QueueDriverInterface
+{
+    public int $roundTrips = 0;
+
+    public function __construct(private readonly InMemoryQueueDriver $inner)
+    {
+    }
+
+    public function isAvailable(): true
+    {
+        return $this->inner->isAvailable();
+    }
+
+    public function enqueue(string $queue, int $jobId): void
+    {
+        $this->roundTrips++;
+        $this->inner->enqueue($queue, $jobId);
+    }
+
+    public function dequeue(string $queue, int $timeoutSeconds): ?int
+    {
+        $this->roundTrips++;
+
+        return $this->inner->dequeue($queue, $timeoutSeconds);
+    }
+
+    public function ack(string $queue, int $jobId): void
+    {
+        $this->roundTrips++;
+        $this->inner->ack($queue, $jobId);
+    }
+
+    public function nack(string $queue, int $jobId, int $delaySeconds = 0): void
+    {
+        $this->roundTrips++;
+        $this->inner->nack($queue, $jobId, $delaySeconds);
+    }
+
+    public function resetCounts(): void
+    {
+        $this->roundTrips = 0;
     }
 }
 

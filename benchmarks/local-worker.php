@@ -6,6 +6,7 @@ use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
 use Oeltima\SimpleQueue\JobDispatcher;
 use Oeltima\SimpleQueue\JobRegistry;
 use Oeltima\SimpleQueue\QueueManager;
+use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
 use Oeltima\SimpleQueue\Worker;
 
 /** @return array<string, mixed> */
@@ -66,6 +67,40 @@ function workerBenchmark(BenchmarkOptions $options, BenchmarkScenario $scenario)
                 $processed += $worker->processOne() ? 1 : 0;
             }
             return databaseCounts($pdo, ['operations' => $processed]);
+        };
+    });
+}
+
+/** @return array<string, mixed> */
+function middlewareWorkerBenchmark(BenchmarkOptions $options): array
+{
+    $scenario = BenchmarkScenario::named(['value' => 'worker.middleware_execute_ack']);
+    return benchmark($scenario, $options, static function () use ($options): Closure {
+        $storage = new InMemoryJobStorage();
+        $driver = new BenchmarkQueueDriver(new InMemoryQueueDriver());
+        $queueManager = new QueueManager($driver);
+        $dispatcher = new JobDispatcher($storage, $queueManager);
+        $dispatcher->dispatchBatch('benchmark.noop', payloads($options));
+        $driver->resetCounts();
+
+        $registry = new JobRegistry();
+        $registry->register('benchmark.noop', NoopBenchmarkHandler::class);
+        $registry->middleware->register(new NoopBenchmarkMiddleware());
+        $worker = new Worker($storage, $queueManager, $registry, options: [
+            'lock_file' => null,
+            'poll_timeout' => 0,
+        ]);
+
+        return static function () use ($worker, $options, $driver): array {
+            $processed = 0;
+            for ($index = 0; $index < $options->jobs; $index++) {
+                $processed += $worker->processOne() ? 1 : 0;
+            }
+
+            return [
+                'operations' => $processed,
+                'driver_roundtrips' => $driver->roundTrips,
+            ];
         };
     });
 }
