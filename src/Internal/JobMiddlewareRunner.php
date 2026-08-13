@@ -38,14 +38,7 @@ final class JobMiddlewareRunner
         foreach (array_reverse($middlewares) as $middleware) {
             $continuation = $next;
             $next = static function () use ($claim, $middleware, $continuation): mixed {
-                $context = new JobExecutionContext(
-                    $claim->job->id,
-                    $claim->job->type,
-                    $claim->job->payload,
-                    $claim->job->queue,
-                    $claim->job->attempts + 1,
-                    $continuation
-                );
+                $context = new JobExecutionContext($claim->job, $continuation);
 
                 return $middleware->process($context);
             };
