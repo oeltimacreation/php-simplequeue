@@ -25,6 +25,46 @@ non-zero exits and retain stdout/stderr for diagnosis. Exit code `0` means a
 normal stop or configured limit, `1` means an unhandled worker error, and `2`
 means the singleton lock was unavailable.
 
+## Typed worker events
+
+The worker builds a typed readonly value object for every lifecycle event before
+invoking the configured listener. The existing listener remains compatible and
+receives the same `(string $event, array $data)` arguments; the worker converts
+the typed object through `getName()` and `toArray()` at that boundary. Listener
+failures are logged and do not change the job transition.
+
+The stable event catalog and payload keys are:
+
+| Event | Payload keys |
+|---|---|
+| `claimed` | `job_id`, `type`, `acquire_latency_ms` |
+| `completed` | `job_id`, `type`, `duration_ms` |
+| `retried` | `job_id`, `type`, `duration_ms`, `attempts`, `error` |
+| `failed` | `job_id`, `type`, `duration_ms`, `error` |
+| `lost_ownership` | `job_id`, `type`, `context` |
+| `infrastructure_failure` | `job_id`, `context` |
+| `infra_error` | `error`, `exception_class` |
+| `backoff` | `error`, `backoff_seconds` |
+
+The corresponding value objects are available under
+`Oeltima\SimpleQueue\Contract`, including `JobClaimedEvent`,
+`JobCompletedEvent`, `JobRetriedEvent`, `JobFailedEvent`,
+`JobLostOwnershipEvent`, `InfrastructureFailureEvent`,
+`InfrastructureErrorEvent`, and `WorkerBackoffEvent`. Each object exposes
+readonly typed properties and `fromArray()` / `toArray()` factories. Event
+payloads contain error messages and exception class names only; they never
+include a `Throwable` instance or stack trace.
+
+PSR-14 is intentionally not a runtime dependency. The typed event boundary and
+existing callable listener provide the stable framework-agnostic integration
+surface without requiring an event dispatcher package.
+
+Listener callbacks are observability hooks, not part of the job transaction. If
+one throws, the worker logs the event name and error message, swallows the
+exception, and continues the normal completion, retry, or failure transition.
+Monitor the error log for repeated listener failures rather than retrying jobs
+because telemetry delivery failed.
+
 ## Scheduled workloads
 
 A scheduled job is stored with an absolute UTC `available_at` and, on
@@ -64,6 +104,47 @@ is a soft deadline checked between bounded membership operations. Redis pending
 membership uses a bounded `LPOS`; a false negative can enqueue a duplicate,
 which is safe under the library's at-least-once delivery contract.
 
+## Failed-job administration
+
+Construct `AdminManager` with the same storage and `QueueManager` used by the
+dispatcher:
+
+```php
+$admin = new AdminManager($storage, $queues);
+
+$failed = $admin->listFailed(queue: 'billing', limit: 50);
+$job = $admin->inspectFailed($jobId);
+$admin->requeueFailed($jobId);
+$admin->purgeFailed($jobId);
+```
+
+`listFailed()` is paginated and `inspectFailed()` returns only jobs that are
+still in the `failed` state. Re-queueing resets attempts to zero, clears
+terminal/error/progress metadata, makes the job immediately pending, and then
+adds one queue notification. If notification enqueue fails, the pending state
+remains durable and the operation reports a `QueueException` so bounded
+reconciliation can repair it.
+
+Purging deletes the failed row and then removes pending, delayed, and
+processing notifications through `SupportsJobRemoval`. A notification cleanup
+failure is reported as a `QueueException`; the durable deletion is not rolled
+back. The built-in Redis and in-memory drivers remove their notification
+structures, while database polling advertises a safe no-op because claims are
+storage-gated. Custom drivers must implement `SupportsJobRemoval` before
+purge is available.
+
+There is no automatic failed-job age or backlog policy. Failed rows retain
+their existing schema and are not included in `pruneCompleted()`; operators
+choose explicit purge timing through `AdminManager` after incident-retention
+requirements are known.
+
+For backlog operations, page `listFailed()` and process each page with
+`requeueFailed()` or `purgeFailed()` rather than loading the entire failed set.
+The benchmark and soak profile records one queue notification per re-queued job;
+the administration API does not add a worker-loop roundtrip to unrelated jobs.
+Keep an alert on failed-row count and age, and make the retention decision
+explicit for each workload.
+
 ## Failure model
 
 At-least-once delivery means external side effects must be idempotent. Monitor
@@ -71,6 +152,12 @@ pending, delayed, and processing counts, stale recovery, failed jobs, and
 reconciliation errors. A storage write is authoritative; a notifier cleanup
 failure indicates an inconsistency to repair and must not be treated as a
 storage rollback.
+
+The v1.9 validation profile is published in [performance.md](performance.md).
+It covers the unchanged dispatch/claim/worker paths, middleware execution, and
+failed-job re-queue operation counts. Run the same command after changing a
+driver, storage implementation, or worker middleware pipeline and compare the
+medians and counters before deploying.
 
 ## Upgrade safety
 

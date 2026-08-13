@@ -7,31 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added worker middleware support via `JobMiddlewareInterface`, `JobContextInterface`, and `JobMiddlewareRegistry`, enabling typed execution context and request pipelines (with example at `examples/basic/middleware.php`).
+- Added typed readonly `WorkerEvent` value objects (`claimed`, `completed`, `retried`, `failed`, `lost_ownership`, `infrastructure_failure`, `infra_error`, `backoff`) with `fromArray()` and `toArray()` factories while preserving backwards compatibility for existing string/array listeners.
+- Added failed job administration via `FailedJobAdminInterface`, `AdminManager`, and `SupportsFailedJobAdministration` capability for listing, inspecting, retrying, and purging failed jobs.
+
+### Changed
+
+- Updated PDO and in-memory storage drivers with guarded failed-job reset and delete operations integrated with queue notification cleanup (`SupportsJobRemoval`).
+
 ## [1.8.0] - 2026-08-08
 
 ### Added
 
-- Added `JobDataFactory`, `ClaimedJobFactory`, and `WorkerHarness` test support helpers in `tests/Support/` to centralize typed `JobData` and `ClaimedJob` construction and streamline worker test dependency wiring.
-- Added `@phpstan-type JobDefinitionShape` in `JobStorageInterface` and `@phpstan-type StorageRowShape` in `JobDataHydrator`, enforcing precise array-shape types across dispatcher, storage, and hydration boundaries.
-- Added edge-case unit characterization tests in `JobDataTest.php` verifying `SerializationException` message contracts, invalid JSON decoding, unencodable inputs, and non-UTC `DateTimeInterface` timezone normalization.
+- Added `JobDataFactory`, `ClaimedJobFactory`, and `WorkerHarness` test support helpers in `tests/Support/` to centralize typed `JobData` and `ClaimedJob` construction for tests.
+- Added `@phpstan-type JobDefinitionShape` in `JobStorageInterface` and `@phpstan-type StorageRowShape` in `JobDataHydrator` for precise array-shape static analysis typing.
+- Added edge-case test coverage for `SerializationException`, invalid JSON decoding, and non-UTC `DateTimeInterface` timezone normalization.
 
 ### Changed
 
-- Refactored `PdoJobStorage` claim execution paths (`claimNextAvailable`, `claimById`, `claimWithReturning`, `claimWithinTransaction`) into a unified private claim helper method, dropping production duplicated windows from 37 to 0.
-- Extracted single-job definition creation in `JobDispatcher` into a private `jobDefinition()` builder helper used by `dispatch()` and `batchDefinitions()`, routing all job notifications through `notifyDispatch()`.
-- Extracted `emitLostOwnership(ClaimedJob, string)` helper in `Worker` to eliminate duplicated `lost_ownership` event payload constructions across job completion, retry, and permanent failure contexts.
-- Updated `Worker::withOptions()` and `Worker` constructor to construct directly from a `WorkerOptions` instance without array flattening and re-parsing.
-- Updated `InMemoryQueueDriver::enqueueBatch()` to use per-item `enqueue()` semantics (including job ID validation and ordering parity).
-- Extracted driver-selection decision tree in `QueueManager::create()` into a private `selectDriver()` helper to improve readability while maintaining public signatures and exception handling.
-- Refactored hotspot watch-list methods (`PdoJobStorage::createIdempotentJob`, `InMemoryJobStorage::claimNextAvailable`, `Worker::claimNextJob`) with private helper extraction, dropping cognitive complexity across all target methods while preserving exact behavior.
-- Refactored `WorkerTest.php` and `QueueReconcilerTest.php` using test support helpers, reducing `WorkerTest.php` size from 1,182 lines to 931 lines and cutting test duplicate windows.
-- Overhauled documentation structure: `docs/README.md` reorganized into a role-based index (Users, Integrators, Maintainers) with reading order and descriptions.
-- Refreshed root `README.md` with feature overview table, quick API reference, named arguments in code samples, and updated guide links.
-- Expanded `docs/architecture.md` with detailed two-layer engine model diagram, job lifecycle state machine, optimistic claim fencing, scheduled promotion, queue repair, and backend parity map.
-- Updated version upgrade guidance in `docs/upgrading.md` with v1.7.x and v1.8.x transition details.
-- Overhauled `CONTRIBUTING.md` developer guide with local setup, complete quality program toolchain, 15/15/3 quality ratchet rules, and contract testing guide for custom drivers/storage/handlers.
-- Polished `examples/README.md` as the canonical sample catalogue with expected terminal output for all runnable examples.
-- Re-published `quality/quality-baseline.json` following Stage 3 and Stage 4 refactoring, keeping all test suites, PHPStan Level 9 strict rules, PHPCS, and quality ratchets green.
+- Refactored `PdoJobStorage`, `JobDispatcher`, `Worker`, and `QueueManager` internal execution paths with private helpers to improve code maintainability and reduce cyclomatic complexity.
+- Updated `Worker::withOptions()` and `Worker` constructor to construct directly from `WorkerOptions` without array flattening.
+- Updated `InMemoryQueueDriver::enqueueBatch()` to match per-item `enqueue()` validation and ordering semantics.
+- Overhauled project documentation: reorganized `docs/README.md` into a role-based index, refreshed root `README.md`, expanded `docs/architecture.md` with state machine and engine diagrams, updated `docs/upgrading.md`, updated `CONTRIBUTING.md`, and polished `examples/README.md`.
 
 ### Fixed
 
@@ -42,70 +41,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added scheduled initial dispatch: `dispatchAt()`, `dispatchAfter()`, and an optional `$availableAt` parameter on `dispatch()` and `dispatchBatch()`, working across Redis, Database, and In-Memory drivers. A scheduled job is stored with a future `available_at`, receives a delayed notification on delayed-capable drivers, and is claimed only when due; past or now timestamps take the existing immediate path unchanged.
-- Added `QueueManager::enqueueDelayed()` which delegates to `SupportsDelayedJobs` drivers and falls back to a plain enqueue for storage-gated drivers such as Database.
-- Added `SupportsDelayedJobs::enqueueDelayed()` implemented by the Redis (`ZADD <queue>:delayed`) and In-Memory drivers.
-- Added `availableAt` key handling to `createJobs()` in `PdoJobStorage` and `InMemoryJobStorage`, accepting a Unix timestamp or `\DateTimeInterface` and normalized to UTC through a shared `JobStorageRules` helper; invalid and non-positive values throw `InvalidArgumentException`.
-- Added contract coverage for scheduled batch creation and delayed notifications, unit coverage for dispatcher scheduling, clamping, validation, and cancellation of scheduled jobs, and `FrozenClock` integration coverage across all three drivers verifying a scheduled job is not claimable before its `available_at` and becomes claimable at or after it.
-- Added a reconciliation crash-window test proving a job created with a future `available_at` but no notification is restored into the delayed structure (not pending) by `QueueReconciler`.
-- Added an internal `RedisScriptRunner` that sends Redis Lua scripts through `EVALSHA` and falls back to `EVAL` on `NOSCRIPT`, applied to the dequeue, delayed-promotion, and stale-recovery scripts. Wire payload bytes for the dequeue/ACK scenario dropped 72.8% (14,847 → 4,040 bytes per 100 jobs) and localhost dequeue latency fell ~24%; command and roundtrip counts are unchanged.
-- Added `SupportsDelayedJobs::enqueueDelayedBatch()` (implemented by the Redis and In-Memory drivers), a `DelayedBatch` value object, and `QueueManager::enqueueDelayedBatch(DelayedBatch)`, so a scheduled `dispatchBatch()` sends one Redis `ZADD` instead of one roundtrip per job. Measured on 100 jobs: 100 roundtrips → 1, -75.5% median latency. Drivers without the batch method fall back to one `enqueueDelayed()` per job.
-- Expanded the benchmark harness with scheduled single/batch dispatch scenarios (In-Memory, SQLite, Redis), a 10,000-job delayed-promotion scenario, an idle-worker CPU/memory check, and per-sample `redis_wire_bytes` and `cpu_seconds` metrics.
-- Extended the scheduled-dispatch failure matrix in `docs/failure-matrix.md` with deterministic fault-injection coverage in `tests/Integration/FailurePathTest.php` for: crash after scheduled storage create before delayed notification (the reconciler restores the job into the delayed structure with the remaining delay), duplicate notification after a retry dispatch, dispatcher/worker clock skew, past/now schedule clamping, cancel of a scheduled job, and max-attempts exhaustion with scheduled retries.
-- Added operation-counter assertions to the benchmark harness (`benchmarks/operation-count-checks.php`): scheduled single dispatch stays one driver roundtrip per job, scheduled batch dispatch and delayed promotion stay one roundtrip, dequeue/ACK stays bounded, and the SQLite claim path keeps one transaction and bounded statements per claim.
-- Added UTC-safe reconciliation characterization tests in `tests/Unit/QueueReconcilerTest.php` that set non-UTC default timezones (`America/New_York` and `Asia/Tokyo`), assert due/not-due routing against stored UTC `available_at`, and restore the timezone.
+- Added scheduled initial dispatch (`dispatchAt()`, `dispatchAfter()`, `$availableAt` parameter on `dispatch()` and `dispatchBatch()`) across Redis, Database, and In-Memory drivers.
+- Added `QueueManager::enqueueDelayed()` and `SupportsDelayedJobs::enqueueDelayed()` interface capability.
+- Added `SupportsDelayedJobs::enqueueDelayedBatch()`, `DelayedBatch` value object, and `QueueManager::enqueueDelayedBatch()` for single-roundtrip Redis delayed batch dispatch (`ZADD`).
+- Added `RedisScriptRunner` using `EVALSHA` with `EVAL` fallback for Redis Lua scripts, reducing wire bytes and latency.
+- Expanded test coverage and benchmark harness for scheduled dispatches, delayed promotion, and failure scenarios.
 
 ### Changed
 
-- `WorkerOptions` gains `promoteLimit` (default `100`, array key `promote_limit`) and the worker passes it through both promote call sites, making delayed-promotion throughput tunable for Redis scheduled workloads; tuning guidance is documented in `docs/operations.md`.
-- Re-published `quality/quality-baseline.json` to absorb the Stage 3 test coverage so the quality ratchet remains green.
+- Added `promoteLimit` option to `WorkerOptions` (default `100`) for tuning delayed-promotion batch sizes on Redis workloads.
+- Updated `RedisQueueDriver::promoteDelayedJobs()` to process due jobs in bounded 1,000-item Lua chunks.
+- Optimized `JobDataHydrator::hydrate()` row building, reducing cumulative memory allocations.
 
 ### Fixed
 
-- `ReconciliationJobProcessor` now parses stored `available_at` timestamps as UTC (decoded against the UTC timezone, with a UTC-annotated `strtotime()` fallback) instead of the server default timezone. Previously a non-UTC host shifted due/not-due reconciliation routing by the timezone offset, affecting retry reconciliation and scheduled-dispatch recovery.
-
-- `JobDispatcher` accepts an optional `ClockInterface` (defaults to `SystemClock`) used by `dispatchAfter()` and for clamping past timestamps.
-- `InMemoryJobStorage::createJobs()` shares a private row-building helper with `createJob()` so immediate and scheduled batch creation use one code path.
-- `RedisQueueDriver::promoteDelayedJobs()` processes due jobs in bounded 1,000-item Lua chunks so a 10,000-job backlog promotes in one roundtrip instead of exceeding Redis's per-command argument limit; limits of 100 and below behave exactly as before.
-- `JobDataHydrator::hydrate()` builds its row with a single merge loop instead of `array_filter()` plus `array_replace()`, reducing cumulative allocations ~57% per hydration (Xdebug: ~637 MB → ~275 MB over 105,000 hydrations) with neutral-to-positive benchmark throughput and no API change.
-- Re-published `quality/quality-baseline.json` to absorb the new driver methods and Stage 2 test coverage so the quality ratchet remains green.
+- Fixed timestamp parsing in `ReconciliationJobProcessor` to enforce UTC parsing regardless of server default timezone.
+- Fixed `JobDispatcher` to accept optional `ClockInterface` for deterministic time clamping.
 
 ## [1.6.0] - 2026-07-26
 
 ### Added
 
-- Added a reproducible, dependency-free quality inventory for production and test code covering method-level cognitive and cyclomatic complexity, nesting depth, class and method size, and normalized duplicated blocks.
-- Added a Composer quality ratchet that prevents baseline metrics from worsening or new duplicated blocks from appearing unless a narrow, documented exception is recorded.
-- Added characterization coverage for worker startup recovery failure, PDO claim rollback, real PDO and in-memory lost-lease fencing, and malformed blocking Redis dequeue cleanup.
-- Added an internal type-safety inventory documenting scalar, storage-row, Redis-response, timestamp, claim, and worker-event boundaries and the compatibility decisions applied to each.
-- Added shared storage and queue contract suites plus a backend parity map covering lifecycle transitions, validation errors, timestamps, attempt counts, acknowledgement behavior, and lease fencing.
-- Added a reproducible performance harness and performance profile covering dispatch, batch, claim, worker completion, retry, reconciliation, idle maintenance, PDO operation counts, Redis roundtrips, and memory.
-- Added a failure and recovery matrix with deterministic fault-injection coverage for storage, notification, ACK/NACK, serialization, stale-lease, interruption, duplicate-delivery, and cancellation-cleanup boundaries.
-- Added worker soak coverage for recycling, repeated PDO reconnects, bounded memory growth, long infrastructure-failure sequences, and real SIGTERM shutdown.
-- Added concurrent real-database checks for idempotent creation, lease fencing, and SKIP LOCKED claim distribution across the supported PHP and service matrix.
+- Added quality inventory metrics and automated Composer quality ratchet to protect baseline code quality.
+- Added comprehensive contract suites, performance harness, failure-injection matrix, and worker soak coverage across supported storage and queue backends.
+- Added real-database concurrency tests for idempotent creation, lease fencing, and `SKIP LOCKED` claim distribution.
 
 ### Changed
 
-- Enabled PHPStan unmatched-ignore reporting and removed five stale configuration and inline suppressions while retaining the active optional-Predis and legacy test-mock baselines.
-- Split worker-loop orchestration into explicit initialization, maintenance, claim, execution, result, failure, and shutdown-cleanup phases while preserving event payloads, log context, acknowledgement ordering, and public APIs.
-- Moved retry eligibility, exponential delay, infrastructure classification, and fenced-ownership decisions into an I/O-free internal worker policy with direct unit coverage.
-- Decomposed PDO claims into database-specific transaction handling and a guarded claim operation, and isolated Redis command-response normalization and malformed-notification cleanup from command orchestration.
-- Flattened in-memory stale recovery and separated bounded reconciliation orchestration from individual notification decisions, reducing production duplicated windows and bringing all refactored targets within the 15/15/3 complexity goals.
-- Centralized raw PDO/object job-row hydration and positive job-ID validation behind internal boundaries while preserving public scalar signatures, serialized fields, and validation messages.
-- Replaced worker retry and lease-ownership booleans with exhaustive internal outcomes, and replaced in-memory status strings with `JobStatus` cases and a complete private row shape.
-- Removed redundant casts and numeric checks from trusted in-memory job state and centralized claim-release field clearing without changing fenced-write or acknowledgement behavior.
-- Centralized storage validation, JSON encoding, timestamp offsets, retry terminality, and status/queue filtering while keeping PDO SQL and in-memory state transitions persistence-specific.
-- Consolidated repeated PDO preparation, bounded queries, hydration, and fenced claim predicates, and centralized Redis queue-key construction without changing transaction boundaries, command atomicity, or backend-specific SQL.
-- Replaced repeated clocks and real-service setup in storage, concurrency, Redis, Valkey, MySQL, and PostgreSQL tests with focused fixtures and data providers while preserving each scenario's assertions.
-- Replaced quadratic in-memory batch insertion with one order-preserving merge, reducing the 10,000-job benchmark median by 80.9% without changing FIFO behavior.
-- Pipelined Redis processing-score checks and repairs, reducing the 100-entry crash-window repair from 202 to 4 roundtrips while preserving its command count, bounded limit, atomic recovery script, and malformed-notification cleanup.
-- Removed stack traces and throwable objects from worker log/listener contexts while retaining job identifiers, transition context, error messages, exception class names, timing, and backoff details.
+- Refactored worker loop orchestration into clean initialization, maintenance, claim, execution, result, failure, and shutdown phases.
+- Extracted retry, delay, and backoff policies into an internal worker policy module.
+- Decomposed PDO claim logic and Redis command-response normalization to improve maintainability and reliability.
+- Optimized `InMemoryJobStorage` batch insertion order and pipelined Redis processing-score repairs.
+- Removed verbose stack traces from worker log and listener contexts while retaining structured error metadata.
 
 ### Fixed
 
-- Bounded reconciliation now advances its cursor only through jobs actually processed before the time budget expires, so a partial page resumes without skipping pending jobs.
-- In-memory result completion now encodes JSON before changing durable state, matching PDO atomicity when result serialization fails.
-- Infrastructure backoff now saturates at its configured maximum instead of overflowing after an extreme consecutive-failure sequence.
+- Fixed bounded reconciliation cursor advancement so partial pages resume cleanly without skipping jobs.
+- Fixed `InMemoryJobStorage` result completion to encode JSON before state mutation, matching PDO atomicity.
+- Fixed infrastructure backoff calculation to cap properly at configured maximum.
 
 ## [1.5.2] - 2026-07-16
 

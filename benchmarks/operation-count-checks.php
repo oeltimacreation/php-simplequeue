@@ -24,6 +24,8 @@ function assertHotLoopCounters(array $results): void
 {
     $byName = indexScenarios($results);
     assertDatabaseClaimPath($byName);
+    assertMiddlewarePath($byName);
+    assertFailedJobRequeuePath($byName);
     if (!isset($byName['redis.dispatch_scheduled_single'])) {
         return;
     }
@@ -31,6 +33,33 @@ function assertHotLoopCounters(array $results): void
     assertScheduledBatchDispatch($byName);
     assertDelayedPromotion($byName);
     assertDequeueAck($byName);
+}
+
+/**
+ * Middleware is a worker-layer wrapper and must not add queue operations.
+ *
+ * @param array<string, array<string, mixed>> $byName Indexed benchmark results
+ */
+function assertMiddlewarePath(array $byName): void
+{
+    $middleware = requireScenario($byName, 'worker.middleware_execute_ack');
+    $operations = operationCount($middleware);
+    if ((int) $middleware['median_driver_roundtrips'] > 2 * $operations) {
+        throw new RuntimeException('worker.middleware_execute_ack adds driver roundtrips');
+    }
+}
+
+/**
+ * Administrative failed-job re-queue emits at most one notification per job.
+ *
+ * @param array<string, array<string, mixed>> $byName Indexed benchmark results
+ */
+function assertFailedJobRequeuePath(array $byName): void
+{
+    $requeue = requireScenario($byName, 'admin.requeue_failed');
+    if ((int) $requeue['median_driver_roundtrips'] > operationCount($requeue)) {
+        throw new RuntimeException('admin.requeue_failed exceeds one notification per job');
+    }
 }
 
 /**

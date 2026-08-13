@@ -16,7 +16,7 @@ namespace Oeltima\SimpleQueue\Contract;
  *     queue?: string,
  *     maxAttempts?: int,
  *     requestId?: string|null,
- *     availableAt?: int|\DateTimeInterface|string|null
+ *     availableAt?: int|\DateTimeInterface|null
  * }
  */
 interface JobStorageInterface

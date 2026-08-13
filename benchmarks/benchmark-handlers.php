@@ -2,7 +2,9 @@
 
 declare(strict_types=1);
 
+use Oeltima\SimpleQueue\Contract\JobContextInterface;
 use Oeltima\SimpleQueue\Contract\JobHandlerInterface;
+use Oeltima\SimpleQueue\Contract\JobMiddlewareInterface;
 
 final class NoopBenchmarkHandler implements JobHandlerInterface
 {
@@ -17,6 +19,14 @@ final class FailingBenchmarkHandler implements JobHandlerInterface
     public function handle(int $jobId, array $payload, ?callable $progressCallback = null): never
     {
         throw new RuntimeException('benchmark retry');
+    }
+}
+
+final class NoopBenchmarkMiddleware implements JobMiddlewareInterface
+{
+    public function process(JobContextInterface $context): mixed
+    {
+        return $context->proceed();
     }
 }
 

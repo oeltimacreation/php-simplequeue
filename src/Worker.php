@@ -6,7 +6,13 @@ namespace Oeltima\SimpleQueue;
 
 use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\ClaimedJob;
+use Oeltima\SimpleQueue\Contract\InfrastructureFailureEvent;
+use Oeltima\SimpleQueue\Contract\JobClaimedEvent;
+use Oeltima\SimpleQueue\Contract\JobCompletedEvent;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
+use Oeltima\SimpleQueue\Contract\JobFailedEvent;
+use Oeltima\SimpleQueue\Contract\JobLostOwnershipEvent;
+use Oeltima\SimpleQueue\Contract\JobRetriedEvent;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
 use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
@@ -14,8 +20,10 @@ use Oeltima\SimpleQueue\Contract\SupportsProcessingHeartbeat;
 use Oeltima\SimpleQueue\Contract\SupportsWorkerId;
 use Oeltima\SimpleQueue\Contract\SupportsTimeoutValidation;
 use Oeltima\SimpleQueue\Contract\SupportsClaimedDequeue;
+use Oeltima\SimpleQueue\Contract\WorkerEventInterface;
 use Oeltima\SimpleQueue\Exception\HandlerNotFoundException;
 use Oeltima\SimpleQueue\Exception\SerializationException;
+use Oeltima\SimpleQueue\Internal\JobMiddlewareRunner;
 use Oeltima\SimpleQueue\Internal\WorkerLoopFailureHandler;
 use Oeltima\SimpleQueue\Internal\WorkerPolicy;
 use Psr\Log\LoggerInterface;
@@ -33,12 +41,12 @@ final class Worker
     public const EXIT_ERROR = 1;
     public const EXIT_LOCK_UNAVAILABLE = 2;
 
-    private LoggerInterface $logger;
-    private string $workerId;
+    private readonly LoggerInterface $logger;
+    private readonly string $workerId;
     private bool $shouldRun = true;
     /** @var resource|null */
     private $lockHandle = null;
-    private ?string $lockFile;
+    private readonly ?string $lockFile;
 
     private readonly WorkerOptions $options;
     private readonly ClockInterface $clock;
@@ -50,8 +58,7 @@ final class Worker
     private float $lastRecoveryTime = 0.0;
     private ?int $reconcileCursor = null;
 
-    /** @var (callable(string, array<string, mixed>): void)|null */
-    private $eventListener = null;
+    private ?\Closure $eventListener = null;
 
     /**
      * @param JobStorageInterface $storage Job storage implementation
@@ -88,7 +95,7 @@ final class Worker
         }
 
         if (is_callable($this->options->eventListener)) {
-            $this->eventListener = $this->options->eventListener;
+            $this->eventListener = \Closure::fromCallable($this->options->eventListener);
         }
     }
 
@@ -130,23 +137,22 @@ final class Worker
      */
     public function setEventListener(callable $listener): void
     {
-        $this->eventListener = $listener;
+        $this->eventListener = \Closure::fromCallable($listener);
     }
 
     /**
-     * Emit an event to the registered event listener.
+     * Emit a typed event to the registered legacy listener.
      *
-     * @param string $event Event name
-     * @param array<string, mixed> $data Event data
+     * @param WorkerEventInterface $event Typed worker event
      */
-    private function emit(string $event, array $data): void
+    private function emit(WorkerEventInterface $event): void
     {
         if ($this->eventListener !== null) {
             try {
-                ($this->eventListener)($event, $data);
+                ($this->eventListener)($event->getName(), $event->toArray());
             } catch (\Throwable $listenerError) {
                 $this->logger->error('Worker event listener threw an exception', [
-                    'event' => $event,
+                    'event' => $event->getName(),
                     'error' => $listenerError->getMessage()
                 ]);
             }
@@ -338,11 +344,7 @@ final class Worker
         }
 
         $latency = ($this->clock->monotonic() - $startTime) * 1000.0;
-        $this->emit('claimed', [
-            'job_id' => $claim->job->id,
-            'type' => $claim->job->type,
-            'acquire_latency_ms' => $latency,
-        ]);
+        $this->emit(new JobClaimedEvent($claim->job->id, $claim->job->type, $latency));
 
         return $claim;
     }
@@ -477,11 +479,7 @@ final class Worker
             'type' => $job->type,
             'duration_seconds' => round($durationMs / 1000.0, 3),
         ]);
-        $this->emit('completed', [
-            'job_id' => $job->id,
-            'type' => $job->type,
-            'duration_ms' => $durationMs,
-        ]);
+        $this->emit(new JobCompletedEvent($job->id, $job->type, $durationMs));
 
         try {
             $driver->ack($this->queue, $job->id);
@@ -536,14 +534,11 @@ final class Worker
                     'job_id' => $claim->job->id,
                     'error' => $exception->getMessage(),
                 ]);
-                $this->emit('infrastructure_failure', [
-                    'job_id' => $claim->job->id,
-                    'context' => 'processing_heartbeat',
-                ]);
+                $this->emit(new InfrastructureFailureEvent($claim->job->id, 'processing_heartbeat'));
             }
         };
 
-        $result = $handler->handle($job->id, $job->payload, $progressCallback);
+        $result = JobMiddlewareRunner::run($this->registry->middleware->all(), $claim, $handler, $progressCallback);
 
         return $this->storage->markCompleted($claim, $result);
     }
@@ -598,13 +593,13 @@ final class Worker
         }
 
         $driver->nack($this->queue, $claim->job->id, $delay);
-        $this->emit('retried', [
+        $this->emit(JobRetriedEvent::fromArray([
             'job_id' => $claim->job->id,
             'type' => $claim->job->type,
             'duration_ms' => $durationMs,
             'attempts' => $attempts,
             'error' => $exception->getMessage(),
-        ]);
+        ]));
     }
 
     private function failJobPermanently(
@@ -625,12 +620,12 @@ final class Worker
         }
 
         $driver->ack($this->queue, $claim->job->id);
-        $this->emit('failed', [
-            'job_id' => $claim->job->id,
-            'type' => $claim->job->type,
-            'duration_ms' => $durationMs,
-            'error' => $exception->getMessage(),
-        ]);
+        $this->emit(new JobFailedEvent(
+            $claim->job->id,
+            $claim->job->type,
+            $durationMs,
+            $exception->getMessage()
+        ));
     }
 
     private function scheduleRetry(ClaimedJob $claim, int $delay, \Throwable $e): bool
@@ -768,11 +763,7 @@ final class Worker
 
     private function emitLostOwnership(ClaimedJob $claim, string $context): void
     {
-        $this->emit('lost_ownership', [
-            'job_id' => $claim->job->id,
-            'type' => $claim->job->type,
-            'context' => $context,
-        ]);
+        $this->emit(new JobLostOwnershipEvent($claim->job->id, $claim->job->type, $context));
     }
 
     private function generateWorkerId(): string

@@ -17,7 +17,7 @@ If you are setting up, configuring, or running SimpleQueue in an application:
 
 If you are embedding SimpleQueue, upgrading from prior releases, or building custom storage/drivers:
 
-1. **[Upgrading Guide](upgrading.md)** — Upgrading instructions and backward-compatibility notes across versions (including v1.7.x and v1.8.x).
+1. **[Upgrading Guide](upgrading.md)** — Upgrading instructions and backward-compatibility notes across versions (including v1.7.x, v1.8.x, and v1.9.x).
 2. **[Extending SimpleQueue](extending.md)** — Implementing custom `JobHandlerInterface`, custom `JobStorageInterface`, or custom `QueueDriverInterface`.
 3. **[Backend Parity Map](backend-parity.md)** — Feature-by-feature matrix comparing Redis driver, Database driver, and In-Memory driver behavior.
 4. **[Failure & Recovery Matrix](failure-matrix.md)** — Edge-case analysis of worker crashes, network partitions, database deadlocks, and stale lease recovery.
@@ -39,5 +39,4 @@ If you are contributing to PHP SimpleQueue, reviewing architecture, or examining
 ## Runnable Examples
 
 Complete, runnable code examples live in [examples/](../examples/README.md).
-
 

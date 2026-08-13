@@ -1,12 +1,12 @@
 # Internal type-safety boundaries
 
 This document records the primitive, array-shape, and type-safety inventory for
-v1.8.0. Public scalar signatures and serialized job data remain compatible;
+v1.9.0. Public scalar signatures and serialized job data remain compatible;
 normalization happens after values enter the library.
 
 ## PHP 8.2+ Audit & Invariants
 
-- **Strict Types**: `declare(strict_types=1)` is verified across all 57 production source files and all unit/integration test files.
+- **Strict Types**: `declare(strict_types=1)` is verified across all 80 production source files and all 37 unit/integration test files.
 - **Readonly Classes**: Immutable value objects (`DelayedBatch`, `IdempotentJobResult`, `WorkerOptions`, `ReconcileOptions`, `ReconcileResult`, `PositiveJobId`, `WorkerPolicy`, `ClaimedJob`, `JobData`) utilize `final readonly class` or `readonly` properties.
 - **Language Compatibility**: Strictly targets PHP 8.2+ features (backed enums, standalone types, `readonly` classes). No PHP 8.3+ features (such as `#[Override]` or typed class constants) are used.
 
@@ -14,7 +14,7 @@ normalization happens after values enter the library.
 
 | Value or shape | Boundary | Internal representation | Decision |
 |---|---|---|---|
-| Job definitions | Dispatcher & storage `createJobs()` | `JobDefinitionShape` | Typed array shape `@phpstan-type JobDefinitionShape` enforcing `type`, `payload`, and optional `queue`, `maxAttempts`, `requestId`, `availableAt`. |
+| Job definitions | Dispatcher & storage `createJobs()` | `JobDefinitionShape` | Typed array shape `@phpstan-type JobDefinitionShape` enforcing `type`, `payload`, and optional `queue`, `maxAttempts`, `requestId`, and `availableAt` as `int|DateTimeInterface|null`. |
 | Storage rows | PDO & in-memory hydration | `StorageRowShape` | Typed array shape `@phpstan-type StorageRowShape` in `JobDataHydrator` mapping database columns and types. |
 | Positive job IDs | Dispatcher and queue-driver scalar arguments | `PositiveJobId` | Centralizes the `> 0` invariant while preserving each public error message. |
 | Queue names | Public dispatcher, worker, and driver arguments | `string` | Remains scalar because v1.8 cannot trim or rewrite backend key names without changing behavior. Existing dispatch validation rejects empty names. |
@@ -26,7 +26,8 @@ normalization happens after values enter the library.
 | Storage rows | PDO and in-memory storage | `JobDataHydrator` and `StoredJobRow` | PDO/object rows cross one hydration boundary. In-memory rows have a complete PHPStan shape with typed status, counters, timestamps, ownership, progress, and serialized values. |
 | Redis command results | Predis boundary | `RedisResponseNormalizer` | Scalar, null, malformed, and integer responses are normalized before queue orchestration uses them. |
 | Timestamps | Clock and persistence boundaries | UTC database strings and integer backend scores | Retained because their format and comparison semantics are part of the storage and Redis protocols. `ClockInterface` remains the source of time. |
-| Worker event payloads | Public event-listener callback | Documented associative arrays | Retained because listeners consume the array contract. Event names determine the payload shape; converting them to internal objects would create an unnecessary public conversion layer. |
+| Worker event payloads | Worker emitter and public event-listener callback | `WorkerEventInterface` plus typed readonly event value objects | Typed objects enforce each event's fields internally; the listener remains the documented `(string, array)` contract through `getName()` and `toArray()`. |
+| Failed-job administration | Admin service and storage transition boundary | `FailedJobAdminInterface` plus `SupportsFailedJobAdministration` | The manager exposes operator actions while storage implementations guard the `failed` status transition; queue cleanup remains an explicit `SupportsJobRemoval` capability. |
 
 ## Trusted transitions
 
@@ -47,11 +48,13 @@ storage methods still return booleans, and public queue/storage methods still
 accept integers and strings, so custom implementations and named arguments are
 unchanged.
 
-## Event payload shapes
+## Typed event boundary
 
-The listener remains `callable(string, array<string, mixed>): void`. These are
-the stable fields emitted by the worker; contextual events may omit a job ID
-when failure occurs before a claim exists.
+`WorkerEventInterface` defines `fromArray()`, `getName()`, and `toArray()` for
+the typed event value objects. The listener remains
+`callable(string, array<string, mixed>): void`; the worker performs the
+conversion only at that compatibility boundary. Contextual events may omit a
+job ID when failure occurs before a claim exists.
 
 | Event | Fields |
 |---|---|
@@ -61,8 +64,18 @@ when failure occurs before a claim exists.
 | `failed` | `job_id`, `type`, `duration_ms`, `error` |
 | `lost_ownership` | `job_id`, `type`, `context` |
 | `infrastructure_failure` | `job_id`, `context` |
-| `infra_error` | `error`, `exception` |
+| `infra_error` | `error`, `exception_class` |
 | `backoff` | `error`, `backoff_seconds` |
+
+The eight value objects are `JobClaimedEvent`, `JobCompletedEvent`,
+`JobRetriedEvent`, `JobFailedEvent`, `JobLostOwnershipEvent`,
+`InfrastructureFailureEvent`, `InfrastructureErrorEvent`, and
+`WorkerBackoffEvent`. Their payload factories validate required field types.
+Event payloads retain error messages and exception class names but never carry
+`Throwable` instances or stack traces. PSR-14 was evaluated for this boundary
+and intentionally not added: the callable listener is sufficient for the
+framework-agnostic API and a dispatcher package would add runtime dependency
+surface without a required use case.
 
 ## Compatibility constraints
 

@@ -8,8 +8,10 @@ use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Contract\SupportsWorkerId;
 use Oeltima\SimpleQueue\Contract\SupportsClaimedDequeue;
+use Oeltima\SimpleQueue\Contract\SupportsJobRemoval;
 use Oeltima\SimpleQueue\Contract\ClaimedJob;
 use Oeltima\SimpleQueue\Contract\ClockInterface;
+use Oeltima\SimpleQueue\Internal\DatabaseJobRemoval;
 use Oeltima\SimpleQueue\Internal\PositiveJobId;
 use Oeltima\SimpleQueue\SystemClock;
 
@@ -21,10 +23,15 @@ use Oeltima\SimpleQueue\SystemClock;
  *
  * Note: This driver has higher latency than Redis due to polling.
  */
-final class DatabaseQueueDriver implements QueueDriverInterface, SupportsWorkerId, SupportsClaimedDequeue
+final class DatabaseQueueDriver implements
+    QueueDriverInterface,
+    SupportsWorkerId,
+    SupportsClaimedDequeue,
+    SupportsJobRemoval
 {
-    private const ERR_INVALID_JOB_ID = 'jobId must be a positive integer';
+    use DatabaseJobRemoval;
 
+    private const ERR_INVALID_JOB_ID = 'jobId must be a positive integer';
     private int $pollIntervalMs;
     private string $workerId;
 
@@ -33,14 +40,13 @@ final class DatabaseQueueDriver implements QueueDriverInterface, SupportsWorkerI
      * @param int $pollIntervalMs Polling interval in milliseconds (default: 250ms)
      */
     public function __construct(
-        private JobStorageInterface $storage,
+        private readonly JobStorageInterface $storage,
         int $pollIntervalMs = 250,
         private readonly ClockInterface $clock = new SystemClock()
     ) {
         $this->pollIntervalMs = max(50, $pollIntervalMs);
         $this->workerId = bin2hex(random_bytes(16)); // Default fallback worker ID
     }
-
     /**
      * Set the worker ID for atomic claim delegation.
      *
@@ -49,23 +55,19 @@ final class DatabaseQueueDriver implements QueueDriverInterface, SupportsWorkerI
     {
         $this->workerId = $workerId;
     }
-
     public function isAvailable(): true
     {
         return true;
     }
-
     public function enqueue(string $queue, int $jobId): void
     {
         PositiveJobId::fromInt($jobId, self::ERR_INVALID_JOB_ID);
         // Job is already in the database, nothing to do
     }
-
     public function dequeue(string $queue, int $timeoutSeconds): ?int
     {
         return $this->dequeueClaimed($queue, $timeoutSeconds)?->job->id;
     }
-
     public function dequeueClaimed(string $queue, int $timeoutSeconds): ?ClaimedJob
     {
         $deadline = $this->clock->timestamp() + max(0, $timeoutSeconds);
@@ -83,13 +85,11 @@ final class DatabaseQueueDriver implements QueueDriverInterface, SupportsWorkerI
             usleep($this->pollIntervalMs * 1000);
         } while (true);
     }
-
     public function ack(string $queue, int $jobId): void
     {
         PositiveJobId::fromInt($jobId, self::ERR_INVALID_JOB_ID);
         // Job status is managed by storage, nothing to do
     }
-
     public function nack(string $queue, int $jobId, int $delaySeconds = 0): void
     {
         PositiveJobId::fromInt($jobId, self::ERR_INVALID_JOB_ID);

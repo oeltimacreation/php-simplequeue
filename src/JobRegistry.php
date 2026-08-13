@@ -12,7 +12,8 @@ use Psr\Container\ContainerInterface;
  * Registry for job handlers.
  *
  * Maps job types to their handler classes and provides
- * handler instantiation through a PSR-11 container.
+ * handler instantiation through a PSR-11 container. The public middleware
+ * registry keeps execution interception separate from handler resolution.
  */
 final class JobRegistry
 {
@@ -21,9 +22,12 @@ final class JobRegistry
 
     /**
      * @param ContainerInterface|null $container Optional PSR-11 container for handler resolution
+     * @param JobMiddlewareRegistry $middleware Ordered middleware registry
      */
-    public function __construct(private ?ContainerInterface $container = null)
-    {
+    public function __construct(
+        private readonly ?ContainerInterface $container = null,
+        public readonly JobMiddlewareRegistry $middleware = new JobMiddlewareRegistry()
+    ) {
     }
 
     /**

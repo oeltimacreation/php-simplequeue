@@ -1,5 +1,55 @@
 # Performance profile
 
+## v1.9 Stage 4–5 validation profile
+
+Captured 2026-08-13 before and after the v1.9 Stage 1–3 implementation using
+PHP 8.4.24 on Linux x86-64, SQLite, and an isolated Redis/Valkey 7.2 service.
+Each result is the median of five measured samples after one warmup:
+
+```bash
+REDIS_HOST=127.0.0.1 REDIS_PORT=6379 composer benchmark -- \
+  --jobs=1000 --iterations=5 --warmup=1 --idle-cycles=500
+```
+
+The baseline was run from the `v1.8.0` tag and the after profile from
+`feat/1.9-candidate` after Stages 1–3. Timings are local microbenchmark
+measurements and should be compared as ranges, not as release-level capacity
+guarantees.
+
+### Existing paths — before and after
+
+| Scenario | v1.8.0 median | v1.9 after median | v1.9 throughput | Operation-count result |
+|---|---:|---:|---:|---|
+| In-memory batch dispatch, 1,000 jobs | 4.884 ms | 5.006 ms | 199,749 jobs/s | unchanged |
+| SQLite single dispatch, 1,000 jobs | 18.027 ms | 17.629 ms | 56,724 jobs/s | 1,000 statements |
+| SQLite batch dispatch, 1,000 jobs | 5.091 ms | 4.998 ms | 200,082 jobs/s | 1 statement |
+| SQLite claim, 1,000 jobs | 74.749 ms | 75.937 ms | 13,169 jobs/s | 3,000 statements / 1,000 transactions |
+| Worker execute/ACK, 1,000 jobs | 112.301 ms | 111.479 ms | 8,970 jobs/s | 4,000 statements / 1,000 transactions |
+| Worker retry, 1,000 jobs | 192.620 ms | 189.906 ms | 5,266 jobs/s | 4,000 statements / 1,000 transactions |
+| Redis dequeue/ACK, 100 jobs | 11.204 ms | 7.815 ms | 12,796 jobs/s | 201 roundtrips |
+| Redis retry, 100 jobs | 11.659 ms | 9.795 ms | 10,209 jobs/s | 200 roundtrips |
+| Redis unscored repair, 100 jobs | 4.568 ms | 2.604 ms | 38,397 jobs/s | 4 roundtrips |
+
+The existing database statement/transaction counts and Redis command/roundtrip
+bounds are unchanged. The measured throughput changes are within the expected
+run-to-run variance for this local harness; the Redis rows retain the previously
+measured improvements from the Stage 1–3 baseline. No middleware or
+administration work is inserted into the no-middleware worker path.
+
+### New v1.9 paths
+
+| Scenario | Median time | Throughput | Driver roundtrips |
+|---|---:|---:|---:|
+| Middleware worker execute/ACK, 1,000 jobs | 31.539 ms | 31,706 jobs/s | 2,000 (2/job) |
+| Failed-job re-queue, 1,000 jobs | 14.481 ms | 69,058 jobs/s | 1,000 (1/job) |
+
+The harness now records `driver_roundtrips` for non-Redis instrumented drivers.
+`benchmarks/operation-count-checks.php` fails a benchmark run if middleware
+exceeds the normal dequeue-plus-ACK budget or failed-job re-queue emits more than
+one notification per job. The deterministic soak suite additionally exercises
+300 middleware-enabled jobs across worker recycling and a 150-job failed backlog
+through paginated purge.
+
 ## v1.7 Stage 2 profile
 
 Captured 2026-08-01 against the v1.6 report below. This profile measures the

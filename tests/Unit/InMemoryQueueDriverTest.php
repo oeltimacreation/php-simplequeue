@@ -35,6 +35,22 @@ class InMemoryQueueDriverTest extends TestCase
         $this->assertContains(3, $pending);
     }
 
+    public function testQueueViewsAndCountsShareMembershipState(): void
+    {
+        $this->driver->enqueue('default', 1);
+        $this->driver->enqueue('default', 2);
+
+        self::assertSame($this->driver->getPending('default'), $this->driver->getPendingIds('default'));
+        self::assertSame(2, $this->driver->getPendingCount('default'));
+
+        $this->driver->dequeue('default', 0);
+        self::assertContains(1, $this->driver->getProcessing('default'));
+        self::assertSame(1, $this->driver->getProcessingCount('default'));
+
+        $this->driver->nack('default', 1, 60);
+        self::assertSame(1, $this->driver->getDelayedCount('default'));
+    }
+
     public function testBatchEnqueuePreservesExistingFifoOrder(): void
     {
         $this->driver->enqueue('default', 1);

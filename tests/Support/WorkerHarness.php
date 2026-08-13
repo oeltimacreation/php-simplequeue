@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue\Tests\Support;
 
-use Oeltima\SimpleQueue\Contract\JobHandlerInterface;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
@@ -81,12 +80,12 @@ final class WorkerHarness
 
     /**
      * @param string $type
-     * @param JobHandlerInterface|callable $handler
+     * @param class-string<\Oeltima\SimpleQueue\Contract\JobHandlerInterface> $handlerClass
      * @return self
      */
-    public function registerHandler(string $type, JobHandlerInterface|callable $handler): self
+    public function registerHandler(string $type, string $handlerClass): self
     {
-        $this->registry->register($type, $handler);
+        $this->registry->register($type, $handlerClass);
         return $this;
     }
 

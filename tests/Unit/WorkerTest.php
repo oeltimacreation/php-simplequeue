@@ -937,6 +937,28 @@ class WorkerTest extends TestCase
         $this->assertArrayHasKey('duration_ms', $events[1][1]);
     }
 
+    public function testWorkerNormalizesCallableEventListenersToClosures(): void
+    {
+        $listener = new class {
+            /** @param array<string, mixed> $data */
+            public function handle(string $event, array $data): void
+            {
+            }
+        };
+        $worker = $this->createWorkerWithDriver(
+            $this->createMock(QueueDriverInterface::class),
+            ['event_listener' => [$listener, 'handle']]
+        );
+
+        $reflection = new \ReflectionClass($worker);
+        $property = $reflection->getProperty('eventListener');
+        self::assertInstanceOf(\Closure::class, $property->getValue($worker));
+
+        $worker->setEventListener([$listener, 'handle']);
+
+        self::assertInstanceOf(\Closure::class, $property->getValue($worker));
+    }
+
     public function testDefaultLockFileIsQueueScoped(): void
     {
         $driver = $this->createMock(QueueDriverInterface::class);
