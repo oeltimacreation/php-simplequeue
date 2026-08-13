@@ -155,20 +155,13 @@ final class MiddlewareContractProbe implements JobMiddlewareInterface
 
     private static function assertContext(JobContextInterface $context): void
     {
-        if ($context->getJobId() < 1) {
-            throw new \LogicException('Middleware context has an invalid job ID.');
-        }
-        if ($context->getType() !== 'contract.middleware') {
-            throw new \LogicException('Middleware context has an invalid job type.');
-        }
-        if ($context->getPayload() !== ['key' => 'value']) {
-            throw new \LogicException('Middleware context has an invalid payload.');
-        }
-        if ($context->getQueue() === '') {
-            throw new \LogicException('Middleware context has an empty queue.');
-        }
-        if ($context->getAttempts() !== 1) {
-            throw new \LogicException('Middleware context was not populated from the claim.');
-        }
+        match (true) {
+            $context->getJobId() < 1 => throw new \LogicException('Middleware context has an invalid job ID.'),
+            $context->getType() !== 'contract.middleware' => throw new \LogicException('Middleware context has an invalid job type.'),
+            $context->getPayload() !== ['key' => 'value'] => throw new \LogicException('Middleware context has an invalid payload.'),
+            $context->getQueue() === '' => throw new \LogicException('Middleware context has an empty queue.'),
+            $context->getAttempts() !== 1 => throw new \LogicException('Middleware context was not populated from the claim.'),
+            default => null,
+        };
     }
 }
