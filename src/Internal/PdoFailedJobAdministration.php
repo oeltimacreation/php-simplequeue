@@ -21,8 +21,10 @@ trait PdoFailedJobAdministration
             $this->table,
             $this->now(),
             $jobId,
-            $this->execute(...),
-            $this->find(...)
+            [
+                'execute' => $this->execute(...),
+                'find' => $this->find(...),
+            ]
         );
     }
 

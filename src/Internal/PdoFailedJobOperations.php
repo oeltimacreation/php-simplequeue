@@ -10,6 +10,10 @@ use Oeltima\SimpleQueue\Contract\JobStatus;
 /**
  * Builds guarded failed-job transitions for PDO storage.
  *
+ * @phpstan-type OperationContext array{
+ *     execute: callable(string, array<string, mixed>): \PDOStatement,
+ *     find: callable(int): (?JobData)
+ * }
  * @internal
  */
 final class PdoFailedJobOperations
@@ -24,16 +28,14 @@ final class PdoFailedJobOperations
      * @param string $table Storage table name
      * @param string $now Current storage timestamp
      * @param int $jobId Job identifier
-     * @param callable(string, array<string, mixed>): \PDOStatement $execute Statement executor
-     * @param callable(int): (?JobData) $find Job lookup
+     * @param OperationContext $operations Statement executor and job lookup
      * @return JobData|null Reset job, or null when it is missing or not failed
      */
     public static function requeue(
         string $table,
         string $now,
         int $jobId,
-        callable $execute,
-        callable $find
+        array $operations
     ): ?JobData {
         $sql = "UPDATE {$table}
             SET status = 'pending', attempts = 0, available_at = :available_at,
@@ -42,13 +44,13 @@ final class PdoFailedJobOperations
                 error_trace = NULL, progress = NULL, progress_message = NULL,
                 result = NULL, updated_at = :updated_at
             WHERE id = :id AND status = 'failed'";
-        $statement = $execute($sql, [
+        $statement = ($operations['execute'])($sql, [
             'available_at' => $now,
             'updated_at' => $now,
             'id' => $jobId,
         ]);
 
-        return $statement->rowCount() > 0 ? $find($jobId) : null;
+        return $statement->rowCount() > 0 ? ($operations['find'])($jobId) : null;
     }
 
     /**
