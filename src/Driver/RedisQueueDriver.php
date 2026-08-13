@@ -92,8 +92,8 @@ LUA;
      * @param string $prefix Key prefix for all queue keys
      */
     public function __construct(
-        #[\SensitiveParameter] private ClientInterface $redis,
-        private string $prefix = 'simplequeue',
+        #[\SensitiveParameter] private readonly ClientInterface $redis,
+        private readonly string $prefix = 'simplequeue',
         private readonly ClockInterface $clock = new SystemClock()
     ) {
         $this->scripts = new RedisScriptRunner($this->redis);

@@ -41,12 +41,12 @@ final class Worker
     public const EXIT_ERROR = 1;
     public const EXIT_LOCK_UNAVAILABLE = 2;
 
-    private LoggerInterface $logger;
-    private string $workerId;
+    private readonly LoggerInterface $logger;
+    private readonly string $workerId;
     private bool $shouldRun = true;
     /** @var resource|null */
     private $lockHandle = null;
-    private ?string $lockFile;
+    private readonly ?string $lockFile;
 
     private readonly WorkerOptions $options;
     private readonly ClockInterface $clock;
@@ -58,8 +58,7 @@ final class Worker
     private float $lastRecoveryTime = 0.0;
     private ?int $reconcileCursor = null;
 
-    /** @var (callable(string, array<string, mixed>): void)|null */
-    private $eventListener = null;
+    private ?\Closure $eventListener = null;
 
     /**
      * @param JobStorageInterface $storage Job storage implementation
@@ -96,7 +95,7 @@ final class Worker
         }
 
         if (is_callable($this->options->eventListener)) {
-            $this->eventListener = $this->options->eventListener;
+            $this->eventListener = \Closure::fromCallable($this->options->eventListener);
         }
     }
 
@@ -138,7 +137,7 @@ final class Worker
      */
     public function setEventListener(callable $listener): void
     {
-        $this->eventListener = $listener;
+        $this->eventListener = \Closure::fromCallable($listener);
     }
 
     /**

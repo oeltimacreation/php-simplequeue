@@ -40,7 +40,7 @@ final class DatabaseQueueDriver implements
      * @param int $pollIntervalMs Polling interval in milliseconds (default: 250ms)
      */
     public function __construct(
-        private JobStorageInterface $storage,
+        private readonly JobStorageInterface $storage,
         int $pollIntervalMs = 250,
         private readonly ClockInterface $clock = new SystemClock()
     ) {

@@ -88,16 +88,7 @@ final class InMemoryQueueDriver implements
     public function ack(string $queue, int $jobId): void
     {
         $this->validateJobId($jobId);
-        if (!isset($this->processing[$queue])) {
-            return;
-        }
-
-        $key = array_search($jobId, $this->processing[$queue], true);
-        if ($key !== false) {
-            unset($this->processing[$queue][$key]);
-            $this->processing[$queue] = array_values($this->processing[$queue]);
-        }
-
+        $this->removeFromProcessing($queue, $jobId);
         unset($this->processingStartedAt[$queue][$jobId]);
     }
 
@@ -246,12 +237,7 @@ final class InMemoryQueueDriver implements
             if ($startedAt > $staleThreshold) {
                 continue;
             }
-            $processing = $this->processing[$queue] ?? [];
-            $key = array_search($jobId, $processing, true);
-            if ($key !== false) {
-                unset($processing[$key]);
-                $this->processing[$queue] = array_values($processing);
-            }
+            $this->removeFromProcessing($queue, $jobId);
             unset($this->processingStartedAt[$queue][$jobId]);
             $this->enqueue($queue, $jobId);
             $recovered++;
@@ -301,7 +287,7 @@ final class InMemoryQueueDriver implements
      */
     public function getPendingIds(string $queue): array
     {
-        return $this->pending[$queue] ?? [];
+        return $this->getPending($queue);
     }
 
     /**
@@ -352,7 +338,7 @@ final class InMemoryQueueDriver implements
      */
     public function getPendingCount(string $queue): int
     {
-        return isset($this->pending[$queue]) ? count($this->pending[$queue]) : 0;
+        return count($this->getPending($queue));
     }
 
     /**
@@ -363,7 +349,7 @@ final class InMemoryQueueDriver implements
      */
     public function getProcessingCount(string $queue): int
     {
-        return isset($this->processing[$queue]) ? count($this->processing[$queue]) : 0;
+        return count($this->getProcessing($queue));
     }
 
     /**
@@ -374,6 +360,20 @@ final class InMemoryQueueDriver implements
      */
     public function getDelayedCount(string $queue): int
     {
-        return isset($this->delayed[$queue]) ? count($this->delayed[$queue]) : 0;
+        return count($this->getDelayed($queue));
+    }
+
+    private function removeFromProcessing(string $queue, int $jobId): void
+    {
+        if (!isset($this->processing[$queue])) {
+            return;
+        }
+
+        $key = array_search($jobId, $this->processing[$queue], true);
+        if ($key === false) {
+            return;
+        }
+        unset($this->processing[$queue][$key]);
+        $this->processing[$queue] = array_values($this->processing[$queue]);
     }
 }

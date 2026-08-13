@@ -25,7 +25,7 @@ final class JobRegistry
      * @param JobMiddlewareRegistry $middleware Ordered middleware registry
      */
     public function __construct(
-        private ?ContainerInterface $container = null,
+        private readonly ?ContainerInterface $container = null,
         public readonly JobMiddlewareRegistry $middleware = new JobMiddlewareRegistry()
     ) {
     }

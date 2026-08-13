@@ -6,6 +6,14 @@ namespace Oeltima\SimpleQueue\Contract;
 
 /**
  * Typed payload for a job scheduled for another attempt event.
+ *
+ * @phpstan-type PayloadShape array{
+ *     job_id: int,
+ *     type: string,
+ *     duration_ms: float,
+ *     attempts: int,
+ *     error: string
+ * }
  */
 final readonly class JobRetriedEvent extends AbstractWorkerEvent
 {
@@ -18,15 +26,15 @@ final readonly class JobRetriedEvent extends AbstractWorkerEvent
     public readonly string $error;
 
     /**
-     * @param array<string, mixed> $data Event payload
+     * @param PayloadShape $data Validated event payload
      */
     private function __construct(array $data)
     {
-        $this->jobId = self::integer($data, 'job_id');
-        $this->type = self::string($data, 'type');
-        $this->durationMs = self::decimal($data, 'duration_ms');
-        $this->attempts = self::integer($data, 'attempts');
-        $this->error = self::string($data, 'error');
+        $this->jobId = $data['job_id'];
+        $this->type = $data['type'];
+        $this->durationMs = $data['duration_ms'];
+        $this->attempts = $data['attempts'];
+        $this->error = $data['error'];
     }
 
     /**
@@ -35,7 +43,16 @@ final readonly class JobRetriedEvent extends AbstractWorkerEvent
      */
     public static function fromArray(array $data): static
     {
-        return new static($data);
+        /** @var PayloadShape $validated */
+        $validated = [
+            'job_id' => self::integer($data, 'job_id'),
+            'type' => self::string($data, 'type'),
+            'duration_ms' => self::decimal($data, 'duration_ms'),
+            'attempts' => self::integer($data, 'attempts'),
+            'error' => self::string($data, 'error'),
+        ];
+
+        return new static($validated);
     }
 
     /**
