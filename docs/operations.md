@@ -25,6 +25,40 @@ non-zero exits and retain stdout/stderr for diagnosis. Exit code `0` means a
 normal stop or configured limit, `1` means an unhandled worker error, and `2`
 means the singleton lock was unavailable.
 
+## Typed worker events
+
+The worker builds a typed readonly value object for every lifecycle event before
+invoking the configured listener. The existing listener remains compatible and
+receives the same `(string $event, array $data)` arguments; the worker converts
+the typed object through `getName()` and `toArray()` at that boundary. Listener
+failures are logged and do not change the job transition.
+
+The stable event catalog and payload keys are:
+
+| Event | Payload keys |
+|---|---|
+| `claimed` | `job_id`, `type`, `acquire_latency_ms` |
+| `completed` | `job_id`, `type`, `duration_ms` |
+| `retried` | `job_id`, `type`, `duration_ms`, `attempts`, `error` |
+| `failed` | `job_id`, `type`, `duration_ms`, `error` |
+| `lost_ownership` | `job_id`, `type`, `context` |
+| `infrastructure_failure` | `job_id`, `context` |
+| `infra_error` | `error`, `exception_class` |
+| `backoff` | `error`, `backoff_seconds` |
+
+The corresponding value objects are available under
+`Oeltima\SimpleQueue\Contract`, including `JobClaimedEvent`,
+`JobCompletedEvent`, `JobRetriedEvent`, `JobFailedEvent`,
+`JobLostOwnershipEvent`, `InfrastructureFailureEvent`,
+`InfrastructureErrorEvent`, and `WorkerBackoffEvent`. Each object exposes
+readonly typed properties and `fromArray()` / `toArray()` factories. Event
+payloads contain error messages and exception class names only; they never
+include a `Throwable` instance or stack trace.
+
+PSR-14 is intentionally not a runtime dependency. The typed event boundary and
+existing callable listener provide the stable framework-agnostic integration
+surface without requiring an event dispatcher package.
+
 ## Scheduled workloads
 
 A scheduled job is stored with an absolute UTC `available_at` and, on

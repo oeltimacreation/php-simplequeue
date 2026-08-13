@@ -1,7 +1,7 @@
 # Internal type-safety boundaries
 
 This document records the primitive, array-shape, and type-safety inventory for
-v1.8.0. Public scalar signatures and serialized job data remain compatible;
+v1.9.0. Public scalar signatures and serialized job data remain compatible;
 normalization happens after values enter the library.
 
 ## PHP 8.2+ Audit & Invariants
@@ -26,7 +26,7 @@ normalization happens after values enter the library.
 | Storage rows | PDO and in-memory storage | `JobDataHydrator` and `StoredJobRow` | PDO/object rows cross one hydration boundary. In-memory rows have a complete PHPStan shape with typed status, counters, timestamps, ownership, progress, and serialized values. |
 | Redis command results | Predis boundary | `RedisResponseNormalizer` | Scalar, null, malformed, and integer responses are normalized before queue orchestration uses them. |
 | Timestamps | Clock and persistence boundaries | UTC database strings and integer backend scores | Retained because their format and comparison semantics are part of the storage and Redis protocols. `ClockInterface` remains the source of time. |
-| Worker event payloads | Public event-listener callback | Documented associative arrays | Retained because listeners consume the array contract. Event names determine the payload shape; converting them to internal objects would create an unnecessary public conversion layer. |
+| Worker event payloads | Worker emitter and public event-listener callback | `WorkerEventInterface` plus typed readonly event value objects | Typed objects enforce each event's fields internally; the listener remains the documented `(string, array)` contract through `getName()` and `toArray()`. |
 
 ## Trusted transitions
 
@@ -47,11 +47,13 @@ storage methods still return booleans, and public queue/storage methods still
 accept integers and strings, so custom implementations and named arguments are
 unchanged.
 
-## Event payload shapes
+## Typed event boundary
 
-The listener remains `callable(string, array<string, mixed>): void`. These are
-the stable fields emitted by the worker; contextual events may omit a job ID
-when failure occurs before a claim exists.
+`WorkerEventInterface` defines `fromArray()`, `getName()`, and `toArray()` for
+the typed event value objects. The listener remains
+`callable(string, array<string, mixed>): void`; the worker performs the
+conversion only at that compatibility boundary. Contextual events may omit a
+job ID when failure occurs before a claim exists.
 
 | Event | Fields |
 |---|---|
@@ -61,8 +63,18 @@ when failure occurs before a claim exists.
 | `failed` | `job_id`, `type`, `duration_ms`, `error` |
 | `lost_ownership` | `job_id`, `type`, `context` |
 | `infrastructure_failure` | `job_id`, `context` |
-| `infra_error` | `error`, `exception` |
+| `infra_error` | `error`, `exception_class` |
 | `backoff` | `error`, `backoff_seconds` |
+
+The eight value objects are `JobClaimedEvent`, `JobCompletedEvent`,
+`JobRetriedEvent`, `JobFailedEvent`, `JobLostOwnershipEvent`,
+`InfrastructureFailureEvent`, `InfrastructureErrorEvent`, and
+`WorkerBackoffEvent`. Their payload factories validate required field types.
+Event payloads retain error messages and exception class names but never carry
+`Throwable` instances or stack traces. PSR-14 was evaluated for this boundary
+and intentionally not added: the callable listener is sufficient for the
+framework-agnostic API and a dispatcher package would add runtime dependency
+surface without a required use case.
 
 ## Compatibility constraints
 
