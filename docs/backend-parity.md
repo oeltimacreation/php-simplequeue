@@ -44,9 +44,10 @@ while sharing only connection and lifecycle setup.
 
 ## Deduplication and parity results
 
-The pre-consolidation starting inventory contained 128 production duplicated windows and
-1,424 test duplicated windows. After this consolidation, the same analyzer
-reports 37 production duplicated windows and 1,107 test duplicated windows.
+The current v1.9.0 candidate inventory reports **0 production duplicated
+windows** and 1,059 test duplicated windows. For historical comparison, the
+earlier v1.8 consolidation started at 128 production and 1,424 test windows,
+then reported 37 production and 1,107 test windows before the current baseline.
 No quality-ratchet exception, public API change, extra backend command, or
 weakened lease predicate was introduced. Middleware adds no storage or driver
 operations, and administrative re-queue is bounded to one queue notification per

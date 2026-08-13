@@ -6,7 +6,7 @@ normalization happens after values enter the library.
 
 ## PHP 8.2+ Audit & Invariants
 
-- **Strict Types**: `declare(strict_types=1)` is verified across all 75 production source files and all 33 unit/integration test files.
+- **Strict Types**: `declare(strict_types=1)` is verified across all 80 production source files and all 37 unit/integration test files.
 - **Readonly Classes**: Immutable value objects (`DelayedBatch`, `IdempotentJobResult`, `WorkerOptions`, `ReconcileOptions`, `ReconcileResult`, `PositiveJobId`, `WorkerPolicy`, `ClaimedJob`, `JobData`) utilize `final readonly class` or `readonly` properties.
 - **Language Compatibility**: Strictly targets PHP 8.2+ features (backed enums, standalone types, `readonly` classes). No PHP 8.3+ features (such as `#[Override]` or typed class constants) are used.
 
@@ -14,7 +14,7 @@ normalization happens after values enter the library.
 
 | Value or shape | Boundary | Internal representation | Decision |
 |---|---|---|---|
-| Job definitions | Dispatcher & storage `createJobs()` | `JobDefinitionShape` | Typed array shape `@phpstan-type JobDefinitionShape` enforcing `type`, `payload`, and optional `queue`, `maxAttempts`, `requestId`, `availableAt`. |
+| Job definitions | Dispatcher & storage `createJobs()` | `JobDefinitionShape` | Typed array shape `@phpstan-type JobDefinitionShape` enforcing `type`, `payload`, and optional `queue`, `maxAttempts`, `requestId`, and `availableAt` as `int|DateTimeInterface|null`. |
 | Storage rows | PDO & in-memory hydration | `StorageRowShape` | Typed array shape `@phpstan-type StorageRowShape` in `JobDataHydrator` mapping database columns and types. |
 | Positive job IDs | Dispatcher and queue-driver scalar arguments | `PositiveJobId` | Centralizes the `> 0` invariant while preserving each public error message. |
 | Queue names | Public dispatcher, worker, and driver arguments | `string` | Remains scalar because v1.8 cannot trim or rewrite backend key names without changing behavior. Existing dispatch validation rejects empty names. |

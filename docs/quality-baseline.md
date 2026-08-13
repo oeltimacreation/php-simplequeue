@@ -1,6 +1,6 @@
-# Quality Baseline & Inventory (v1.8.0)
+# Quality Baseline & Inventory (v1.9.0)
 
-This report records the quality baseline and inventory for **v1.8.0**. The machine-readable baseline is stored in [`quality/quality-baseline.json`](../quality/quality-baseline.json).
+This report records the quality baseline and inventory for the **v1.9.0** candidate. The machine-readable baseline is stored in [`quality/quality-baseline.json`](../quality/quality-baseline.json).
 
 ## Reproduce the inventory
 
@@ -15,7 +15,7 @@ composer quality-report
 composer quality-ratchet
 ```
 
-## v1.9.0 candidate inventory
+## v1.9.0 Candidate Inventory
 
 The Stage 4–5 re-baseline was written after the middleware, typed-event,
 failed-job administration, benchmark, contract, fault-injection, and soak
@@ -23,13 +23,13 @@ coverage landed:
 
 | Scope | PHP files | Classes | Methods | Physical lines | Duplicated windows |
 |---|---:|---:|---:|---:|---:|
-| Production | 80 | 80 | 342 | 7,408 | **0** |
-| Tests | 36 | 63 | 444 | 7,878 | 1,059 |
+| Production | 80 | 80 | 343 | 7,424 | **0** |
+| Tests | 37 | 64 | 447 | 7,881 | 1,059 |
 
 All production methods remain within the 15/15/3 complexity and 100-line
-ratchet targets. No existing production class grew beyond its prior baseline;
-the new production surface is represented by additive contracts, value objects,
-administration helpers, and middleware/event boundaries.
+ratchet targets, and production duplication remains at zero. The refreshed
+baseline records the small internal typed-event and queue-helper changes;
+no ratchet exception was added.
 
 `quality-report` scans every PHP file below `src/` and `tests/`. The analyzer
 uses these stable definitions:
@@ -51,14 +51,14 @@ exceeds the target, or a new duplicated window appears. An intentional
 exception must be narrowly recorded with its metric and reason in
 `quality/ratchet-exceptions.json`; the checker prints every applied exception.
 
-## v1.8.0 Inventory Summary
+## Historical v1.8.0 Inventory Summary
 
 | Scope | PHP files | Classes | Methods | Physical lines | Duplicated windows |
 |---|---:|---:|---:|---:|---:|
 | Production | 57 | 57 | 282 | 6,156 | **0** |
 | Tests | 29 | 44 | 398 | 6,830 | 1,014 |
 
-The production deduplication program in v1.8.0 reduced production duplicate windows from 37 down to **0**, and test deduplication reduced duplicate windows from 1,424 down to 1,014 while extracting shared test fixtures (`JobDataFactory`, `ClaimedJobFactory`, `WorkerHarness`).
+The production deduplication program in v1.8.0 reduced production duplicate windows from 37 down to **0**, and test deduplication reduced duplicate windows from 1,424 down to 1,014 while extracting shared test fixtures (`JobDataFactory`, `ClaimedJobFactory`, `WorkerHarness`). These figures are retained for historical comparison only.
 
 ### Method hotspots
 

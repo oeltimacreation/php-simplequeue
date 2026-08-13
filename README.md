@@ -80,7 +80,7 @@ $jobId = $dispatcher->dispatch(type: 'email.welcome', payload: ['email' => 'ada@
 $workerOptions = WorkerOptions::fromArray(['lock_file' => null]);
 $worker = new Worker(
     storage: $storage,
-    queueDriver: $queues,
+    queueManager: $queues,
     registry: $registry,
     queue: 'default',
     options: $workerOptions,
@@ -127,10 +127,10 @@ $jobId = $dispatcher->dispatch(
 | `JobDispatcher` | `dispatch()`, `dispatchAfter()`, `dispatchAt()`, `dispatchBatch()`, `dispatchIdempotent()`, `getStatus()` | Main entry point for enqueueing jobs and querying status. |
 | `Worker` | `run()`, `processOne()`, `withOptions()` | Worker loop executing jobs with signal handling and lease heartbeat. |
 | `JobMiddlewareRegistry` | `register()`, `all()`, `clear()` | Ordered worker middleware registration. |
-| `QueueManager` | `create()`, `redis()`, `database()`, `inMemory()` | Driver factory supporting auto-selection and driver resolution. |
-| `JobRegistry` | `register()`, `get()`, `has()` | Handler registry mapping job type strings to handler classes or callables. |
+| `QueueManager` | `create()`, `redis()`, `database()` | Driver factory supporting auto-selection and driver resolution. |
+| `JobRegistry` | `register()`, `get()`, `has()` | Handler registry mapping job type strings to `JobHandlerInterface` classes. |
 | `AdminManager` | `listFailed()`, `inspectFailed()`, `requeueFailed()`, `purgeFailed()` | Failed-job and dead-letter operations. |
-| `PdoJobStorage` | `createJobs()`, `claimNextAvailable()`, `complete()`, `fail()`, `retry()` | Durable database persistence implementing `JobStorageInterface`. |
+| `PdoJobStorage` | `createJobs()`, `claimNextAvailable()`, `markCompleted()`, `markFailed()`, `scheduleRetry()` | Durable database persistence implementing `JobStorageInterface`. |
 
 ## Documentation Index
 
@@ -160,4 +160,3 @@ composer cs-fix       # Auto-fix code style issues
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [LICENSE](LICENSE) for license details.
-

@@ -71,7 +71,7 @@ stateDiagram-v2
 SimpleQueue enforces **at-least-once delivery with optimistic claim fencing**:
 
 1. **Claiming**: When a worker dequeues a job ID, it issues a fenced claim to storage (`claimNextAvailable()` or `claimById()`). Storage assigns a `worker_id`, generates a fresh `lease_token`, sets `locked_at` to the current timestamp, and increments `attempts`.
-2. **Fenced Updates**: Every state update (`complete()`, `fail()`, `retry()`, `recordProgress()`) MUST pass the exact `ClaimedJob` token. If another worker reclaimed the job due to a lease expiration (e.g. network stall or worker crash), the original worker's update is rejected with an `OwnershipOutcome::Lost` / `lost_ownership` event.
+2. **Fenced Updates**: Every state update (`markCompleted()`, `markFailed()`, `scheduleRetry()`, `updateProgress()`) MUST pass the exact `ClaimedJob` token. If another worker reclaimed the job due to a lease expiration (e.g. network stall or worker crash), the original worker's update is rejected with an `OwnershipOutcome::Lost` / `lost_ownership` event.
 3. **Progress Heartbeat**: Long-running jobs update their lease by calling progress callbacks (`$progress($percent, $message)`), extending their active lease window.
 
 ---
@@ -120,8 +120,7 @@ Batch job creation in `JobStorageInterface::createJobs()` expects an array of ty
     'queue' => 'default',                                 // (string, optional) Queue name (default: 'default')
     'maxAttempts' => 3,                                   // (int, optional) Retry limit (default: 3)
     'requestId' => 'req_abc123',                          // (string|null, optional) Idempotency correlation key
-    'availableAt' => 1770000000,                          // (int|DateTimeInterface|string|null, optional) Scheduled timestamp
+    'availableAt' => 1770000000,                          // (int|DateTimeInterface|null, optional) Scheduled timestamp
 ]
 ```
-
 
