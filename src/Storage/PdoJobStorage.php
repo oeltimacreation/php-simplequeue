@@ -12,9 +12,11 @@ use Oeltima\SimpleQueue\Contract\JobStorageAdminInterface;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\IdempotentJobResult;
 use Oeltima\SimpleQueue\Contract\SupportsIdempotentJobCreation;
+use Oeltima\SimpleQueue\Contract\SupportsFailedJobAdministration;
 use Oeltima\SimpleQueue\Contract\SupportsPendingJobCursor;
 use Oeltima\SimpleQueue\Contract\SupportsQueueScopedStaleRecovery;
 use Oeltima\SimpleQueue\Internal\JobFilter;
+use Oeltima\SimpleQueue\Internal\PdoFailedJobAdministration;
 use Oeltima\SimpleQueue\Internal\JobStorageRules;
 use Oeltima\SimpleQueue\Internal\PdoClaimTransaction;
 use Oeltima\SimpleQueue\Internal\RetryDecision;
@@ -37,11 +39,13 @@ class PdoJobStorage implements
     JobStorageInterface,
     JobStorageAdminInterface,
     SupportsIdempotentJobCreation,
+    SupportsFailedJobAdministration,
     SupportsPendingJobCursor,
     SupportsQueueScopedStaleRecovery
 {
-    protected ?PDO $pdo = null;
+    use PdoFailedJobAdministration;
 
+    protected ?PDO $pdo = null;
     /** @var callable(): PDO|null Factory function to create PDO connection */
     protected $connectionFactory = null;
 
@@ -63,7 +67,6 @@ class PdoJobStorage implements
             $this->connectionFactory = $connection;
         }
     }
-
     /**
      * Get PDO connection, reconnecting if necessary.
      *
@@ -696,7 +699,6 @@ class PdoJobStorage implements
 
         return $stmt->rowCount();
     }
-
     protected function now(): string
     {
         return $this->clock()->now();

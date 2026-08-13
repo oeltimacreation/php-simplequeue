@@ -12,9 +12,11 @@ use Oeltima\SimpleQueue\Contract\JobStorageAdminInterface;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\IdempotentJobResult;
 use Oeltima\SimpleQueue\Contract\SupportsIdempotentJobCreation;
+use Oeltima\SimpleQueue\Contract\SupportsFailedJobAdministration;
 use Oeltima\SimpleQueue\Contract\SupportsPendingJobCursor;
 use Oeltima\SimpleQueue\Contract\SupportsQueueScopedStaleRecovery;
 use Oeltima\SimpleQueue\Internal\JobFilter;
+use Oeltima\SimpleQueue\Internal\InMemoryFailedJobAdministration;
 use Oeltima\SimpleQueue\Internal\JobStorageRules;
 use Oeltima\SimpleQueue\Internal\RetryDecision;
 use Oeltima\SimpleQueue\SystemClock;
@@ -32,12 +34,14 @@ class InMemoryJobStorage implements
     JobStorageInterface,
     JobStorageAdminInterface,
     SupportsIdempotentJobCreation,
+    SupportsFailedJobAdministration,
     SupportsPendingJobCursor,
     SupportsQueueScopedStaleRecovery
 {
+    use InMemoryFailedJobAdministration;
+
     /** @var array<int, StoredJobRow> */
     private array $jobs = [];
-
     private int $nextId = 1;
     private string $dateFormat = 'Y-m-d H:i:s';
 
@@ -45,7 +49,6 @@ class InMemoryJobStorage implements
         private readonly ClockInterface $clock = new SystemClock()
     ) {
     }
-
     /**
      * Create a new job record.
      *
@@ -489,7 +492,6 @@ class InMemoryJobStorage implements
 
         return $count;
     }
-
     /**
      * Get all jobs (for testing).
      *
