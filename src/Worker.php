@@ -6,6 +6,12 @@ namespace Oeltima\SimpleQueue;
 
 use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\ClaimedJob;
+use Oeltima\SimpleQueue\Contract\InfrastructureFailureEvent;
+use Oeltima\SimpleQueue\Contract\JobClaimedEvent;
+use Oeltima\SimpleQueue\Contract\JobCompletedEvent;
+use Oeltima\SimpleQueue\Contract\JobFailedEvent;
+use Oeltima\SimpleQueue\Contract\JobLostOwnershipEvent;
+use Oeltima\SimpleQueue\Contract\JobRetriedEvent;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
@@ -318,9 +324,117 @@ final class Worker
         }
 
         $latency = ($this->clock->monotonic() - $startTime) * 1000.0;
-        $this->eventEmitter->claimed($claim->job->id, $claim->job->type, $latency);
+        $this->emitClaimedEvent($claim, $latency);
 
         return $claim;
+    }
+
+    /**
+     * Emit a claimed event without constructing its payload on the hot path.
+     *
+     * @param ClaimedJob $claim Claimed job
+     * @param float $latency Claim acquisition latency in milliseconds
+     */
+    private function emitClaimedEvent(ClaimedJob $claim, float $latency): void
+    {
+        if (!$this->eventEmitter->isListening()) {
+            return;
+        }
+
+        $this->eventEmitter->emit(new JobClaimedEvent($claim->job->id, $claim->job->type, $latency));
+    }
+
+    /**
+     * Emit a completion event without constructing its payload on the hot path.
+     *
+     * @param ClaimedJob $claim Completed job
+     * @param float $durationMs Handler duration in milliseconds
+     */
+    private function emitCompletedEvent(ClaimedJob $claim, float $durationMs): void
+    {
+        if (!$this->eventEmitter->isListening()) {
+            return;
+        }
+
+        $this->eventEmitter->emit(new JobCompletedEvent($claim->job->id, $claim->job->type, $durationMs));
+    }
+
+    /**
+     * Emit an infrastructure failure event without constructing its payload on the hot path.
+     *
+     * @param ClaimedJob $claim Affected job
+     * @param string $operation Failed infrastructure operation
+     */
+    private function emitInfrastructureFailureEvent(ClaimedJob $claim, string $operation): void
+    {
+        if (!$this->eventEmitter->isListening()) {
+            return;
+        }
+
+        $this->eventEmitter->emit(new InfrastructureFailureEvent($claim->job->id, $operation));
+    }
+
+    /**
+     * Emit a retry event without constructing its payload on the hot path.
+     *
+     * @param ClaimedJob $claim Retried job
+     * @param float $durationMs Handler duration in milliseconds
+     * @param int $attempts Attempt number after the failure
+     * @param \Throwable $exception Failure being retried
+     */
+    private function emitRetriedEvent(
+        ClaimedJob $claim,
+        float $durationMs,
+        int $attempts,
+        \Throwable $exception
+    ): void {
+        if (!$this->eventEmitter->isListening()) {
+            return;
+        }
+
+        $this->eventEmitter->emit(JobRetriedEvent::fromArray([
+            'job_id' => $claim->job->id,
+            'type' => $claim->job->type,
+            'duration_ms' => $durationMs,
+            'attempts' => $attempts,
+            'error' => $exception->getMessage(),
+        ]));
+    }
+
+    /**
+     * Emit a permanent-failure event without constructing its payload on the hot path.
+     *
+     * @param ClaimedJob $claim Failed job
+     * @param float $durationMs Handler duration in milliseconds
+     * @param \Throwable $exception Failure that exhausted retries
+     */
+    private function emitFailedEvent(ClaimedJob $claim, float $durationMs, \Throwable $exception): void
+    {
+        if (!$this->eventEmitter->isListening()) {
+            return;
+        }
+
+        $this->eventEmitter->emit(new JobFailedEvent(
+            $claim->job->id,
+            $claim->job->type,
+            $durationMs,
+            $exception->getMessage()
+        ));
+    }
+
+    /**
+     * Emit a lost-ownership event without constructing its payload on the hot path.
+     *
+     * @param ClaimedJob $claim Job that lost ownership
+     * @param string $context Lifecycle operation that lost ownership
+     */
+    private function emitLostOwnershipEvent(ClaimedJob $claim, string $context): void
+    {
+        if (!$this->eventEmitter->isListening()) {
+            return;
+        }
+
+        $this->eventEmitter->emit(new JobLostOwnershipEvent($claim->job->id, $claim->job->type, $context));
     }
 
     private function handlePostPopClaimFailure(
@@ -444,7 +558,7 @@ final class Worker
         $job = $claim->job;
         if ($this->policy->ownershipOutcome($completed)->isLost()) {
             $this->logger->warning('Lost job ownership before completion ack', ['job_id' => $job->id]);
-            $this->eventEmitter->lostOwnership($job->id, $job->type, 'complete');
+            $this->emitLostOwnershipEvent($claim, 'complete');
             return;
         }
 
@@ -453,7 +567,7 @@ final class Worker
             'type' => $job->type,
             'duration_seconds' => round($durationMs / 1000.0, 3),
         ]);
-        $this->eventEmitter->completed($job->id, $job->type, $durationMs);
+        $this->emitCompletedEvent($claim, $durationMs);
 
         try {
             $driver->ack($this->queue, $job->id);
@@ -508,7 +622,7 @@ final class Worker
                     'job_id' => $claim->job->id,
                     'error' => $exception->getMessage(),
                 ]);
-                $this->eventEmitter->infrastructureFailure($claim->job->id, 'processing_heartbeat');
+                $this->emitInfrastructureFailureEvent($claim, 'processing_heartbeat');
             }
         };
 
@@ -562,18 +676,12 @@ final class Worker
         $delay = $this->policy->retryDelay($attempts);
         $scheduled = $this->scheduleRetry($claim, $delay, $exception);
         if ($this->policy->ownershipOutcome($scheduled)->isLost()) {
-            $this->eventEmitter->lostOwnership($claim->job->id, $claim->job->type, 'retry');
+            $this->emitLostOwnershipEvent($claim, 'retry');
             return;
         }
 
         $driver->nack($this->queue, $claim->job->id, $delay);
-        $this->eventEmitter->retried(
-            $claim->job->id,
-            $claim->job->type,
-            $durationMs,
-            $attempts,
-            $exception->getMessage()
-        );
+        $this->emitRetriedEvent($claim, $durationMs, $attempts, $exception);
     }
 
     private function failJobPermanently(
@@ -589,17 +697,12 @@ final class Worker
         );
         if ($this->policy->ownershipOutcome($marked)->isLost()) {
             $this->logger->warning('Lost job ownership before marking failed', ['job_id' => $claim->job->id]);
-            $this->eventEmitter->lostOwnership($claim->job->id, $claim->job->type, 'fail');
+            $this->emitLostOwnershipEvent($claim, 'fail');
             return;
         }
 
         $driver->ack($this->queue, $claim->job->id);
-        $this->eventEmitter->failed(
-            $claim->job->id,
-            $claim->job->type,
-            $durationMs,
-            $exception->getMessage()
-        );
+        $this->emitFailedEvent($claim, $durationMs, $exception);
     }
 
     private function scheduleRetry(ClaimedJob $claim, int $delay, \Throwable $e): bool

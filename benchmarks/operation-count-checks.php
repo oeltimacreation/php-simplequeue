@@ -29,10 +29,7 @@ function assertHotLoopCounters(array $results): void
     assertDatabaseClaimPath($byName);
     assertDatabaseWorkerPaths($byName);
     assertReconciliationPath($byName);
-    assertNormalWorkerPath($byName);
-    assertMiddlewarePath($byName);
-    assertListenerWorkerPath($byName);
-    assertRetryWorkerPath($byName);
+    assertWorkerPaths($byName);
     assertFailedJobRequeuePath($byName);
     if (!isset($byName['redis.dispatch_scheduled_single'])) {
         return;
@@ -55,85 +52,64 @@ function assertDatabaseDispatchPaths(array $byName): void
 {
     foreach (['sqlite.dispatch_single', 'sqlite.dispatch_scheduled_single'] as $name) {
         $single = requireScenario($byName, $name);
-        if ((int) $single['median_db_queries'] !== operationCount($single)) {
-            throw new RuntimeException("{$name} statement count changed");
-        }
+        assertMetricEquals(
+            $single,
+            'median_db_queries',
+            operationCount($single),
+            "{$name} statement count changed"
+        );
     }
 
     foreach (['sqlite.dispatch_batch', 'sqlite.dispatch_scheduled_batch'] as $name) {
         $batch = requireScenario($byName, $name);
-        if ((int) $batch['median_db_queries'] !== 1) {
-            throw new RuntimeException("{$name} is no longer one database statement");
-        }
+        assertMetricEquals(
+            $batch,
+            'median_db_queries',
+            1,
+            "{$name} is no longer one database statement"
+        );
     }
 }
 
 /**
- * The normal worker path is dequeue plus ACK, without event delivery work.
+ * Worker paths keep queue operations bounded and only deliver configured events.
  *
  * @param array<string, array<string, mixed>> $byName Indexed benchmark results
  */
-function assertNormalWorkerPath(array $byName): void
+function assertWorkerPaths(array $byName): void
 {
-    $worker = requireScenario($byName, 'worker.execute_ack');
+    assertWorkerPath($byName, 'worker.execute_ack', 0, true);
+    assertWorkerPath($byName, 'worker.middleware_execute_ack', 0, false);
+    assertWorkerPath($byName, 'worker.event_listener_execute_ack', 2, true);
+    assertWorkerPath($byName, 'worker.retry', 0, true);
+}
+
+/**
+ * Assert queue and event metrics for one worker scenario.
+ *
+ * @param array<string, array<string, mixed>> $byName Indexed benchmark results
+ * @param string $name Worker scenario name
+ * @param int $eventMultiplier Expected event deliveries per operation
+ * @param bool $exactQueueOperations Whether queue operations must equal the bound
+ */
+function assertWorkerPath(array $byName, string $name, int $eventMultiplier, bool $exactQueueOperations): void
+{
+    $worker = requireScenario($byName, $name);
     $operations = operationCount($worker);
-    if ((int) $worker['median_driver_roundtrips'] !== 2 * $operations) {
-        throw new RuntimeException('worker.execute_ack queue operations changed');
-    }
-    if ((int) $worker['median_event_deliveries'] !== 0) {
-        throw new RuntimeException('worker.execute_ack delivered unconfigured events');
-    }
-}
+    $queueBound = 2 * $operations;
 
-/**
- * Middleware is a worker-layer wrapper and must not add queue operations.
- *
- * @param array<string, array<string, mixed>> $byName Indexed benchmark results
- */
-function assertMiddlewarePath(array $byName): void
-{
-    $middleware = requireScenario($byName, 'worker.middleware_execute_ack');
-    $operations = operationCount($middleware);
-    if ((int) $middleware['median_driver_roundtrips'] > 2 * $operations) {
-        throw new RuntimeException('worker.middleware_execute_ack adds driver roundtrips');
+    if ($exactQueueOperations) {
+        assertMetricEquals($worker, 'median_driver_roundtrips', $queueBound, "{$name} queue operations changed");
+    } else {
+        assertMetricAtMost($worker, 'median_driver_roundtrips', $queueBound, "{$name} adds driver roundtrips");
     }
-    if ((int) $middleware['median_event_deliveries'] !== 0) {
-        throw new RuntimeException('worker.middleware_execute_ack delivered unconfigured events');
-    }
-}
 
-/**
- * A configured listener receives the claimed and completed event for each job.
- *
- * @param array<string, array<string, mixed>> $byName Indexed benchmark results
- */
-function assertListenerWorkerPath(array $byName): void
-{
-    $worker = requireScenario($byName, 'worker.event_listener_execute_ack');
-    $operations = operationCount($worker);
-    if ((int) $worker['median_driver_roundtrips'] !== 2 * $operations) {
-        throw new RuntimeException('worker.event_listener_execute_ack queue operations changed');
-    }
-    if ((int) $worker['median_event_deliveries'] !== 2 * $operations) {
-        throw new RuntimeException('worker.event_listener_execute_ack event delivery count changed');
-    }
-}
-
-/**
- * Retry processing remains dequeue plus NACK and has no listener work by default.
- *
- * @param array<string, array<string, mixed>> $byName Indexed benchmark results
- */
-function assertRetryWorkerPath(array $byName): void
-{
-    $worker = requireScenario($byName, 'worker.retry');
-    $operations = operationCount($worker);
-    if ((int) $worker['median_driver_roundtrips'] !== 2 * $operations) {
-        throw new RuntimeException('worker.retry queue operations changed');
-    }
-    if ((int) $worker['median_event_deliveries'] !== 0) {
-        throw new RuntimeException('worker.retry delivered unconfigured events');
-    }
+    assertMetricEquals(
+        $worker,
+        'median_event_deliveries',
+        $eventMultiplier * $operations,
+        "{$name} event delivery count changed"
+    );
 }
 
 /**
@@ -144,9 +120,12 @@ function assertRetryWorkerPath(array $byName): void
 function assertFailedJobRequeuePath(array $byName): void
 {
     $requeue = requireScenario($byName, 'admin.requeue_failed');
-    if ((int) $requeue['median_driver_roundtrips'] > operationCount($requeue)) {
-        throw new RuntimeException('admin.requeue_failed exceeds one notification per job');
-    }
+    assertMetricAtMost(
+        $requeue,
+        'median_driver_roundtrips',
+        operationCount($requeue),
+        'admin.requeue_failed exceeds one notification per job'
+    );
 }
 
 /**
@@ -188,6 +167,36 @@ function operationCount(array $result): int
 }
 
 /**
+ * Assert that a measured metric has the expected value.
+ *
+ * @param array<string, mixed> $result Scenario result
+ * @param string $metric Metric name
+ * @param int $expected Expected integer value
+ * @param string $message Failure message
+ */
+function assertMetricEquals(array $result, string $metric, int $expected, string $message): void
+{
+    if ((int) $result[$metric] !== $expected) {
+        throw new RuntimeException($message);
+    }
+}
+
+/**
+ * Assert that a measured metric does not exceed its bound.
+ *
+ * @param array<string, mixed> $result Scenario result
+ * @param string $metric Metric name
+ * @param int $maximum Maximum allowed integer value
+ * @param string $message Failure message
+ */
+function assertMetricAtMost(array $result, string $metric, int $maximum, string $message): void
+{
+    if ((int) $result[$metric] > $maximum) {
+        throw new RuntimeException($message);
+    }
+}
+
+/**
  * Database claim path is unchanged: one transaction per claim, bounded statements.
  *
  * @param array<string, array<string, mixed>> $byName Indexed scenario results
@@ -196,12 +205,18 @@ function assertDatabaseClaimPath(array $byName): void
 {
     $claim = requireScenario($byName, 'sqlite.claim');
     $operations = operationCount($claim);
-    if ((int) $claim['median_db_transactions'] > $operations) {
-        throw new RuntimeException('sqlite.claim transaction count exceeds one per claim');
-    }
-    if ((int) $claim['median_db_queries'] > 4 * $operations) {
-        throw new RuntimeException('sqlite.claim statement count exceeds four per claim');
-    }
+    assertMetricAtMost(
+        $claim,
+        'median_db_transactions',
+        $operations,
+        'sqlite.claim transaction count exceeds one per claim'
+    );
+    assertMetricAtMost(
+        $claim,
+        'median_db_queries',
+        4 * $operations,
+        'sqlite.claim statement count exceeds four per claim'
+    );
 }
 
 /**
@@ -214,12 +229,8 @@ function assertDatabaseWorkerPaths(array $byName): void
     foreach (['worker.execute_ack', 'worker.event_listener_execute_ack', 'worker.retry'] as $name) {
         $worker = requireScenario($byName, $name);
         $operations = operationCount($worker);
-        if ((int) $worker['median_db_transactions'] !== $operations) {
-            throw new RuntimeException("{$name} transaction count changed");
-        }
-        if ((int) $worker['median_db_queries'] !== 4 * $operations) {
-            throw new RuntimeException("{$name} statement count changed");
-        }
+        assertMetricEquals($worker, 'median_db_transactions', $operations, "{$name} transaction count changed");
+        assertMetricEquals($worker, 'median_db_queries', 4 * $operations, "{$name} statement count changed");
     }
 }
 
@@ -231,12 +242,8 @@ function assertDatabaseWorkerPaths(array $byName): void
 function assertReconciliationPath(array $byName): void
 {
     $reconcile = requireScenario($byName, 'sqlite.reconcile');
-    if ((int) $reconcile['median_db_queries'] > 1) {
-        throw new RuntimeException('sqlite.reconcile query count exceeded one page');
-    }
-    if ((int) $reconcile['median_db_transactions'] !== 0) {
-        throw new RuntimeException('sqlite.reconcile unexpectedly opened a transaction');
-    }
+    assertMetricAtMost($reconcile, 'median_db_queries', 1, 'sqlite.reconcile query count exceeded one page');
+    assertMetricEquals($reconcile, 'median_db_transactions', 0, 'sqlite.reconcile unexpectedly opened a transaction');
 }
 
 /**
@@ -247,9 +254,12 @@ function assertReconciliationPath(array $byName): void
 function assertScheduledSingleDispatch(array $byName): void
 {
     $single = requireScenario($byName, 'redis.dispatch_scheduled_single');
-    if ((int) $single['median_redis_roundtrips'] > operationCount($single)) {
-        throw new RuntimeException('redis.dispatch_scheduled_single exceeds one roundtrip per job');
-    }
+    assertMetricAtMost(
+        $single,
+        'median_redis_roundtrips',
+        operationCount($single),
+        'redis.dispatch_scheduled_single exceeds one roundtrip per job'
+    );
 }
 
 /**
@@ -260,9 +270,7 @@ function assertScheduledSingleDispatch(array $byName): void
 function assertScheduledBatchDispatch(array $byName): void
 {
     $batch = requireScenario($byName, 'redis.dispatch_scheduled_batch');
-    if ((int) $batch['median_redis_roundtrips'] > 1) {
-        throw new RuntimeException('redis.dispatch_scheduled_batch exceeds one roundtrip');
-    }
+    assertMetricAtMost($batch, 'median_redis_roundtrips', 1, 'redis.dispatch_scheduled_batch exceeds one roundtrip');
 }
 
 /**
@@ -273,9 +281,12 @@ function assertScheduledBatchDispatch(array $byName): void
 function assertDelayedPromotion(array $byName): void
 {
     $promote = requireScenario($byName, 'redis.promote_delayed');
-    if ((int) $promote['median_redis_roundtrips'] > 1) {
-        throw new RuntimeException('redis.promote_delayed exceeds one bounded Lua roundtrip');
-    }
+    assertMetricAtMost(
+        $promote,
+        'median_redis_roundtrips',
+        1,
+        'redis.promote_delayed exceeds one bounded Lua roundtrip'
+    );
 }
 
 /**
@@ -286,12 +297,19 @@ function assertDelayedPromotion(array $byName): void
 function assertDequeueAck(array $byName): void
 {
     $dequeueAck = requireScenario($byName, 'redis.dequeue_ack');
-    if ((int) $dequeueAck['median_redis_roundtrips'] > 2 * operationCount($dequeueAck) + 1) {
-        throw new RuntimeException('redis.dequeue_ack roundtrips amplified per job');
-    }
-    if ((int) $dequeueAck['median_redis_commands'] > 3 * operationCount($dequeueAck) + 1) {
-        throw new RuntimeException('redis.dequeue_ack command count amplified per job');
-    }
+    $operations = operationCount($dequeueAck);
+    assertMetricAtMost(
+        $dequeueAck,
+        'median_redis_roundtrips',
+        2 * $operations + 1,
+        'redis.dequeue_ack roundtrips amplified per job'
+    );
+    assertMetricAtMost(
+        $dequeueAck,
+        'median_redis_commands',
+        3 * $operations + 1,
+        'redis.dequeue_ack command count amplified per job'
+    );
 }
 
 /**
@@ -302,9 +320,8 @@ function assertDequeueAck(array $byName): void
 function assertRedisBatchDispatch(array $byName): void
 {
     $batch = requireScenario($byName, 'redis.dispatch_batch');
-    if ((int) $batch['median_redis_commands'] !== 1 || (int) $batch['median_redis_roundtrips'] !== 1) {
-        throw new RuntimeException('redis.dispatch_batch is no longer a single command');
-    }
+    assertMetricEquals($batch, 'median_redis_commands', 1, 'redis.dispatch_batch is no longer a single command');
+    assertMetricEquals($batch, 'median_redis_roundtrips', 1, 'redis.dispatch_batch is no longer one roundtrip');
 }
 
 /**
@@ -316,12 +333,8 @@ function assertRedisRetry(array $byName): void
 {
     $retry = requireScenario($byName, 'redis.retry');
     $operations = operationCount($retry);
-    if ((int) $retry['median_redis_roundtrips'] !== 2 * $operations) {
-        throw new RuntimeException('redis.retry roundtrip count changed');
-    }
-    if ((int) $retry['median_redis_commands'] !== 4 * $operations) {
-        throw new RuntimeException('redis.retry command count changed');
-    }
+    assertMetricEquals($retry, 'median_redis_roundtrips', 2 * $operations, 'redis.retry roundtrip count changed');
+    assertMetricEquals($retry, 'median_redis_commands', 4 * $operations, 'redis.retry command count changed');
 }
 
 /**
@@ -333,10 +346,16 @@ function assertRedisRepair(array $byName): void
 {
     $repair = requireScenario($byName, 'redis.repair_unscored');
     $operations = operationCount($repair);
-    if ((int) $repair['median_redis_roundtrips'] > 4) {
-        throw new RuntimeException('redis.repair_unscored roundtrips exceeded its bound');
-    }
-    if ((int) $repair['median_redis_commands'] > 2 * $operations + 2) {
-        throw new RuntimeException('redis.repair_unscored command count amplified');
-    }
+    assertMetricAtMost(
+        $repair,
+        'median_redis_roundtrips',
+        4,
+        'redis.repair_unscored roundtrips exceeded its bound'
+    );
+    assertMetricAtMost(
+        $repair,
+        'median_redis_commands',
+        2 * $operations + 2,
+        'redis.repair_unscored command count amplified'
+    );
 }

@@ -4,12 +4,6 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue\Internal;
 
-use Oeltima\SimpleQueue\Contract\InfrastructureFailureEvent;
-use Oeltima\SimpleQueue\Contract\JobClaimedEvent;
-use Oeltima\SimpleQueue\Contract\JobCompletedEvent;
-use Oeltima\SimpleQueue\Contract\JobFailedEvent;
-use Oeltima\SimpleQueue\Contract\JobLostOwnershipEvent;
-use Oeltima\SimpleQueue\Contract\JobRetriedEvent;
 use Oeltima\SimpleQueue\Contract\WorkerEventInterface;
 use Psr\Log\LoggerInterface;
 
@@ -47,6 +41,14 @@ final class WorkerEventEmitter
     }
 
     /**
+     * Determine whether lifecycle events have a configured listener.
+     */
+    public function isListening(): bool
+    {
+        return $this->listener !== null;
+    }
+
+    /**
      * Deliver an already-created typed event.
      *
      * @param WorkerEventInterface $event Typed worker event
@@ -65,109 +67,5 @@ final class WorkerEventEmitter
                 'error' => $listenerError->getMessage()
             ]);
         }
-    }
-
-    /**
-     * Emit a claimed event when a listener is configured.
-     *
-     * @param int $jobId Claimed job identifier
-     * @param string $type Claimed job type
-     * @param float $latency Acquisition latency in milliseconds
-     */
-    public function claimed(int $jobId, string $type, float $latency): void
-    {
-        if ($this->listener === null) {
-            return;
-        }
-
-        $this->emit(new JobClaimedEvent($jobId, $type, $latency));
-    }
-
-    /**
-     * Emit a completed event when a listener is configured.
-     *
-     * @param int $jobId Completed job identifier
-     * @param string $type Completed job type
-     * @param float $durationMs Handler duration in milliseconds
-     */
-    public function completed(int $jobId, string $type, float $durationMs): void
-    {
-        if ($this->listener === null) {
-            return;
-        }
-
-        $this->emit(new JobCompletedEvent($jobId, $type, $durationMs));
-    }
-
-    /**
-     * Emit a processing-heartbeat infrastructure event when configured.
-     *
-     * @param int $jobId Affected job identifier
-     * @param string $operation Failed infrastructure operation
-     */
-    public function infrastructureFailure(int $jobId, string $operation): void
-    {
-        if ($this->listener === null) {
-            return;
-        }
-
-        $this->emit(new InfrastructureFailureEvent($jobId, $operation));
-    }
-
-    /**
-     * Emit a retry event when a listener is configured.
-     *
-     * @param int $jobId Retried job identifier
-     * @param string $type Retried job type
-     * @param float $durationMs Handler duration in milliseconds
-     * @param int $attempts Attempt number after the failure
-     * @param string $error Failure message
-     */
-    public function retried(int $jobId, string $type, float $durationMs, int $attempts, string $error): void
-    {
-        if ($this->listener === null) {
-            return;
-        }
-
-        $this->emit(JobRetriedEvent::fromArray([
-            'job_id' => $jobId,
-            'type' => $type,
-            'duration_ms' => $durationMs,
-            'attempts' => $attempts,
-            'error' => $error,
-        ]));
-    }
-
-    /**
-     * Emit a permanent-failure event when a listener is configured.
-     *
-     * @param int $jobId Failed job identifier
-     * @param string $type Failed job type
-     * @param float $durationMs Handler duration in milliseconds
-     * @param string $error Failure message
-     */
-    public function failed(int $jobId, string $type, float $durationMs, string $error): void
-    {
-        if ($this->listener === null) {
-            return;
-        }
-
-        $this->emit(new JobFailedEvent($jobId, $type, $durationMs, $error));
-    }
-
-    /**
-     * Emit a lost-ownership event when a listener is configured.
-     *
-     * @param int $jobId Lost job identifier
-     * @param string $type Lost job type
-     * @param string $context Lifecycle operation that lost ownership
-     */
-    public function lostOwnership(int $jobId, string $type, string $context): void
-    {
-        if ($this->listener === null) {
-            return;
-        }
-
-        $this->emit(new JobLostOwnershipEvent($jobId, $type, $context));
     }
 }
