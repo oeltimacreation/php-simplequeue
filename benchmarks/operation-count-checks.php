@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * Stage 3 S4 — assert the hot-loop operation counters.
+ * Assert the hot-loop operation counters.
  *
  * These checks turn the "no hot-loop amplification" invariants into hard
  * failures instead of observations:

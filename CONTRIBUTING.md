@@ -39,7 +39,7 @@ composer check
 # Run unit and integration tests
 composer test
 
-# Run tests with HTML coverage report (outputs to coverage/html)
+# Run tests with explicit HTML coverage (also writes coverage/clover.xml)
 composer test-coverage
 
 # Run static analysis (PHPStan Level 9 with strict-rules)
@@ -65,7 +65,7 @@ composer benchmark
 
 ## Code Quality Ratchet System
 
-SimpleQueue uses an internal dependency-free code analyzer (`composer quality-ratchet`) based on `token_get_all()` to enforce complexity and duplicate-window limits.
+SimpleQueue uses an internal dependency-free code analyzer (`composer quality-ratchet`) based on `token_get_all()` to enforce complexity and duplicate-window limits. The ratchet command first runs small fixtures for complexity, nesting, class-size, and duplicate-window behavior, then checks the repository baseline.
 
 ### Quality Thresholds
 
@@ -171,4 +171,3 @@ final class CustomJobStorageTest extends JobStorageContractTest
 3. Use `final` classes by default unless explicitly designed for extension.
 4. Ensure all public methods have PHPDoc blocks specifying `@param` and `@return` types.
 5. Run `composer check` locally before submitting your pull request. PRs will not be merged unless all CI quality gates pass.
-

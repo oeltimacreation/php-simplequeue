@@ -42,3 +42,8 @@ blocking-dequeue notifications that are missing processing scores.
 Each sample records process CPU seconds when `getrusage()` is available and
 estimated Redis wire payload bytes for `EVAL`/`EVALSHA` script traffic, so CPU
 cost and script transport can be compared directly against a baseline run.
+
+The runner keeps one stable JSON shape for all scenarios. Shared counter
+normalization supplies the database, driver, Redis, and event fields, while
+`benchmarks/operation-count-checks.php` continues to fail a run when a hot-loop
+statement, roundtrip, or event-delivery budget changes.

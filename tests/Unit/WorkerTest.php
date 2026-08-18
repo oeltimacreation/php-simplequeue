@@ -304,7 +304,7 @@ class WorkerTest extends TestCase
             ->method('markFailed')
             ->with(
                 $this->callback(fn($claim) => $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 200),
-                $this->isType('string'),
+                $this->isString(),
                 $this->anything()
             )
             ->willReturn(true);
@@ -339,7 +339,7 @@ class WorkerTest extends TestCase
                 $this->callback(fn($claim) => $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 300),
                 1,
                 2,
-                $this->isType('string')
+                $this->isString()
             )
             ->willReturn(true);
 
@@ -377,7 +377,7 @@ class WorkerTest extends TestCase
                 $this->callback(fn($claim) => $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 400),
                 9,
                 300,
-                $this->isType('string')
+                $this->isString()
             )
             ->willReturn(true);
 

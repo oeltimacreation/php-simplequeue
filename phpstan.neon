@@ -13,11 +13,6 @@ parameters:
             message: '#Dynamic call to static method PHPUnit\\Framework\\Assert::#'
             path: tests
             
-        # Ignore deprecated PHPUnit methods in tests
-        -
-            message: '#Call to deprecated method isType\(\) of class PHPUnit\\Framework\\Assert#'
-            path: tests
-
         # Ignore strict level 9 type-hint and mock object warnings in test files
         -
             identifier: missingType.parameter

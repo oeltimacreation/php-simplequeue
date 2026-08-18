@@ -59,13 +59,17 @@
     },
     "scripts": {
         "test": "phpunit --no-coverage",
-        "test-coverage": "phpunit -c phpunit.coverage.xml.dist --coverage-html coverage",
+        "test-coverage": "phpunit --coverage-html coverage",
         "phpstan": "phpstan analyse",
         "cs-check": "phpcs",
         "cs-fix": "phpcbf",
-        "quality-report": "php scripts/quality-metrics.php report",
-        "quality-ratchet": "php scripts/quality-metrics.php check",
-        "benchmark": "php benchmarks/run.php",
+        "quality-fixtures": "@php scripts/quality-metrics-fixtures.php",
+        "quality-report": "@php scripts/quality-metrics.php report",
+        "quality-ratchet": [
+            "@quality-fixtures",
+            "@php scripts/quality-metrics.php check"
+        ],
+        "benchmark": "@php benchmarks/run.php",
         "check": [
             "@test",
             "@phpstan",
