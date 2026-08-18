@@ -363,15 +363,14 @@ final class Worker
      * Emit an infrastructure failure event without constructing its payload on the hot path.
      *
      * @param ClaimedJob $claim Affected job
-     * @param string $operation Failed infrastructure operation
      */
-    private function emitInfrastructureFailureEvent(ClaimedJob $claim, string $operation): void
+    private function emitInfrastructureFailureEvent(ClaimedJob $claim): void
     {
         if (!$this->eventEmitter->isListening()) {
             return;
         }
 
-        $this->eventEmitter->emit(new InfrastructureFailureEvent($claim->job->id, $operation));
+        $this->eventEmitter->emit(new InfrastructureFailureEvent($claim->job->id, 'processing_heartbeat'));
     }
 
     /**
@@ -379,13 +378,11 @@ final class Worker
      *
      * @param ClaimedJob $claim Retried job
      * @param float $durationMs Handler duration in milliseconds
-     * @param int $attempts Attempt number after the failure
      * @param \Throwable $exception Failure being retried
      */
     private function emitRetriedEvent(
         ClaimedJob $claim,
         float $durationMs,
-        int $attempts,
         \Throwable $exception
     ): void {
         if (!$this->eventEmitter->isListening()) {
@@ -396,7 +393,7 @@ final class Worker
             'job_id' => $claim->job->id,
             'type' => $claim->job->type,
             'duration_ms' => $durationMs,
-            'attempts' => $attempts,
+            'attempts' => $claim->job->attempts + 1,
             'error' => $exception->getMessage(),
         ]));
     }
@@ -622,7 +619,7 @@ final class Worker
                     'job_id' => $claim->job->id,
                     'error' => $exception->getMessage(),
                 ]);
-                $this->emitInfrastructureFailureEvent($claim, 'processing_heartbeat');
+                $this->emitInfrastructureFailureEvent($claim);
             }
         };
 
@@ -681,7 +678,7 @@ final class Worker
         }
 
         $driver->nack($this->queue, $claim->job->id, $delay);
-        $this->emitRetriedEvent($claim, $durationMs, $attempts, $exception);
+        $this->emitRetriedEvent($claim, $durationMs, $exception);
     }
 
     private function failJobPermanently(
