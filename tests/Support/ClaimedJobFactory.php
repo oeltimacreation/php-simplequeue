@@ -10,23 +10,15 @@ use Oeltima\SimpleQueue\Contract\JobData;
 final class ClaimedJobFactory
 {
     /**
-     * Create a ClaimedJob instance with default or custom JobData, workerId, and leaseToken.
+     * Create a claimed job from the explicit state under test.
      *
-     * @param JobData|null $job
-     * @param string $workerId
-     * @param string $leaseToken
-     * @return ClaimedJob
+     * @param JobData $job Running job data
+     * @param string $workerId Worker identity
+     * @param string $leaseToken Lease token
+     * @return ClaimedJob Claimed job value object
      */
-    public static function create(
-        ?JobData $job = null,
-        string $workerId = 'worker-1',
-        string $leaseToken = 'lease-token-1'
-    ): ClaimedJob {
-        $job ??= JobDataFactory::running([
-            'lockedBy' => $workerId,
-            'leaseToken' => $leaseToken,
-        ]);
-
+    public static function create(JobData $job, string $workerId, string $leaseToken): ClaimedJob
+    {
         return new ClaimedJob($job, $workerId, $leaseToken);
     }
 }
