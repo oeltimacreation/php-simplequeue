@@ -15,6 +15,56 @@ require_once __DIR__ . '/redis-support.php';
 require_once __DIR__ . '/redis-scenarios.php';
 require_once __DIR__ . '/operation-count-checks.php';
 
+/** @return array<string, mixed> */
+function benchmarkEnvironment(BenchmarkOptions $options): array
+{
+    $sqlite = class_exists(\SQLite3::class) ? \SQLite3::version() : [];
+    $environment = [
+        'php' => PHP_VERSION,
+        'platform' => php_uname('s') . ' ' . php_uname('r') . ' ' . php_uname('m'),
+        'sapi' => PHP_SAPI,
+        'pdo_drivers' => \PDO::getAvailableDrivers(),
+        'sqlite' => $sqlite['versionString'] ?? null,
+        'redis' => $options->redisHost === null ? null : "{$options->redisHost}:{$options->redisPort}",
+        'xdebug_mode' => extension_loaded('xdebug') ? (string) ini_get('xdebug.mode') : null,
+        'measurement' => [
+            'timer' => 'hrtime(true)',
+            'cpu' => function_exists('getrusage') ? 'getrusage() user+system' : null,
+            'memory' => 'PHP non-real allocator usage',
+            'setup_excluded' => true,
+            'cleanup_excluded' => true,
+        ],
+    ];
+
+    if ($options->redisHost === null) {
+        $environment['redis_server'] = null;
+        return $environment;
+    }
+
+    $client = new \Predis\Client([
+        'scheme' => 'tcp',
+        'host' => $options->redisHost,
+        'port' => $options->redisPort,
+    ]);
+    try {
+        $client->connect();
+        $server = $client->info('server');
+        $serverInfo = is_array($server) && isset($server['Server']) && is_array($server['Server'])
+            ? $server['Server']
+            : $server;
+        $environment['redis_server'] = [
+            'name' => is_array($serverInfo) ? ($serverInfo['server_name'] ?? null) : null,
+            'version' => is_array($serverInfo)
+                ? ($serverInfo['valkey_version'] ?? $serverInfo['redis_version'] ?? null)
+                : null,
+        ];
+    } finally {
+        $client->disconnect();
+    }
+
+    return $environment;
+}
+
 function runBenchmarks(): void
 {
     $options = BenchmarkOptions::fromCli();
@@ -25,12 +75,7 @@ function runBenchmarks(): void
     assertHotLoopCounters($results);
 
     echo json_encode([
-        'environment' => [
-            'php' => PHP_VERSION,
-            'platform' => php_uname('s') . ' ' . php_uname('m'),
-            'pdo_drivers' => \PDO::getAvailableDrivers(),
-            'redis' => $options->redisHost === null ? null : "{$options->redisHost}:{$options->redisPort}",
-        ],
+        'environment' => benchmarkEnvironment($options),
         'configuration' => [
             'jobs' => $options->jobs,
             'iterations' => $options->iterations,

@@ -48,25 +48,67 @@ function workerBenchmark(BenchmarkOptions $options, BenchmarkScenario $scenario)
     $workerOptions = $retry ? ['retry_base_delay' => 60, 'retry_max_delay' => 60] : [];
     return benchmark($scenario, $options, static function () use ($options, $handler, $jobType, $workerOptions): Closure {
         [$pdo, $storage] = sqliteStorage();
-        $driver = new InMemoryQueueDriver();
-        (new JobDispatcher($storage, new QueueManager($driver)))->dispatchBatch(
+        $driver = new BenchmarkQueueDriver(new InMemoryQueueDriver());
+        $queueManager = new QueueManager($driver);
+        (new JobDispatcher($storage, $queueManager))->dispatchBatch(
             $jobType,
             payloads($options),
             maxAttempts: 2
         );
         $registry = new JobRegistry();
         $registry->register($jobType, $handler);
-        $worker = new Worker($storage, new QueueManager($driver), $registry, options: array_merge([
+        $worker = new Worker($storage, $queueManager, $registry, options: array_merge([
             'lock_file' => null,
             'poll_timeout' => 0,
         ], $workerOptions));
         $pdo->resetCounts();
-        return static function () use ($worker, $pdo, $options): array {
+        $driver->resetCounts();
+        return static function () use ($worker, $pdo, $options, $driver): array {
             $processed = 0;
             for ($index = 0; $index < $options->jobs; $index++) {
                 $processed += $worker->processOne() ? 1 : 0;
             }
-            return databaseCounts($pdo, ['operations' => $processed]);
+            return array_merge(databaseCounts($pdo, ['operations' => $processed]), [
+                'driver_roundtrips' => $driver->roundTrips(),
+            ]);
+        };
+    });
+}
+
+/** @return array<string, mixed> */
+function listenerWorkerBenchmark(BenchmarkOptions $options): array
+{
+    $scenario = BenchmarkScenario::named(['value' => 'worker.event_listener_execute_ack']);
+    return benchmark($scenario, $options, static function () use ($options): Closure {
+        [$pdo, $storage] = sqliteStorage();
+        $driver = new BenchmarkQueueDriver(new InMemoryQueueDriver());
+        $queueManager = new QueueManager($driver);
+        $dispatcher = new JobDispatcher($storage, $queueManager);
+        $dispatcher->dispatchBatch('benchmark.noop', payloads($options));
+        $driver->resetCounts();
+        $pdo->resetCounts();
+
+        $registry = new JobRegistry();
+        $registry->register('benchmark.noop', NoopBenchmarkHandler::class);
+        $eventDeliveries = 0;
+        $worker = new Worker($storage, $queueManager, $registry, options: [
+            'lock_file' => null,
+            'poll_timeout' => 0,
+            'event_listener' => static function (string $event, array $data) use (&$eventDeliveries): void {
+                $eventDeliveries++;
+            },
+        ]);
+
+        return static function () use ($worker, $pdo, $options, $driver, &$eventDeliveries): array {
+            $processed = 0;
+            for ($index = 0; $index < $options->jobs; $index++) {
+                $processed += $worker->processOne() ? 1 : 0;
+            }
+
+            return array_merge(databaseCounts($pdo, ['operations' => $processed]), [
+                'driver_roundtrips' => $driver->roundTrips(),
+                'event_deliveries' => $eventDeliveries,
+            ]);
         };
     });
 }
@@ -124,15 +166,12 @@ function idleCpuMemoryBenchmark(BenchmarkOptions $options): array
         );
         $pdo->resetCounts();
         return static function () use ($worker, $pdo, $options): array {
-            $start = getrusage();
             $cycles = 0;
             for ($index = 0; $index < $options->idleCycles; $index++) {
                 $worker->processOne();
                 $cycles++;
             }
-            $metrics = databaseCounts($pdo, ['operations' => $cycles]);
-            $metrics['cpu_seconds'] = cpuSeconds($start, getrusage());
-            return $metrics;
+            return databaseCounts($pdo, ['operations' => $cycles]);
         };
     });
 }
