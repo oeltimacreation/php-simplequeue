@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: simplequeue-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   compatibility:
     name: PHP ${{ matrix.php }} / ${{ matrix.service }}
@@ -19,6 +23,15 @@ jobs:
       matrix:
         php: ['8.2', '8.3', '8.4', '8.5']
         service: [redis, valkey]
+        include:
+          - service: redis
+            redis_port: '6379'
+            db_dsn: 'mysql:host=127.0.0.1;port=3306;dbname=test_simplequeue'
+            db_user: root
+          - service: valkey
+            redis_port: '6380'
+            db_dsn: 'pgsql:host=127.0.0.1;port=5432;dbname=test_simplequeue'
+            db_user: postgres
     services:
       redis:
         image: redis:7
@@ -57,7 +70,7 @@ jobs:
       - run: composer test
         env:
           REDIS_HOST: 127.0.0.1
-          REDIS_PORT: ${{ matrix.service == 'redis' && '6379' || '6380' }}
+          REDIS_PORT: ${{ matrix.redis_port }}
           VALKEY_HOST: 127.0.0.1
           VALKEY_PORT: 6380
           MYSQL_DSN: mysql:host=127.0.0.1;port=3306;dbname=test_simplequeue
@@ -66,8 +79,8 @@ jobs:
           POSTGRES_DSN: pgsql:host=127.0.0.1;port=5432;dbname=test_simplequeue
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ''
-          DB_DSN: ${{ matrix.service == 'redis' && 'mysql:host=127.0.0.1;port=3306;dbname=test_simplequeue' || 'pgsql:host=127.0.0.1;port=5432;dbname=test_simplequeue' }}
-          DB_USER: ${{ matrix.service == 'redis' && 'root' || 'postgres' }}
+          DB_DSN: ${{ matrix.db_dsn }}
+          DB_USER: ${{ matrix.db_user }}
           DB_PASSWORD: ''
 
   quality:
