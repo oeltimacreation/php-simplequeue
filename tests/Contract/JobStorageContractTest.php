@@ -8,10 +8,8 @@ use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Contract\JobStorageAdminInterface;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
-use Oeltima\SimpleQueue\Storage\PdoJobStorage;
-use Oeltima\SimpleQueue\Tests\DbHelper;
 use Oeltima\SimpleQueue\Tests\Support\FrozenClock;
-use PDO;
+use Oeltima\SimpleQueue\Tests\Support\SqliteFixture;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -190,8 +188,6 @@ final class JobStorageContractTest extends TestCase
             return new InMemoryJobStorage($clock);
         }
 
-        $pdo = new PDO('sqlite::memory:');
-        DbHelper::createSchema($pdo);
-        return new PdoJobStorage($pdo, 'background_jobs', $clock);
+        return SqliteFixture::createStorage(clock: $clock);
     }
 }

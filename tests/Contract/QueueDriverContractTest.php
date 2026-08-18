@@ -10,12 +10,12 @@ use Oeltima\SimpleQueue\Contract\SupportsBatchEnqueue;
 use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
 use Oeltima\SimpleQueue\Driver\DatabaseQueueDriver;
 use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
-use Oeltima\SimpleQueue\Driver\RedisQueueDriver;
 use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
 use Oeltima\SimpleQueue\Tests\Support\FrozenClock;
+use Oeltima\SimpleQueue\Tests\Support\QueueCleanup;
+use Oeltima\SimpleQueue\Tests\Support\RedisFixture;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use Predis\Client;
 
 enum QueueBackend
 {
@@ -69,8 +69,8 @@ final class QueueDriverContractTest extends TestCase
             self::assertSame($betaId, $driver->dequeue('beta', 0));
             $driver->ack('beta', $betaId);
         } finally {
-            $this->clear($driver, 'alpha');
-            $this->clear($driver, 'beta');
+            QueueCleanup::clear($driver, 'alpha');
+            QueueCleanup::clear($driver, 'beta');
         }
     }
 
@@ -90,7 +90,7 @@ final class QueueDriverContractTest extends TestCase
             ]);
             self::assertSame(3, $driver->getProcessingCount('batch'));
         } finally {
-            $this->clear($driver, 'batch');
+            QueueCleanup::clear($driver, 'batch');
         }
     }
 
@@ -110,7 +110,7 @@ final class QueueDriverContractTest extends TestCase
             self::assertSame(1, $driver->getDelayedCount('retry'));
             self::assertSame(0, $driver->promoteDelayedJobs('retry'));
         } finally {
-            $this->clear($driver, 'retry');
+            QueueCleanup::clear($driver, 'retry');
         }
     }
 
@@ -130,7 +130,7 @@ final class QueueDriverContractTest extends TestCase
             self::assertSame(1, $driver->promoteDelayedJobs('sched'));
             self::assertSame($scenario['due_job_id'], $driver->dequeue('sched', 0));
         } finally {
-            $this->clear($driver, 'sched');
+            QueueCleanup::clear($driver, 'sched');
         }
     }
 
@@ -190,18 +190,7 @@ final class QueueDriverContractTest extends TestCase
             return new DatabaseQueueDriver($this->databaseStorage, 50, $clock);
         }
 
-        $host = getenv('REDIS_HOST');
-        if (!is_string($host) || $host === '') {
-            self::markTestSkipped('REDIS_HOST is not set. Skipping Redis queue contract.');
-        }
-        $port = getenv('REDIS_PORT') ?: '6379';
-        $client = new Client(['scheme' => 'tcp', 'host' => $host, 'port' => (int) $port]);
-        try {
-            $client->connect();
-        } catch (\Throwable $exception) {
-            self::markTestSkipped('Could not connect to Redis: ' . $exception->getMessage());
-        }
-        return new RedisQueueDriver($client, 'contract-' . bin2hex(random_bytes(8)));
+        return RedisFixture::driver($this, 'contract-' . bin2hex(random_bytes(8)));
     }
 
     private function enqueueJob(
@@ -220,16 +209,5 @@ final class QueueDriverContractTest extends TestCase
         }
         $driver->enqueue($queue, $notificationId);
         return $notificationId;
-    }
-
-    private function clear(QueueDriverInterface $driver, string $queue): void
-    {
-        if ($driver instanceof RedisQueueDriver) {
-            $driver->clear($queue);
-            return;
-        }
-        if ($driver instanceof InMemoryQueueDriver) {
-            $driver->clear();
-        }
     }
 }

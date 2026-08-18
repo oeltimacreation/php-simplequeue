@@ -1,0 +1,49 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Oeltima\SimpleQueue\Tests\Unit;
+
+use Oeltima\SimpleQueue\Tests\Support\JobDataFactory;
+use Oeltima\SimpleQueue\Tests\Support\WorkerTestCase;
+
+final class WorkerFailureTest extends WorkerTestCase
+{
+    public function testProcessOneJobFailedAfterMaxAttempts(): void
+    {
+        $jobData = JobDataFactory::running(['id' => 200, 'type' => 'test.job', 'attempts' => 2, 'maxAttempts' => 3]);
+        $driver = $this->prepareProcessingScenario(
+            $jobData,
+            $this->handlerThrowing('Job failed permanently')
+        );
+
+        $this->storage->expects($this->once())
+            ->method('markFailed')
+            ->with(
+                $this->callback(fn($claim) => $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 200),
+                $this->isString(),
+                $this->anything()
+            )
+            ->willReturn(true);
+
+        $driver->expects($this->once())->method('ack')->with('default', 200);
+        $this->storage->expects($this->never())->method('scheduleRetry');
+
+        $this->assertTrue($this->createWorkerWithDriver($driver)->processOne());
+    }
+
+    public function testHandleJobFailureCatchesStorageErrors(): void
+    {
+        $jobData = JobDataFactory::running(['id' => 999, 'type' => 'test.job', 'attempts' => 0, 'maxAttempts' => 3]);
+        $driver = $this->prepareProcessingScenario($jobData, $this->handlerThrowing('Job failed'));
+
+        $this->storage->expects($this->once())
+            ->method('scheduleRetry')
+            ->willThrowException(new \RuntimeException('Storage error during retry'));
+
+        $this->logger->expects($this->atLeastOnce())
+            ->method('error');
+
+        $this->assertTrue($this->createWorkerWithDriver($driver)->processOne());
+    }
+}

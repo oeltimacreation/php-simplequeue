@@ -17,15 +17,15 @@ use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
 use Oeltima\SimpleQueue\Worker;
 use PHPUnit\Framework\TestCase;
 
-final class Stage45SoakTest extends TestCase
+final class WorkerReliabilitySoakTest extends TestCase
 {
     public function testMiddlewareWorkerRecyclingKeepsBacklogMemoryBounded(): void
     {
         $storage = new InMemoryJobStorage();
         $driver = new InMemoryQueueDriver();
         $registry = new JobRegistry();
-        $registry->register('soak.middleware', Stage45SoakHandler::class);
-        $registry->middleware->register(new Stage45SoakMiddleware());
+        $registry->register('soak.middleware', ReliabilitySoakHandler::class);
+        $registry->middleware->register(new ReliabilitySoakMiddleware());
         $dispatcher = new JobDispatcher($storage, new QueueManager($driver));
         $jobIds = $dispatcher->dispatchBatch('soak.middleware', $this->payloads(300));
         $memoryBefore = memory_get_usage(true);
@@ -89,7 +89,7 @@ final class Stage45SoakTest extends TestCase
     }
 }
 
-final class Stage45SoakHandler implements JobHandlerInterface
+final class ReliabilitySoakHandler implements JobHandlerInterface
 {
     public function handle(int $jobId, array $payload, ?callable $progressCallback = null): array
     {
@@ -97,7 +97,7 @@ final class Stage45SoakHandler implements JobHandlerInterface
     }
 }
 
-final class Stage45SoakMiddleware implements JobMiddlewareInterface
+final class ReliabilitySoakMiddleware implements JobMiddlewareInterface
 {
     public function process(JobContextInterface $context): mixed
     {
