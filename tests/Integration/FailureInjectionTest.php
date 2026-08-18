@@ -20,17 +20,17 @@ use Oeltima\SimpleQueue\Tests\Support\FrozenClock;
 use Oeltima\SimpleQueue\Worker;
 use PHPUnit\Framework\TestCase;
 
-final class Stage45FaultInjectionTest extends TestCase
+final class FailureInjectionTest extends TestCase
 {
     public function testMiddlewareFailureUsesRetryAndDeadLetterPaths(): void
     {
-        Stage45FaultHandler::$calls = 0;
+        FailureInjectionHandler::$calls = 0;
         $clock = new FrozenClock();
         $storage = new InMemoryJobStorage($clock);
         $driver = new InMemoryQueueDriver($clock);
         $registry = new JobRegistry();
-        $registry->register('fault.middleware', Stage45FaultHandler::class);
-        $registry->middleware->register(new Stage45ThrowingMiddleware());
+        $registry->register('fault.middleware', FailureInjectionHandler::class);
+        $registry->middleware->register(new FailureInjectionMiddleware());
         $dispatcher = new JobDispatcher($storage, new QueueManager($driver), $clock);
         $jobId = $dispatcher->dispatch('fault.middleware', [], maxAttempts: 2);
         $worker = new Worker($storage, new QueueManager($driver), $registry, options: [
@@ -54,7 +54,7 @@ final class Stage45FaultInjectionTest extends TestCase
         self::assertSame(JobStatus::Failed, $failedJob->status);
         self::assertSame([], $driver->getPending('default'));
         self::assertSame([], $driver->getProcessing('default'));
-        self::assertSame(0, Stage45FaultHandler::$calls);
+        self::assertSame(0, FailureInjectionHandler::$calls);
     }
 
     public function testFailedJobPromotionCanRaceAClaimWithoutDuplicateExecution(): void
@@ -87,7 +87,7 @@ final class Stage45FaultInjectionTest extends TestCase
         $storage = new InMemoryJobStorage();
         $driver = new InMemoryQueueDriver();
         $registry = new JobRegistry();
-        $registry->register('fault.listener', Stage45FaultHandler::class);
+        $registry->register('fault.listener', FailureInjectionHandler::class);
         $dispatcher = new JobDispatcher($storage, new QueueManager($driver));
         $jobId = $dispatcher->dispatch('fault.listener', []);
         $worker = new Worker($storage, new QueueManager($driver), $registry, options: [
@@ -142,7 +142,7 @@ final class Stage45FaultInjectionTest extends TestCase
     }
 }
 
-final class Stage45FaultHandler implements JobHandlerInterface
+final class FailureInjectionHandler implements JobHandlerInterface
 {
     public static int $calls = 0;
 
@@ -154,7 +154,7 @@ final class Stage45FaultHandler implements JobHandlerInterface
     }
 }
 
-final class Stage45ThrowingMiddleware implements JobMiddlewareInterface
+final class FailureInjectionMiddleware implements JobMiddlewareInterface
 {
     public function process(JobContextInterface $context): never
     {
