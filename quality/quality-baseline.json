@@ -19,10 +19,10 @@
             "duplicate_windows": 0
         },
         "tests": {
-            "files": 41,
-            "classes": 68,
+            "files": 45,
+            "classes": 72,
             "methods": 447,
-            "lines": 7795,
+            "lines": 7838,
             "duplicate_windows": 752
         }
     },
@@ -1305,6 +1305,33 @@
             "lines": 425,
             "methods": 34
         },
+        "tests/Unit/WorkerClaimTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerClaimTest": {
+            "scope": "tests",
+            "file": "tests/Unit/WorkerClaimTest.php",
+            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerClaimTest",
+            "start_line": 10,
+            "end_line": 63,
+            "lines": 54,
+            "methods": 3
+        },
+        "tests/Unit/WorkerCompletionTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerCompletionTest": {
+            "scope": "tests",
+            "file": "tests/Unit/WorkerCompletionTest.php",
+            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerCompletionTest",
+            "start_line": 10,
+            "end_line": 89,
+            "lines": 80,
+            "methods": 3
+        },
+        "tests/Unit/WorkerFailureTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerFailureTest": {
+            "scope": "tests",
+            "file": "tests/Unit/WorkerFailureTest.php",
+            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerFailureTest",
+            "start_line": 10,
+            "end_line": 49,
+            "lines": 40,
+            "methods": 2
+        },
         "tests/Unit/WorkerObservabilityTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerObservabilityTest": {
             "scope": "tests",
             "file": "tests/Unit/WorkerObservabilityTest.php",
@@ -1323,6 +1350,15 @@
             "lines": 28,
             "methods": 4
         },
+        "tests/Unit/WorkerOwnershipTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerOwnershipTest": {
+            "scope": "tests",
+            "file": "tests/Unit/WorkerOwnershipTest.php",
+            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerOwnershipTest",
+            "start_line": 10,
+            "end_line": 80,
+            "lines": 71,
+            "methods": 3
+        },
         "tests/Unit/WorkerPolicyTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerPolicyTest": {
             "scope": "tests",
             "file": "tests/Unit/WorkerPolicyTest.php",
@@ -1332,14 +1368,14 @@
             "lines": 52,
             "methods": 6
         },
-        "tests/Unit/WorkerProcessingTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest": {
+        "tests/Unit/WorkerRetryTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerRetryTest": {
             "scope": "tests",
-            "file": "tests/Unit/WorkerProcessingTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest",
-            "start_line": 11,
-            "end_line": 326,
-            "lines": 316,
-            "methods": 14
+            "file": "tests/Unit/WorkerRetryTest.php",
+            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerRetryTest",
+            "start_line": 10,
+            "end_line": 88,
+            "lines": 79,
+            "methods": 3
         },
         "tests/Unit/WorkerRunLoopTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerRunLoopDelayedQueueDriver": {
             "scope": "tests",
@@ -10406,6 +10442,102 @@
             "cognitive_complexity": 0,
             "nesting_depth": 0
         },
+        "tests/Unit/WorkerClaimTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerClaimTest::testProcessOneNonBlockingReturnsFalseWhenQueueEmpty": {
+            "scope": "tests",
+            "file": "tests/Unit/WorkerClaimTest.php",
+            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerClaimTest",
+            "method": "testProcessOneNonBlockingReturnsFalseWhenQueueEmpty",
+            "start_line": 50,
+            "end_line": 62,
+            "lines": 13,
+            "cyclomatic_complexity": 1,
+            "cognitive_complexity": 0,
+            "nesting_depth": 0
+        },
+        "tests/Unit/WorkerClaimTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerClaimTest::testWorkerContinuesWhenJobAlreadyClaimedByAnotherWorker": {
+            "scope": "tests",
+            "file": "tests/Unit/WorkerClaimTest.php",
+            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerClaimTest",
+            "method": "testWorkerContinuesWhenJobAlreadyClaimedByAnotherWorker",
+            "start_line": 32,
+            "end_line": 48,
+            "lines": 17,
+            "cyclomatic_complexity": 2,
+            "cognitive_complexity": 1,
+            "nesting_depth": 0
+        },
+        "tests/Unit/WorkerClaimTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerClaimTest::testWorkerContinuesWhenStorageThrowsExceptionDuringClaim": {
+            "scope": "tests",
+            "file": "tests/Unit/WorkerClaimTest.php",
+            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerClaimTest",
+            "method": "testWorkerContinuesWhenStorageThrowsExceptionDuringClaim",
+            "start_line": 12,
+            "end_line": 30,
+            "lines": 19,
+            "cyclomatic_complexity": 2,
+            "cognitive_complexity": 1,
+            "nesting_depth": 0
+        },
+        "tests/Unit/WorkerCompletionTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerCompletionTest::testProcessOneSuccessfulJobCompletion": {
+            "scope": "tests",
+            "file": "tests/Unit/WorkerCompletionTest.php",
+            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerCompletionTest",
+            "method": "testProcessOneSuccessfulJobCompletion",
+            "start_line": 12,
+            "end_line": 28,
+            "lines": 17,
+            "cyclomatic_complexity": 2,
+            "cognitive_complexity": 1,
+            "nesting_depth": 0
+        },
+        "tests/Unit/WorkerCompletionTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerCompletionTest::testProgressCallbackTriggersUpdateProgressWithoutRedundantStorageHeartbeat": {
+            "scope": "tests",
+            "file": "tests/Unit/WorkerCompletionTest.php",
+            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerCompletionTest",
+            "method": "testProgressCallbackTriggersUpdateProgressWithoutRedundantStorageHeartbeat",
+            "start_line": 60,
+            "end_line": 88,
+            "lines": 29,
+            "cyclomatic_complexity": 2,
+            "cognitive_complexity": 1,
+            "nesting_depth": 0
+        },
+        "tests/Unit/WorkerCompletionTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerCompletionTest::testWorkerHandlesAckExceptionAfterCompletedJob": {
+            "scope": "tests",
+            "file": "tests/Unit/WorkerCompletionTest.php",
+            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerCompletionTest",
+            "method": "testWorkerHandlesAckExceptionAfterCompletedJob",
+            "start_line": 30,
+            "end_line": 58,
+            "lines": 29,
+            "cyclomatic_complexity": 3,
+            "cognitive_complexity": 2,
+            "nesting_depth": 0
+        },
+        "tests/Unit/WorkerFailureTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerFailureTest::testHandleJobFailureCatchesStorageErrors": {
+            "scope": "tests",
+            "file": "tests/Unit/WorkerFailureTest.php",
+            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerFailureTest",
+            "method": "testHandleJobFailureCatchesStorageErrors",
+            "start_line": 35,
+            "end_line": 48,
+            "lines": 14,
+            "cyclomatic_complexity": 1,
+            "cognitive_complexity": 0,
+            "nesting_depth": 0
+        },
+        "tests/Unit/WorkerFailureTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerFailureTest::testProcessOneJobFailedAfterMaxAttempts": {
+            "scope": "tests",
+            "file": "tests/Unit/WorkerFailureTest.php",
+            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerFailureTest",
+            "method": "testProcessOneJobFailedAfterMaxAttempts",
+            "start_line": 12,
+            "end_line": 33,
+            "lines": 22,
+            "cyclomatic_complexity": 2,
+            "cognitive_complexity": 1,
+            "nesting_depth": 0
+        },
         "tests/Unit/WorkerObservabilityTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerObservabilityTest::eventPayloads": {
             "scope": "tests",
             "file": "tests/Unit/WorkerObservabilityTest.php",
@@ -10514,6 +10646,42 @@
             "cognitive_complexity": 0,
             "nesting_depth": 0
         },
+        "tests/Unit/WorkerOwnershipTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerOwnershipTest::testWorkerHandlesLostOwnershipOnJobCompletion": {
+            "scope": "tests",
+            "file": "tests/Unit/WorkerOwnershipTest.php",
+            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerOwnershipTest",
+            "method": "testWorkerHandlesLostOwnershipOnJobCompletion",
+            "start_line": 12,
+            "end_line": 33,
+            "lines": 22,
+            "cyclomatic_complexity": 1,
+            "cognitive_complexity": 0,
+            "nesting_depth": 0
+        },
+        "tests/Unit/WorkerOwnershipTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerOwnershipTest::testWorkerHandlesLostOwnershipOnMarkingFailed": {
+            "scope": "tests",
+            "file": "tests/Unit/WorkerOwnershipTest.php",
+            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerOwnershipTest",
+            "method": "testWorkerHandlesLostOwnershipOnMarkingFailed",
+            "start_line": 58,
+            "end_line": 79,
+            "lines": 22,
+            "cyclomatic_complexity": 1,
+            "cognitive_complexity": 0,
+            "nesting_depth": 0
+        },
+        "tests/Unit/WorkerOwnershipTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerOwnershipTest::testWorkerHandlesLostOwnershipOnRetryScheduling": {
+            "scope": "tests",
+            "file": "tests/Unit/WorkerOwnershipTest.php",
+            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerOwnershipTest",
+            "method": "testWorkerHandlesLostOwnershipOnRetryScheduling",
+            "start_line": 35,
+            "end_line": 56,
+            "lines": 22,
+            "cyclomatic_complexity": 1,
+            "cognitive_complexity": 0,
+            "nesting_depth": 0
+        },
         "tests/Unit/WorkerPolicyTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerPolicyTest::infrastructureFailures": {
             "scope": "tests",
             "file": "tests/Unit/WorkerPolicyTest.php",
@@ -10586,169 +10754,37 @@
             "cognitive_complexity": 0,
             "nesting_depth": 0
         },
-        "tests/Unit/WorkerProcessingTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest::testHandleJobFailureCatchesStorageErrors": {
+        "tests/Unit/WorkerRetryTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerRetryTest::testNackPassesDelayToDriver": {
             "scope": "tests",
-            "file": "tests/Unit/WorkerProcessingTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest",
-            "method": "testHandleJobFailureCatchesStorageErrors",
-            "start_line": 213,
-            "end_line": 226,
-            "lines": 14,
-            "cyclomatic_complexity": 1,
-            "cognitive_complexity": 0,
-            "nesting_depth": 0
-        },
-        "tests/Unit/WorkerProcessingTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest::testNackPassesDelayToDriver": {
-            "scope": "tests",
-            "file": "tests/Unit/WorkerProcessingTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest",
+            "file": "tests/Unit/WorkerRetryTest.php",
+            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerRetryTest",
             "method": "testNackPassesDelayToDriver",
-            "start_line": 51,
-            "end_line": 70,
+            "start_line": 12,
+            "end_line": 31,
             "lines": 20,
             "cyclomatic_complexity": 1,
             "cognitive_complexity": 0,
             "nesting_depth": 0
         },
-        "tests/Unit/WorkerProcessingTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest::testProcessOneJobFailedAfterMaxAttempts": {
+        "tests/Unit/WorkerRetryTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerRetryTest::testWorkerRetryDelayCappedAtMaxDelay": {
             "scope": "tests",
-            "file": "tests/Unit/WorkerProcessingTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest",
-            "method": "testProcessOneJobFailedAfterMaxAttempts",
-            "start_line": 104,
-            "end_line": 125,
-            "lines": 22,
-            "cyclomatic_complexity": 2,
-            "cognitive_complexity": 1,
-            "nesting_depth": 0
-        },
-        "tests/Unit/WorkerProcessingTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest::testProcessOneNonBlockingReturnsFalseWhenQueueEmpty": {
-            "scope": "tests",
-            "file": "tests/Unit/WorkerProcessingTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest",
-            "method": "testProcessOneNonBlockingReturnsFalseWhenQueueEmpty",
-            "start_line": 72,
-            "end_line": 84,
-            "lines": 13,
-            "cyclomatic_complexity": 1,
-            "cognitive_complexity": 0,
-            "nesting_depth": 0
-        },
-        "tests/Unit/WorkerProcessingTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest::testProcessOneSuccessfulJobCompletion": {
-            "scope": "tests",
-            "file": "tests/Unit/WorkerProcessingTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest",
-            "method": "testProcessOneSuccessfulJobCompletion",
-            "start_line": 86,
-            "end_line": 102,
-            "lines": 17,
-            "cyclomatic_complexity": 2,
-            "cognitive_complexity": 1,
-            "nesting_depth": 0
-        },
-        "tests/Unit/WorkerProcessingTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest::testProgressCallbackTriggersUpdateProgressWithoutRedundantStorageHeartbeat": {
-            "scope": "tests",
-            "file": "tests/Unit/WorkerProcessingTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest",
-            "method": "testProgressCallbackTriggersUpdateProgressWithoutRedundantStorageHeartbeat",
-            "start_line": 228,
-            "end_line": 256,
-            "lines": 29,
-            "cyclomatic_complexity": 2,
-            "cognitive_complexity": 1,
-            "nesting_depth": 0
-        },
-        "tests/Unit/WorkerProcessingTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest::testWorkerContinuesWhenJobAlreadyClaimedByAnotherWorker": {
-            "scope": "tests",
-            "file": "tests/Unit/WorkerProcessingTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest",
-            "method": "testWorkerContinuesWhenJobAlreadyClaimedByAnotherWorker",
-            "start_line": 33,
-            "end_line": 49,
-            "lines": 17,
-            "cyclomatic_complexity": 2,
-            "cognitive_complexity": 1,
-            "nesting_depth": 0
-        },
-        "tests/Unit/WorkerProcessingTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest::testWorkerContinuesWhenStorageThrowsExceptionDuringClaim": {
-            "scope": "tests",
-            "file": "tests/Unit/WorkerProcessingTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest",
-            "method": "testWorkerContinuesWhenStorageThrowsExceptionDuringClaim",
-            "start_line": 13,
-            "end_line": 31,
-            "lines": 19,
-            "cyclomatic_complexity": 2,
-            "cognitive_complexity": 1,
-            "nesting_depth": 0
-        },
-        "tests/Unit/WorkerProcessingTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest::testWorkerHandlesAckExceptionAfterCompletedJob": {
-            "scope": "tests",
-            "file": "tests/Unit/WorkerProcessingTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest",
-            "method": "testWorkerHandlesAckExceptionAfterCompletedJob",
-            "start_line": 183,
-            "end_line": 211,
-            "lines": 29,
-            "cyclomatic_complexity": 3,
-            "cognitive_complexity": 2,
-            "nesting_depth": 0
-        },
-        "tests/Unit/WorkerProcessingTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest::testWorkerHandlesLostOwnershipOnJobCompletion": {
-            "scope": "tests",
-            "file": "tests/Unit/WorkerProcessingTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest",
-            "method": "testWorkerHandlesLostOwnershipOnJobCompletion",
-            "start_line": 258,
-            "end_line": 279,
-            "lines": 22,
-            "cyclomatic_complexity": 1,
-            "cognitive_complexity": 0,
-            "nesting_depth": 0
-        },
-        "tests/Unit/WorkerProcessingTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest::testWorkerHandlesLostOwnershipOnMarkingFailed": {
-            "scope": "tests",
-            "file": "tests/Unit/WorkerProcessingTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest",
-            "method": "testWorkerHandlesLostOwnershipOnMarkingFailed",
-            "start_line": 304,
-            "end_line": 325,
-            "lines": 22,
-            "cyclomatic_complexity": 1,
-            "cognitive_complexity": 0,
-            "nesting_depth": 0
-        },
-        "tests/Unit/WorkerProcessingTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest::testWorkerHandlesLostOwnershipOnRetryScheduling": {
-            "scope": "tests",
-            "file": "tests/Unit/WorkerProcessingTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest",
-            "method": "testWorkerHandlesLostOwnershipOnRetryScheduling",
-            "start_line": 281,
-            "end_line": 302,
-            "lines": 22,
-            "cyclomatic_complexity": 1,
-            "cognitive_complexity": 0,
-            "nesting_depth": 0
-        },
-        "tests/Unit/WorkerProcessingTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest::testWorkerRetryDelayCappedAtMaxDelay": {
-            "scope": "tests",
-            "file": "tests/Unit/WorkerProcessingTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest",
+            "file": "tests/Unit/WorkerRetryTest.php",
+            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerRetryTest",
             "method": "testWorkerRetryDelayCappedAtMaxDelay",
-            "start_line": 155,
-            "end_line": 181,
+            "start_line": 61,
+            "end_line": 87,
             "lines": 27,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 1,
             "nesting_depth": 0
         },
-        "tests/Unit/WorkerProcessingTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest::testWorkerRetryDelayIsExponential": {
+        "tests/Unit/WorkerRetryTest.php::Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerRetryTest::testWorkerRetryDelayIsExponential": {
             "scope": "tests",
-            "file": "tests/Unit/WorkerProcessingTest.php",
-            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerProcessingTest",
+            "file": "tests/Unit/WorkerRetryTest.php",
+            "class": "Oeltima\\SimpleQueue\\Tests\\Unit\\WorkerRetryTest",
             "method": "testWorkerRetryDelayIsExponential",
-            "start_line": 127,
-            "end_line": 153,
+            "start_line": 33,
+            "end_line": 59,
             "lines": 27,
             "cyclomatic_complexity": 2,
             "cognitive_complexity": 1,
