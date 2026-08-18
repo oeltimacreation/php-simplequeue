@@ -167,19 +167,44 @@ function findPhpFiles(string $root): array
 {
     $files = [];
     foreach (['src', 'tests'] as $directory) {
-        $path = $root . '/' . $directory;
-        if (!is_dir($path)) {
-            continue;
-        }
-        $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($path));
-        foreach ($iterator as $file) {
-            if ($file->isFile() && $file->getExtension() === 'php') {
-                $files[] = $file->getPathname();
-            }
-        }
+        $files = array_merge($files, findPhpFilesInDirectory($root . '/' . $directory));
     }
     sort($files);
     return $files;
+}
+
+/**
+ * @return list<string>
+ */
+function findPhpFilesInDirectory(string $path): array
+{
+    if (!is_dir($path)) {
+        return [];
+    }
+
+    /** @var list<SplFileInfo> $entries */
+    $entries = array_values(iterator_to_array(
+        new RecursiveIteratorIterator(new RecursiveDirectoryIterator($path)),
+        false
+    ));
+    $phpFiles = array_filter(
+        $entries,
+        static fn(SplFileInfo $file): bool => isPhpFile($file)
+    );
+
+    return array_values(array_map(
+        static fn(SplFileInfo $file): string => $file->getPathname(),
+        $phpFiles
+    ));
+}
+
+function isPhpFile(SplFileInfo $file): bool
+{
+    if (!$file->isFile()) {
+        return false;
+    }
+
+    return $file->getExtension() === 'php';
 }
 
 /**
@@ -358,17 +383,33 @@ function calculateMethodMetrics(array $range): array
 /** @param array<string, mixed> $state @param array<string, mixed> $range */
 function updateCyclomatic(array &$state, array $range, int $index): void
 {
-    $token = $range['tokens'][$index];
-    $isTernary = $token['text'] === '?';
-    if (($range['tokens'][$index + 1]['text'] ?? '') === '>') {
-        $isTernary = false;
-    }
-    if (in_array($token['id'], CYCLOMATIC_BRANCH_TOKENS, true)
-        || in_array($token['id'], BOOLEAN_OPERATOR_TOKENS, true)
-        || $isTernary
-    ) {
+    if (isCyclomaticToken($range, $index)) {
         $state['cyclomatic']++;
     }
+}
+
+/** @param array<string, mixed> $range */
+function isCyclomaticToken(array $range, int $index): bool
+{
+    $token = $range['tokens'][$index];
+    if (in_array($token['id'], CYCLOMATIC_BRANCH_TOKENS, true)) {
+        return true;
+    }
+    if (in_array($token['id'], BOOLEAN_OPERATOR_TOKENS, true)) {
+        return true;
+    }
+
+    return isTernaryToken($range, $index);
+}
+
+/** @param array<string, mixed> $range */
+function isTernaryToken(array $range, int $index): bool
+{
+    if ($range['tokens'][$index]['text'] !== '?') {
+        return false;
+    }
+
+    return ($range['tokens'][$index + 1]['text'] ?? '') !== '>';
 }
 
 /** @param array<string, mixed> $state @param array<string, mixed> $range */
@@ -482,14 +523,10 @@ function findDuplicateWindows(array $methods): array
 {
     $windows = [];
     foreach ($methods as $methodKey => $method) {
-        foreach (duplicateWindowsForMethod([
+        $windows = mergeDuplicateWindows($windows, duplicateWindowsForMethod([
             'key' => $methodKey,
             'method' => $method,
-        ]) as $fingerprint => $occurrences) {
-            foreach ($occurrences as $occurrenceKey => $occurrence) {
-                $windows[$fingerprint][$occurrenceKey] = $occurrence;
-            }
-        }
+        ]));
     }
 
     $duplicates = [];
@@ -502,6 +539,20 @@ function findDuplicateWindows(array $methods): array
 
     usort($duplicates, static fn(array $left, array $right): int => $left['fingerprint'] <=> $right['fingerprint']);
     return $duplicates;
+}
+
+/**
+ * @param array<string, array<string, array<string, int|string>>> $windows
+ * @param array<string, array<string, array<string, int|string>>> $methodWindows
+ * @return array<string, array<string, array<string, int|string>>>
+ */
+function mergeDuplicateWindows(array $windows, array $methodWindows): array
+{
+    foreach ($methodWindows as $fingerprint => $occurrences) {
+        $windows[$fingerprint] = array_replace($windows[$fingerprint] ?? [], $occurrences);
+    }
+
+    return $windows;
 }
 
 /**
