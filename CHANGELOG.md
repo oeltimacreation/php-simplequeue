@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Optimized the worker's unconfigured event-listener path to avoid constructing typed lifecycle events while preserving listener names, payloads, ordering, and failure isolation when a listener is configured.
 - Expanded benchmark guardrails to assert database, queue, Redis, middleware, listener, and no-op-path operation-count invariants.
+- Consolidated PHPUnit suites, source inclusion, and coverage reporting into `phpunit.xml.dist` while keeping normal tests no-coverage and coverage execution explicit.
+- Simplified quality and benchmark tooling with analyzer fixtures, shared benchmark counter normalization, and a refreshed quality baseline without weakening existing gates.
+- Clarified the CI compatibility matrix's Redis/Valkey-to-database pairings and cancelled superseded runs per ref without reducing the PHP or service test matrix.
+
+### Removed
+
+- Removed the duplicate PHPUnit coverage configuration and the obsolete deprecated-assertion PHPStan ignore.
 
 ## [1.9.0] - 2026-08-13
 
