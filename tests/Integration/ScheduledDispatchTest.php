@@ -14,9 +14,10 @@ use Oeltima\SimpleQueue\JobDispatcher;
 use Oeltima\SimpleQueue\QueueManager;
 use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
 use Oeltima\SimpleQueue\Tests\Support\FrozenClock;
+use Oeltima\SimpleQueue\Tests\Support\QueueCleanup;
+use Oeltima\SimpleQueue\Tests\Support\RedisFixture;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use Predis\Client;
 
 enum ScheduledDispatchBackend
 {
@@ -39,11 +40,8 @@ final class ScheduledDispatchTest extends TestCase
 
     protected function tearDown(): void
     {
-        if ($this->driver instanceof InMemoryQueueDriver) {
-            $this->driver->clear();
-        }
-        if ($this->driver instanceof RedisQueueDriver) {
-            $this->driver->clear('default');
+        if ($this->driver !== null) {
+            QueueCleanup::clear($this->driver);
         }
         $this->driver = null;
     }
@@ -159,18 +157,6 @@ final class ScheduledDispatchTest extends TestCase
 
     private function redisDriver(FrozenClock $clock): RedisQueueDriver
     {
-        $host = getenv('REDIS_HOST');
-        if (!is_string($host) || $host === '') {
-            self::markTestSkipped('REDIS_HOST is not set. Skipping Redis scheduled dispatch.');
-        }
-        $port = getenv('REDIS_PORT') ?: '6379';
-        $client = new Client(['scheme' => 'tcp', 'host' => $host, 'port' => (int) $port]);
-        try {
-            $client->connect();
-        } catch (\Throwable $exception) {
-            self::markTestSkipped('Could not connect to Redis: ' . $exception->getMessage());
-        }
-
-        return new RedisQueueDriver($client, 'sched-' . bin2hex(random_bytes(8)), $clock);
+        return RedisFixture::driver($this, 'sched-' . bin2hex(random_bytes(8)), $clock);
     }
 }

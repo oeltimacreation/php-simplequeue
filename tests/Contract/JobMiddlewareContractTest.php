@@ -12,18 +12,16 @@ use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Driver\DatabaseQueueDriver;
 use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
-use Oeltima\SimpleQueue\Driver\RedisQueueDriver;
 use Oeltima\SimpleQueue\JobDispatcher;
 use Oeltima\SimpleQueue\JobRegistry;
 use Oeltima\SimpleQueue\QueueManager;
 use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
-use Oeltima\SimpleQueue\Storage\PdoJobStorage;
-use Oeltima\SimpleQueue\Tests\DbHelper;
+use Oeltima\SimpleQueue\Tests\Support\QueueCleanup;
+use Oeltima\SimpleQueue\Tests\Support\RedisFixture;
+use Oeltima\SimpleQueue\Tests\Support\SqliteFixture;
 use Oeltima\SimpleQueue\Worker;
-use PDO;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use Predis\Client;
 
 enum MiddlewareBackend
 {
@@ -52,9 +50,7 @@ final class JobMiddlewareContractTest extends TestCase
         try {
             $this->runCycle($storage, $driver, $queue);
         } finally {
-            if ($driver instanceof RedisQueueDriver) {
-                $driver->clear($queue);
-            }
+            QueueCleanup::clear($driver, $queue);
         }
     }
 
@@ -98,25 +94,11 @@ final class JobMiddlewareContractTest extends TestCase
         }
 
         if ($backend === MiddlewareBackend::Database) {
-            $pdo = new PDO('sqlite::memory:');
-            DbHelper::createSchema($pdo, 'middleware_jobs');
-            $storage = new PdoJobStorage($pdo, 'middleware_jobs');
+            $storage = SqliteFixture::createStorage('middleware_jobs');
             return [$storage, new DatabaseQueueDriver($storage, 50)];
         }
 
-        $host = getenv('REDIS_HOST');
-        if (!is_string($host) || $host === '') {
-            self::markTestSkipped('REDIS_HOST is not set. Skipping Redis middleware contract.');
-        }
-        $port = getenv('REDIS_PORT') ?: '6379';
-        $client = new Client(['scheme' => 'tcp', 'host' => $host, 'port' => (int) $port]);
-        try {
-            $client->connect();
-        } catch (\Throwable $exception) {
-            self::markTestSkipped('Could not connect to Redis: ' . $exception->getMessage());
-        }
-
-        return [new InMemoryJobStorage(), new RedisQueueDriver($client, 'middleware-contract')];
+        return [new InMemoryJobStorage(), RedisFixture::driver($this, 'middleware-contract')];
     }
 }
 

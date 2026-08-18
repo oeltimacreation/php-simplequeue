@@ -14,8 +14,8 @@ use Oeltima\SimpleQueue\JobRegistry;
 use Oeltima\SimpleQueue\QueueManager;
 use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
 use Oeltima\SimpleQueue\Storage\PdoJobStorage;
-use Oeltima\SimpleQueue\Tests\DbHelper;
 use Oeltima\SimpleQueue\Worker;
+use Oeltima\SimpleQueue\Tests\Support\SqliteFixture;
 use PDO;
 use PHPUnit\Framework\TestCase;
 
@@ -51,14 +51,12 @@ final class WorkerSoakTest extends TestCase
     {
         $database = tempnam(sys_get_temp_dir(), 'sq_soak_');
         self::assertNotFalse($database);
-        $pdo = new PDO("sqlite:{$database}");
-        DbHelper::createSchema($pdo);
+        $pdo = SqliteFixture::filePdo($database);
+        \Oeltima\SimpleQueue\Tests\DbHelper::createSchema($pdo);
         $connections = 0;
         $storage = new PdoJobStorage(static function () use ($database, &$connections): PDO {
             $connections++;
-            $connection = new PDO("sqlite:{$database}");
-            $connection->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-            return $connection;
+            return SqliteFixture::filePdo($database);
         });
 
         try {

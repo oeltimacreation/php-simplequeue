@@ -7,6 +7,7 @@ namespace Oeltima\SimpleQueue\Tests\Unit;
 use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Storage\PdoJobStorage;
 use Oeltima\SimpleQueue\Tests\Support\FrozenClock;
+use Oeltima\SimpleQueue\Tests\Support\SqliteFixture;
 use PDO;
 use PDOStatement;
 use PHPUnit\Framework\TestCase;
@@ -15,16 +16,10 @@ class PdoJobStorageTest extends TestCase
 {
     private function createSqlitePdo(): PDO
     {
-        $pdo = new PDO('sqlite::memory:');
-        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        $this->createSchema($pdo);
+        $pdo = SqliteFixture::memoryPdo();
+        \Oeltima\SimpleQueue\Tests\DbHelper::createSchema($pdo);
 
         return $pdo;
-    }
-
-    private function createSchema(PDO $pdo): void
-    {
-        \Oeltima\SimpleQueue\Tests\DbHelper::createSchema($pdo);
     }
 
     public function testConstructorAcceptsPdoInstance(): void
@@ -133,7 +128,7 @@ class PdoJobStorageTest extends TestCase
             }
         };
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        $this->createSchema($pdo);
+        \Oeltima\SimpleQueue\Tests\DbHelper::createSchema($pdo);
 
         $storage = new PdoJobStorage($pdo);
 

@@ -9,6 +9,7 @@ use Oeltima\SimpleQueue\Contract\JobData;
 use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
 use Oeltima\SimpleQueue\Storage\PdoJobStorage;
 use Oeltima\SimpleQueue\Tests\Support\FrozenClock;
+use Oeltima\SimpleQueue\Tests\Support\SqliteFixture;
 use PDO;
 use PHPUnit\Framework\TestCase;
 
@@ -25,8 +26,7 @@ final class ConcurrencyTest extends TestCase
 
     private function createSqlitePdo(string $dbFile): PDO
     {
-        $pdo = new PDO("sqlite:$dbFile");
-        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $pdo = SqliteFixture::filePdo($dbFile);
         \Oeltima\SimpleQueue\Tests\DbHelper::createSchema($pdo);
         return $pdo;
     }
