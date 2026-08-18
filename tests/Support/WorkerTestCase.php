@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Tests\Support;
 
 use Oeltima\SimpleQueue\Contract\JobData;
+use Oeltima\SimpleQueue\Contract\JobHandlerInterface;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\JobRegistry;
 use Oeltima\SimpleQueue\QueueManager;
 use Oeltima\SimpleQueue\Worker;
+use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 
@@ -53,6 +55,90 @@ abstract class WorkerTestCase extends TestCase
             'default',
             array_merge($defaultOptions, $options)
         );
+    }
+
+    /**
+     * Arrange the shared claim, handler, and dequeue setup for a processing scenario.
+     *
+     * @param JobData $jobData Running job state under test
+     * @param \Closure $handler Handler callback for the scenario
+     * @return QueueDriverInterface&MockObject Queue driver double with the job dequeued once
+     */
+    protected function prepareProcessingScenario(JobData $jobData, \Closure $handler): QueueDriverInterface&MockObject
+    {
+        $jobHandler = new class implements JobHandlerInterface {
+            private static ?\Closure $handler = null;
+
+            public static function setHandler(\Closure $handler): void
+            {
+                self::$handler = $handler;
+            }
+
+            public function handle(
+                int $jobId,
+                array $payload,
+                ?callable $progressCallback = null
+            ): mixed {
+                if (self::$handler === null) {
+                    throw new \LogicException('Worker test handler was not configured');
+                }
+
+                return (self::$handler)($jobId, $payload, $progressCallback);
+            }
+        };
+
+        $jobHandler::setHandler($handler);
+        $this->registry->register('test.job', get_class($jobHandler));
+
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $driver->expects($this->once())->method('dequeue')->willReturn($jobData->id);
+        $this->mockClaimById($jobData);
+
+        return $driver;
+    }
+
+    /**
+     * Create a handler callback that returns a fixed result.
+     *
+     * @param mixed $result Handler result
+     * @return \Closure Handler callback
+     */
+    protected function handlerReturning(mixed $result): \Closure
+    {
+        return static fn(mixed ...$arguments): mixed => $result;
+    }
+
+    /**
+     * Create a handler callback that throws a runtime failure.
+     *
+     * @param string $message Failure message
+     * @return \Closure Handler callback
+     */
+    protected function handlerThrowing(string $message): \Closure
+    {
+        return static function (mixed ...$arguments) use ($message): mixed {
+            throw new \RuntimeException($message);
+        };
+    }
+
+    /**
+     * Create a handler callback that reports progress before returning.
+     *
+     * @param int $progress Progress percentage
+     * @param string $message Progress message
+     * @param mixed $result Handler result
+     * @return \Closure Handler callback
+     */
+    protected function handlerWithProgress(int $progress, string $message, mixed $result): \Closure
+    {
+        return static function (mixed ...$arguments) use ($progress, $message, $result): mixed {
+            $progressCallback = $arguments[2] ?? null;
+            if (is_callable($progressCallback)) {
+                $progressCallback($progress, $message);
+            }
+
+            return $result;
+        };
     }
 
     /**

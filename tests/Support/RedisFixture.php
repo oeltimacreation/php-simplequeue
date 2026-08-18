@@ -6,6 +6,7 @@ namespace Oeltima\SimpleQueue\Tests\Support;
 
 use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Driver\RedisQueueDriver;
+use Oeltima\SimpleQueue\SystemClock;
 use PHPUnit\Framework\TestCase;
 use Predis\Client;
 
@@ -16,11 +17,14 @@ final class RedisFixture
      *
      * @param TestCase $test Test case used for an explicit skip
      * @param string $prefix Driver key prefix
-     * @param ClockInterface|null $clock Optional test clock
+     * @param ClockInterface $clock Test clock
      * @return RedisQueueDriver Connected Redis driver
      */
-    public static function driver(TestCase $test, string $prefix, ?ClockInterface $clock = null): RedisQueueDriver
-    {
+    public static function driver(
+        TestCase $test,
+        string $prefix,
+        ClockInterface $clock = new SystemClock()
+    ): RedisQueueDriver {
         $host = getenv('REDIS_HOST');
         if (!is_string($host) || $host === '') {
             $test->markTestSkipped('REDIS_HOST is not set. Skipping Redis-backed test.');

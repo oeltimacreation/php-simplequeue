@@ -42,7 +42,7 @@ tooling audit landed:
 | Scope | PHP files | Classes | Methods | Physical lines | Duplicated windows |
 |---|---:|---:|---:|---:|---:|
 | Production | 81 | 81 | 351 | 7,564 | **0** |
-| Tests | 41 | 68 | 443 | 7,848 | 1,002 |
+| Tests | 41 | 68 | 447 | 7,796 | 752 |
 
 All production methods remain within the 15/15/3 complexity and 100-line
 ratchet targets, and production duplication remains at zero. The stored

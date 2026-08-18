@@ -4,9 +4,7 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue\Tests\Unit;
 
-use Oeltima\SimpleQueue\Contract\JobHandlerInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
-use Oeltima\SimpleQueue\Tests\Support\ClaimedJobFactory;
 use Oeltima\SimpleQueue\Tests\Support\JobDataFactory;
 use Oeltima\SimpleQueue\Tests\Support\WorkerTestCase;
 
@@ -53,20 +51,7 @@ final class WorkerProcessingTest extends WorkerTestCase
     public function testNackPassesDelayToDriver(): void
     {
         $jobData = JobDataFactory::running(['id' => 789, 'type' => 'test.job', 'attempts' => 0, 'maxAttempts' => 3]);
-
-        $handler = new class implements JobHandlerInterface {
-            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
-            {
-                throw new \RuntimeException('Job failed');
-            }
-        };
-
-        $this->registry->register('test.job', get_class($handler));
-
-        $driver = $this->createMock(QueueDriverInterface::class);
-        $driver->expects($this->once())->method('dequeue')->willReturn(789);
-
-        $this->mockClaimById($jobData);
+        $driver = $this->prepareProcessingScenario($jobData, $this->handlerThrowing('Job failed'));
 
         $this->storage->expects($this->once())
             ->method('scheduleRetry')
@@ -100,21 +85,11 @@ final class WorkerProcessingTest extends WorkerTestCase
 
     public function testProcessOneSuccessfulJobCompletion(): void
     {
-        $handler = new class implements JobHandlerInterface {
-            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
-            {
-                return ['processed' => true];
-            }
-        };
-
-        $this->registry->register('test.job', get_class($handler));
-
         $jobData = JobDataFactory::running(['id' => 100, 'type' => 'test.job', 'attempts' => 0, 'maxAttempts' => 3]);
-
-        $driver = $this->createMock(QueueDriverInterface::class);
-        $driver->expects($this->once())->method('dequeue')->willReturn(100);
-
-        $this->mockClaimById($jobData);
+        $driver = $this->prepareProcessingScenario(
+            $jobData,
+            $this->handlerReturning(['processed' => true])
+        );
 
         $this->storage->expects($this->once())
             ->method('markCompleted')
@@ -128,21 +103,11 @@ final class WorkerProcessingTest extends WorkerTestCase
 
     public function testProcessOneJobFailedAfterMaxAttempts(): void
     {
-        $handler = new class implements JobHandlerInterface {
-            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
-            {
-                throw new \RuntimeException('Job failed permanently');
-            }
-        };
-
-        $this->registry->register('test.job', get_class($handler));
-
         $jobData = JobDataFactory::running(['id' => 200, 'type' => 'test.job', 'attempts' => 2, 'maxAttempts' => 3]);
-
-        $driver = $this->createMock(QueueDriverInterface::class);
-        $driver->expects($this->once())->method('dequeue')->willReturn(200);
-
-        $this->mockClaimById($jobData);
+        $driver = $this->prepareProcessingScenario(
+            $jobData,
+            $this->handlerThrowing('Job failed permanently')
+        );
 
         $this->storage->expects($this->once())
             ->method('markFailed')
@@ -161,21 +126,11 @@ final class WorkerProcessingTest extends WorkerTestCase
 
     public function testWorkerRetryDelayIsExponential(): void
     {
-        $handler = new class implements JobHandlerInterface {
-            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
-            {
-                throw new \RuntimeException('Temporary failure');
-            }
-        };
-
-        $this->registry->register('test.job', get_class($handler));
-
         $jobData = JobDataFactory::running(['id' => 300, 'type' => 'test.job', 'attempts' => 0, 'maxAttempts' => 5]);
-
-        $driver = $this->createMock(QueueDriverInterface::class);
-        $driver->expects($this->once())->method('dequeue')->willReturn(300);
-
-        $this->mockClaimById($jobData);
+        $driver = $this->prepareProcessingScenario(
+            $jobData,
+            $this->handlerThrowing('Temporary failure')
+        );
 
         $this->storage->expects($this->once())
             ->method('scheduleRetry')
@@ -199,21 +154,11 @@ final class WorkerProcessingTest extends WorkerTestCase
 
     public function testWorkerRetryDelayCappedAtMaxDelay(): void
     {
-        $handler = new class implements JobHandlerInterface {
-            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
-            {
-                throw new \RuntimeException('Temporary failure');
-            }
-        };
-
-        $this->registry->register('test.job', get_class($handler));
-
         $jobData = JobDataFactory::running(['id' => 400, 'type' => 'test.job', 'attempts' => 8, 'maxAttempts' => 15]);
-
-        $driver = $this->createMock(QueueDriverInterface::class);
-        $driver->expects($this->once())->method('dequeue')->willReturn(400);
-
-        $this->mockClaimById($jobData);
+        $driver = $this->prepareProcessingScenario(
+            $jobData,
+            $this->handlerThrowing('Temporary failure')
+        );
 
         $this->storage->expects($this->once())
             ->method('scheduleRetry')
@@ -237,21 +182,11 @@ final class WorkerProcessingTest extends WorkerTestCase
 
     public function testWorkerHandlesAckExceptionAfterCompletedJob(): void
     {
-        $handler = new class implements JobHandlerInterface {
-            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
-            {
-                return ['done' => true];
-            }
-        };
-
-        $this->registry->register('test.job', get_class($handler));
-
         $jobData = JobDataFactory::running(['id' => 500, 'type' => 'test.job', 'attempts' => 0, 'maxAttempts' => 3]);
-
-        $driver = $this->createMock(QueueDriverInterface::class);
-        $driver->expects($this->once())->method('dequeue')->willReturn(500);
-
-        $this->mockClaimById($jobData);
+        $driver = $this->prepareProcessingScenario(
+            $jobData,
+            $this->handlerReturning(['done' => true])
+        );
 
         $this->storage->expects($this->once())
             ->method('markCompleted')
@@ -278,20 +213,7 @@ final class WorkerProcessingTest extends WorkerTestCase
     public function testHandleJobFailureCatchesStorageErrors(): void
     {
         $jobData = JobDataFactory::running(['id' => 999, 'type' => 'test.job', 'attempts' => 0, 'maxAttempts' => 3]);
-
-        $handler = new class implements JobHandlerInterface {
-            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
-            {
-                throw new \RuntimeException('Job failed');
-            }
-        };
-
-        $this->registry->register('test.job', get_class($handler));
-
-        $driver = $this->createMock(QueueDriverInterface::class);
-        $driver->expects($this->once())->method('dequeue')->willReturn(999);
-
-        $this->mockClaimById($jobData);
+        $driver = $this->prepareProcessingScenario($jobData, $this->handlerThrowing('Job failed'));
 
         $this->storage->expects($this->once())
             ->method('scheduleRetry')
@@ -305,33 +227,22 @@ final class WorkerProcessingTest extends WorkerTestCase
 
     public function testProgressCallbackTriggersUpdateProgressWithoutRedundantStorageHeartbeat(): void
     {
-        $handler = new class implements JobHandlerInterface {
-            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
-            {
-                if ($progressCallback !== null) {
-                    $progressCallback(45, 'Progress message');
-                }
-                return true;
-            }
-        };
-        $this->registry->register('test.job', get_class($handler));
-
-        $driver = $this->createMock(QueueDriverInterface::class);
         $jobData = JobDataFactory::running(['id' => 123, 'type' => 'test.job']);
-
-        $driver->expects($this->once())
-            ->method('dequeue')
-            ->willReturn(123);
-
-        $claim = ClaimedJobFactory::create($jobData, 'worker-1', 'token-123');
-
-        $this->storage->expects($this->once())
-            ->method('claimById')
-            ->willReturn($claim);
+        $driver = $this->prepareProcessingScenario(
+            $jobData,
+            $this->handlerWithProgress(45, 'Progress message', true)
+        );
 
         $this->storage->expects($this->once())
             ->method('updateProgress')
-            ->with($claim, 45, 'Progress message')
+            ->with(
+                $this->callback(
+                    fn($claim): bool =>
+                        $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 123
+                ),
+                45,
+                'Progress message'
+            )
             ->willReturn(true);
 
         $this->storage->expects($this->never())->method('heartbeat');
@@ -346,26 +257,8 @@ final class WorkerProcessingTest extends WorkerTestCase
 
     public function testWorkerHandlesLostOwnershipOnJobCompletion(): void
     {
-        $handler = new class implements JobHandlerInterface {
-            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
-            {
-                return true;
-            }
-        };
-        $this->registry->register('test.job', get_class($handler));
-
-        $driver = $this->createMock(QueueDriverInterface::class);
         $jobData = JobDataFactory::running(['id' => 123, 'type' => 'test.job']);
-
-        $driver->expects($this->once())
-            ->method('dequeue')
-            ->willReturn(123);
-
-        $claim = ClaimedJobFactory::create($jobData, 'worker-1', 'token-123');
-
-        $this->storage->expects($this->once())
-            ->method('claimById')
-            ->willReturn($claim);
+        $driver = $this->prepareProcessingScenario($jobData, $this->handlerReturning(true));
 
         $this->storage->expects($this->once())
             ->method('markCompleted')
@@ -387,26 +280,8 @@ final class WorkerProcessingTest extends WorkerTestCase
 
     public function testWorkerHandlesLostOwnershipOnRetryScheduling(): void
     {
-        $handler = new class implements JobHandlerInterface {
-            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
-            {
-                throw new \RuntimeException('Temporary error');
-            }
-        };
-        $this->registry->register('test.job', get_class($handler));
-
-        $driver = $this->createMock(QueueDriverInterface::class);
         $jobData = JobDataFactory::running(['id' => 123, 'type' => 'test.job']);
-
-        $driver->expects($this->once())
-            ->method('dequeue')
-            ->willReturn(123);
-
-        $claim = ClaimedJobFactory::create($jobData, 'worker-1', 'token-123');
-
-        $this->storage->expects($this->once())
-            ->method('claimById')
-            ->willReturn($claim);
+        $driver = $this->prepareProcessingScenario($jobData, $this->handlerThrowing('Temporary error'));
 
         $this->storage->expects($this->once())
             ->method('scheduleRetry')
@@ -428,26 +303,8 @@ final class WorkerProcessingTest extends WorkerTestCase
 
     public function testWorkerHandlesLostOwnershipOnMarkingFailed(): void
     {
-        $handler = new class implements JobHandlerInterface {
-            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
-            {
-                throw new \RuntimeException('Fatal error');
-            }
-        };
-        $this->registry->register('test.job', get_class($handler));
-
-        $driver = $this->createMock(QueueDriverInterface::class);
         $jobData = JobDataFactory::running(['id' => 123, 'type' => 'test.job', 'attempts' => 2, 'maxAttempts' => 3]);
-
-        $driver->expects($this->once())
-            ->method('dequeue')
-            ->willReturn(123);
-
-        $claim = ClaimedJobFactory::create($jobData, 'worker-1', 'token-123');
-
-        $this->storage->expects($this->once())
-            ->method('claimById')
-            ->willReturn($claim);
+        $driver = $this->prepareProcessingScenario($jobData, $this->handlerThrowing('Fatal error'));
 
         $this->storage->expects($this->once())
             ->method('markFailed')
