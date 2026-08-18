@@ -31,4 +31,11 @@
         </include>
     </source>
 
+    <coverage>
+        <report>
+            <clover outputFile="coverage/clover.xml"/>
+            <text outputFile="php://stdout" showOnlySummary="true"/>
+        </report>
+    </coverage>
+
 </phpunit>

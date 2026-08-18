@@ -9,43 +9,102 @@ const COGNITIVE_TARGET = 15;
 const NESTING_TARGET = 3;
 const METHOD_SIZE_TARGET = 100;
 const CLASS_SIZE_TARGET = 500;
+const CYCLOMATIC_BRANCH_TOKENS = [
+    T_IF,
+    T_ELSEIF,
+    T_FOR,
+    T_FOREACH,
+    T_WHILE,
+    T_CASE,
+    T_CATCH,
+];
+const BOOLEAN_OPERATOR_TOKENS = [
+    T_BOOLEAN_AND,
+    T_BOOLEAN_OR,
+    T_LOGICAL_AND,
+    T_LOGICAL_OR,
+    T_LOGICAL_XOR,
+    T_COALESCE,
+];
+const COGNITIVE_CONTROL_TOKENS = [
+    T_IF,
+    T_ELSEIF,
+    T_FOR,
+    T_FOREACH,
+    T_WHILE,
+    T_DO,
+    T_SWITCH,
+    T_CATCH,
+];
+const IGNORED_TOKEN_IDS = [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT, T_OPEN_TAG, T_CLOSE_TAG];
+const NORMALIZED_LITERAL_TOKENS = [
+    T_CONSTANT_ENCAPSED_STRING,
+    T_ENCAPSED_AND_WHITESPACE,
+    T_LNUMBER,
+    T_DNUMBER,
+];
 
-$root = dirname(__DIR__);
-$command = $argv[1] ?? 'report';
-$baselinePath = $argv[2] ?? $root . '/quality/quality-baseline.json';
-$exceptionsPath = $root . '/quality/ratchet-exceptions.json';
-$inventory = buildInventory($root);
-
-if ($command === 'report') {
-    printReport($inventory);
-    exit(0);
+if (realpath((string) ($_SERVER['SCRIPT_FILENAME'] ?? '')) === realpath(__FILE__)) {
+    exit(qualityMetricsMain($argv));
 }
 
-if ($command === 'write-baseline') {
-    $storedInventory = $inventory;
-    $storedInventory['duplicates'] = array_map(
+/**
+ * Run the command-line quality inventory workflow.
+ *
+ * Keeping the command entry point separate makes the token analyzer directly
+ * characterizable by the small fixtures used in the maintenance checks.
+ *
+ * @param list<string> $arguments
+ */
+function qualityMetricsMain(array $arguments): int
+{
+    $root = dirname(__DIR__);
+    $command = $arguments[1] ?? 'report';
+    $baselinePath = $arguments[2] ?? $root . '/quality/quality-baseline.json';
+    $inventory = buildInventory($root);
+
+    if ($command === 'report') {
+        printReport($inventory);
+        return 0;
+    }
+
+    if ($command === 'write-baseline') {
+        writeJson($baselinePath, baselineInventory($inventory));
+        printf("Quality baseline written to %s\n", relativePath(['root' => $root, 'path' => $baselinePath]));
+        return 0;
+    }
+
+    if ($command === 'check') {
+        return checkRatchet([
+            'root' => $root,
+            'current' => $inventory,
+            'baseline_path' => $baselinePath,
+            'exceptions_path' => $root . '/quality/ratchet-exceptions.json',
+        ]);
+    }
+
+    fwrite(STDERR, "Usage: quality-metrics.php [report|write-baseline|check] [baseline.json]\n");
+    return 2;
+}
+
+/**
+ * Remove volatile duplicate samples before writing a baseline.
+ *
+ * @param array<string, mixed> $inventory
+ * @return array<string, mixed>
+ */
+function baselineInventory(array $inventory): array
+{
+    $inventory['duplicates'] = array_map(
         static function (array $duplicate): array {
             unset($duplicate['sample_occurrences']);
             return $duplicate;
         },
-        $storedInventory['duplicates']
+        $inventory['duplicates']
     );
-    writeJson($baselinePath, $storedInventory);
-    printf("Quality baseline written to %s\n", relativePath(['root' => $root, 'path' => $baselinePath]));
-    exit(0);
-}
 
-if ($command === 'check') {
-    exit(checkRatchet([
-        'root' => $root,
-        'current' => $inventory,
-        'baseline_path' => $baselinePath,
-        'exceptions_path' => $exceptionsPath,
-    ]));
+    return $inventory;
 }
-
-fwrite(STDERR, "Usage: quality-metrics.php [report|write-baseline|check] [baseline.json]\n");
-exit(2);
 
 /**
  * @return array<string, mixed>
@@ -108,7 +167,11 @@ function findPhpFiles(string $root): array
 {
     $files = [];
     foreach (['src', 'tests'] as $directory) {
-        $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root . '/' . $directory));
+        $path = $root . '/' . $directory;
+        if (!is_dir($path)) {
+            continue;
+        }
+        $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($path));
         foreach ($iterator as $file) {
             if ($file->isFile() && $file->getExtension() === 'php') {
                 $files[] = $file->getPathname();
@@ -296,13 +359,14 @@ function calculateMethodMetrics(array $range): array
 function updateCyclomatic(array &$state, array $range, int $index): void
 {
     $token = $range['tokens'][$index];
-    $branches = [T_IF, T_ELSEIF, T_FOR, T_FOREACH, T_WHILE, T_CASE, T_CATCH];
-    $booleans = [T_BOOLEAN_AND, T_BOOLEAN_OR, T_LOGICAL_AND, T_LOGICAL_OR, T_LOGICAL_XOR, T_COALESCE];
     $isTernary = $token['text'] === '?';
     if (($range['tokens'][$index + 1]['text'] ?? '') === '>') {
         $isTernary = false;
     }
-    if (in_array(true, [in_array($token['id'], $branches, true), in_array($token['id'], $booleans, true), $isTernary], true)) {
+    if (in_array($token['id'], CYCLOMATIC_BRANCH_TOKENS, true)
+        || in_array($token['id'], BOOLEAN_OPERATOR_TOKENS, true)
+        || $isTernary
+    ) {
         $state['cyclomatic']++;
     }
 }
@@ -311,8 +375,7 @@ function updateCyclomatic(array &$state, array $range, int $index): void
 function updateControlCognitive(array &$state, array $range, int $index): void
 {
     $id = $range['tokens'][$index]['id'];
-    $controls = [T_IF, T_ELSEIF, T_FOR, T_FOREACH, T_WHILE, T_DO, T_SWITCH, T_CATCH];
-    if (in_array($id, $controls, true)) {
+    if (in_array($id, COGNITIVE_CONTROL_TOKENS, true)) {
         $state['cognitive'] += 1 + ($id === T_ELSEIF ? 0 : $state['control_nesting']);
         $state['pending_control'] = true;
         return;
@@ -327,8 +390,7 @@ function updateControlCognitive(array &$state, array $range, int $index): void
 function updateBooleanCognitive(array &$state, array $range, int $index): void
 {
     $token = $range['tokens'][$index];
-    $booleans = [T_BOOLEAN_AND, T_BOOLEAN_OR, T_LOGICAL_AND, T_LOGICAL_OR, T_LOGICAL_XOR, T_COALESCE];
-    if (in_array($token['id'], $booleans, true)) {
+    if (in_array($token['id'], BOOLEAN_OPERATOR_TOKENS, true)) {
         if ($state['previous_boolean'] !== $token['id']) {
             $state['cognitive']++;
         }
@@ -404,11 +466,9 @@ function normalizedMethodTokens(array $range): array
         if (!isSignificantToken($token)) {
             continue;
         }
-        $value = match ($token['id']) {
-            T_VARIABLE => '<variable>',
-            T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE, T_LNUMBER, T_DNUMBER => '<literal>',
-            default => strtolower($token['text']),
-        };
+        $value = $token['id'] === T_VARIABLE
+            ? '<variable>'
+            : (in_array($token['id'], NORMALIZED_LITERAL_TOKENS, true) ? '<literal>' : strtolower($token['text']));
         $normalized[] = ['value' => $value, 'line' => $token['line']];
     }
     return $normalized;
@@ -422,10 +482,14 @@ function findDuplicateWindows(array $methods): array
 {
     $windows = [];
     foreach ($methods as $methodKey => $method) {
-        $windows = array_merge_recursive($windows, duplicateWindowsForMethod([
+        foreach (duplicateWindowsForMethod([
             'key' => $methodKey,
             'method' => $method,
-        ]));
+        ]) as $fingerprint => $occurrences) {
+            foreach ($occurrences as $occurrenceKey => $occurrence) {
+                $windows[$fingerprint][$occurrenceKey] = $occurrence;
+            }
+        }
     }
 
     $duplicates = [];
@@ -911,7 +975,7 @@ function previousSignificantToken(array $tokens, int $start): ?int
  */
 function isSignificantToken(array $token): bool
 {
-    return !in_array($token['id'], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT, T_OPEN_TAG, T_CLOSE_TAG], true);
+    return !in_array($token['id'], IGNORED_TOKEN_IDS, true);
 }
 
 /**

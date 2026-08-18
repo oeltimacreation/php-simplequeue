@@ -2,6 +2,16 @@
 
 declare(strict_types=1);
 
+const BENCHMARK_COUNTER_METRICS = [
+    'db_queries',
+    'db_transactions',
+    'driver_roundtrips',
+    'redis_commands',
+    'redis_roundtrips',
+    'redis_wire_bytes',
+    'event_deliveries',
+];
+
 /** @param list<float|int> $values */
 function median(array $values): float
 {
@@ -46,21 +56,18 @@ function benchmark(BenchmarkScenario $scenario, BenchmarkOptions $options, Closu
         $measuredCpuSeconds = $cpuBefore !== null && $cpuAfter !== null
             ? cpuSeconds($cpuBefore, $cpuAfter)
             : 0.0;
+        $operations = (int) $metrics['operations'];
         $sample = [
             'seconds' => $seconds,
-            'throughput_per_second' => (float) $metrics['operations'] / max($seconds, 0.000_000_001),
+            'throughput_per_second' => $operations / max($seconds, 0.000_000_001),
             'peak_memory_bytes' => max(0, memory_get_peak_usage(false) - $memoryBefore),
             'retained_memory_bytes' => memory_get_usage(false) - $memoryBefore,
-            'operations' => (int) $metrics['operations'],
-            'db_queries' => (int) ($metrics['db_queries'] ?? 0),
-            'db_transactions' => (int) ($metrics['db_transactions'] ?? 0),
-            'driver_roundtrips' => (int) ($metrics['driver_roundtrips'] ?? 0),
-            'redis_commands' => (int) ($metrics['redis_commands'] ?? 0),
-            'redis_roundtrips' => (int) ($metrics['redis_roundtrips'] ?? 0),
-            'redis_wire_bytes' => (int) ($metrics['redis_wire_bytes'] ?? 0),
-            'event_deliveries' => (int) ($metrics['event_deliveries'] ?? 0),
-            'cpu_seconds' => (float) ($metrics['cpu_seconds'] ?? $measuredCpuSeconds),
+            'operations' => $operations,
         ];
+        foreach (BENCHMARK_COUNTER_METRICS as $metric) {
+            $sample[$metric] = (int) ($metrics[$metric] ?? 0);
+        }
+        $sample['cpu_seconds'] = (float) ($metrics['cpu_seconds'] ?? $measuredCpuSeconds);
         if (isset($metrics['cleanup']) && $metrics['cleanup'] instanceof Closure) {
             $metrics['cleanup']();
         }
