@@ -44,11 +44,11 @@ while sharing only connection and lifecycle setup.
 
 ## Deduplication and parity results
 
-The current v1.9.0 inventory reports **0 production duplicated
-windows** and 1,059 test duplicated windows. For historical comparison, the
-earlier v1.8 consolidation started at 128 production and 1,424 test windows,
-then reported 37 production and 1,107 test windows before the current baseline.
-No quality-ratchet exception, public API change, extra backend command, or
-weakened lease predicate was introduced. Middleware adds no storage or driver
-operations, and administrative re-queue is bounded to one queue notification per
-job; both budgets are enforced by the benchmark operation-count checks.
+The current v1.10.0 inventory reports **0 production duplicated
+windows** and 752 test duplicated windows. For historical comparison, the
+earlier v1.9 release reported 0 production and 1,059 test windows, and v1.8
+consolidation started at 128 production and 1,424 test windows. No quality-ratchet
+exception, public API change, extra backend command, or weakened lease predicate
+was introduced. Middleware adds no storage or driver operations, and administrative
+re-queue is bounded to one queue notification per job; both budgets are enforced
+by the benchmark operation-count checks.

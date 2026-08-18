@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-08-18
+
 ### Added
 
 - Added a reproducible v1.10 performance profile covering dispatch, claims, worker execution, retries, reconciliation, scheduled promotion, middleware, event delivery, and failed-job administration with environment, range, CPU, memory, and operation-count data.
