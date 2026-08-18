@@ -1,5 +1,96 @@
 # Performance profile
 
+## v1.10 baseline and optimization path
+
+Captured 2026-08-18 from the `v1.9.0` release commit and the v1.10 candidate
+with the same fixed workload. Both runs used PHP 8.4.24, SQLite 3.45.1, and a
+local Valkey 7.2.13 server on Linux x86-64. The machine reported kernel
+`7.0.0-28-generic`; Xdebug was loaded in `develop` mode but was not collecting a
+profile for the timing runs. Each scenario used 1 warmup and 5 measured samples,
+1,000 jobs (100 for Redis scenarios), and 500 deterministic idle cycles:
+
+```bash
+REDIS_HOST=127.0.0.1 REDIS_PORT=6379 composer benchmark -- \
+  --jobs=1000 --iterations=5 --warmup=1 --idle-cycles=500
+```
+
+The harness starts the timer after fixture setup and resets all counters before
+the operation; Redis key cleanup runs after the sample. Elapsed time uses
+`hrtime(true)`, CPU time uses `getrusage()` user plus system seconds, and memory
+uses PHP's non-real allocator counters. The JSON output retains every sample,
+the min/max range, environment metadata, and the operation counters below.
+
+### Release comparison
+
+Ranges are milliseconds for the complete timed operation. The v1.10 CPU column
+is process CPU time for the same operation, not an additional wall-clock timer.
+The listener-enabled path is new in this profile and has no v1.9 counterpart.
+
+| Scenario | v1.9 range | v1.10 range | v1.10 CPU | DB statements / transactions | Queue or Redis operations | Events | Peak memory |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| In-memory batch dispatch (1,000) | 4.85–5.87 | 4.85–5.22 | 5.09 ms | 0 / 0 | — | 0 | 2,093,936 B |
+| In-memory scheduled batch (1,000) | 4.15–4.58 | 4.56–5.52 | 4.63 ms | 0 / 0 | — | 0 | 2,349,936 B |
+| SQLite single dispatch (1,000) | 17.86–19.80 | 17.88–18.96 | 18.35 ms | 1,000 / 0 | — | 0 | 4,632 B |
+| SQLite scheduled single dispatch (1,000) | 22.18–23.17 | 22.00–22.23 | 21.97 ms | 1,000 / 0 | — | 0 | 4,904 B |
+| SQLite batch dispatch (1,000) | 4.98–5.37 | 5.09–5.42 | 5.18 ms | 1 / 0 | — | 0 | 1,454,688 B |
+| SQLite scheduled batch (1,000) | 6.16–6.46 | 6.10–6.79 | 6.31 ms | 1 / 0 | — | 0 | 1,710,688 B |
+| SQLite claim (1,000) | 77.96–83.58 | 77.56–80.14 | 77.95 ms | 3,000 / 1,000 | — | 0 | 10,392 B |
+| Worker execute/ACK (1,000) | 109.76–123.63 | 114.33–122.11 | 114.98 ms | 4,000 / 1,000 | 2,000 driver roundtrips | 0 | 11,952 B |
+| Worker event listener execute/ACK (1,000) | — | 118.80–124.42 | 120.70 ms | 4,000 / 1,000 | 2,000 driver roundtrips | 2,000 | 11,952 B |
+| Worker middleware execute/ACK (1,000) | 28.33–29.68 | 29.41–31.89 | 29.85 ms | 0 / 0 | 2,000 driver roundtrips | 0 | 589,224 B |
+| Worker retry/failure (1,000) | 185.42–194.36 | 148.40–176.36 | 149.86 ms | 4,000 / 1,000 | 2,000 driver roundtrips | 0 | 19,312 B |
+| Failed-job re-queue (1,000) | 14.23–14.58 | 14.42–14.83 | 14.43 ms | 0 / 0 | 1,000 driver roundtrips | 0 | 2,592 B |
+| SQLite reconciliation (1,000) | 22.70–23.17 | 23.08–24.35 | 23.63 ms | 1 / 0 | — | 0 | 2,559,760 B |
+| Idle worker maintenance (506 clock steps) | 4.92–5.05 | 4.93–5.22 | 4.99 ms | 202 / 0 | — | 0 | 2,592 B |
+| Idle worker CPU/memory (500 cycles) | 0.97–1.02 | 0.97–1.03 | 0.98 ms | 0 / 0 | — | 0 | 2,592 B |
+| Redis batch enqueue (100) | 0.108–0.125 | 0.133–0.246 | 0.13 ms | 0 / 0 | 1 command / 1 roundtrip | 0 | 14,504 B |
+| Redis scheduled single dispatch (100) | 3.35–4.15 | 3.67–7.05 | 3.54 ms | 0 / 0 | 100 commands / 100 roundtrips | 0 | 195,864 B |
+| Redis scheduled batch dispatch (100) | 0.816–0.846 | 0.894–1.554 | 1.22 ms | 0 / 0 | 1 command / 1 roundtrip | 0 | 399,336 B |
+| Redis delayed promotion (10,000) | 3.61–4.23 | 3.67–4.31 | 0.18 ms | 0 / 0 | 1 command / 1 roundtrip | 0 | 4,160 B |
+| Redis dequeue/ACK (100) | 7.96–8.19 | 8.08–9.36 | 7.46 ms | 0 / 0 | 301 commands / 201 roundtrips | 0 | 5,128 B |
+| Redis retry (100) | 9.07–14.91 | 9.56–14.26 | 8.65 ms | 0 / 0 | 400 commands / 200 roundtrips | 0 | 6,440 B |
+| Redis processing-score repair (100) | 2.90–4.20 | 2.61–4.70 | 2.75 ms | 0 / 0 | 202 commands / 4 roundtrips | 0 | 71,376 B |
+
+The cost model shows unchanged database and Redis operation budgets across the
+release comparison. The new worker counters make the normal path explicit:
+dequeue plus ACK is exactly two driver roundtrips per job, while an unconfigured
+listener delivers zero events. A configured listener receives the same two
+typed lifecycle events per job without changing storage or queue counts.
+
+### Selected change and rejected candidates
+
+The selected bounded improvement is the worker event fast path. Typed lifecycle
+events are now constructed only when the legacy listener is configured. The
+normal path therefore avoids event-object construction and payload conversion;
+the configured listener path retains the same event names, payloads, ordering,
+and listener exception isolation. The retry/failure profile moved from a
+189.42 ms v1.9 median to 150.03 ms (20.8% lower; the measured ranges do not
+overlap), while
+its database and queue counts remained 4,000 statements, 1,000 transactions,
+and 2,000 driver roundtrips. This is a local microbenchmark result, not a
+capacity promise; the operation-count reduction is the durable result.
+
+The Xdebug trace was used for hotspot attribution only, with timings excluded
+from the table:
+
+```bash
+profile_dir=$(mktemp -d /tmp/simplequeue-v110-profile.XXXXXX)
+REDIS_HOST=127.0.0.1 REDIS_PORT=6379 php \
+  -d xdebug.mode=profile -d xdebug.start_with_request=yes \
+  -d xdebug.output_dir="$profile_dir" benchmarks/run.php \
+  --jobs=100 --iterations=1 --warmup=0 --idle-cycles=50
+```
+
+The profile identified PDO claim/hydration/retry, worker `processOne()` and
+completion/failure branches, Redis dequeue/ACK/NACK, delayed promotion, and
+processing-score repair as the concentrated paths. No candidate was accepted
+for SQL/schema changes, extra Redis pipelines, key/argument rewrites, or a
+global middleware/event publisher: none reduced a measured statement or
+roundtrip in this pass, and each would carry greater backend or no-op-path risk.
+Those paths remain bounded by the benchmark assertions in
+`benchmarks/operation-count-checks.php` and are candidates for a later,
+backend-specific profile.
+
 ## v1.9 Stage 4–5 validation profile
 
 Captured 2026-08-13 before and after the v1.9 Stage 1–3 implementation using

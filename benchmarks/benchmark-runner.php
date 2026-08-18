@@ -38,9 +38,14 @@ function benchmark(BenchmarkScenario $scenario, BenchmarkOptions $options, Closu
         gc_collect_cycles();
         memory_reset_peak_usage();
         $memoryBefore = memory_get_usage(false);
+        $cpuBefore = function_exists('getrusage') ? getrusage() : null;
         $started = hrtime(true);
         $metrics = $operation();
         $seconds = (hrtime(true) - $started) / 1_000_000_000;
+        $cpuAfter = function_exists('getrusage') ? getrusage() : null;
+        $measuredCpuSeconds = $cpuBefore !== null && $cpuAfter !== null
+            ? cpuSeconds($cpuBefore, $cpuAfter)
+            : 0.0;
         $sample = [
             'seconds' => $seconds,
             'throughput_per_second' => (float) $metrics['operations'] / max($seconds, 0.000_000_001),
@@ -53,7 +58,8 @@ function benchmark(BenchmarkScenario $scenario, BenchmarkOptions $options, Closu
             'redis_commands' => (int) ($metrics['redis_commands'] ?? 0),
             'redis_roundtrips' => (int) ($metrics['redis_roundtrips'] ?? 0),
             'redis_wire_bytes' => (int) ($metrics['redis_wire_bytes'] ?? 0),
-            'cpu_seconds' => (float) ($metrics['cpu_seconds'] ?? 0),
+            'event_deliveries' => (int) ($metrics['event_deliveries'] ?? 0),
+            'cpu_seconds' => (float) ($metrics['cpu_seconds'] ?? $measuredCpuSeconds),
         ];
         if (isset($metrics['cleanup']) && $metrics['cleanup'] instanceof Closure) {
             $metrics['cleanup']();
@@ -63,11 +69,21 @@ function benchmark(BenchmarkScenario $scenario, BenchmarkOptions $options, Closu
         }
     }
 
+    $seconds = array_column($samples, 'seconds');
+    $throughput = array_column($samples, 'throughput_per_second');
+    $peakMemory = array_column($samples, 'peak_memory_bytes');
+    $cpuSeconds = array_column($samples, 'cpu_seconds');
+
     return [
         'name' => $scenario->value,
         'median_seconds' => median(array_column($samples, 'seconds')),
         'median_throughput_per_second' => median(array_column($samples, 'throughput_per_second')),
         'median_operations' => median(array_column($samples, 'operations')),
+        'min_seconds' => min($seconds),
+        'max_seconds' => max($seconds),
+        'min_throughput_per_second' => min($throughput),
+        'max_throughput_per_second' => max($throughput),
+        'min_peak_memory_bytes' => min($peakMemory),
         'max_peak_memory_bytes' => max([0, ...array_column($samples, 'peak_memory_bytes')]),
         'median_retained_memory_bytes' => median(array_column($samples, 'retained_memory_bytes')),
         'median_db_queries' => median(array_column($samples, 'db_queries')),
@@ -76,6 +92,9 @@ function benchmark(BenchmarkScenario $scenario, BenchmarkOptions $options, Closu
         'median_redis_commands' => median(array_column($samples, 'redis_commands')),
         'median_redis_roundtrips' => median(array_column($samples, 'redis_roundtrips')),
         'median_redis_wire_bytes' => median(array_column($samples, 'redis_wire_bytes')),
+        'median_event_deliveries' => median(array_column($samples, 'event_deliveries')),
+        'min_cpu_seconds' => min($cpuSeconds),
+        'max_cpu_seconds' => max($cpuSeconds),
         'median_cpu_seconds' => median(array_column($samples, 'cpu_seconds')),
         'samples' => $samples,
     ];

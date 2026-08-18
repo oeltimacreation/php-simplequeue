@@ -19,6 +19,7 @@ function localBenchmarks(BenchmarkOptions $options): array
         sqliteBatchBenchmark($options, true),
         sqliteClaimBenchmark($options),
         workerExecutionBenchmark($options),
+        listenerWorkerBenchmark($options),
         middlewareWorkerBenchmark($options),
         workerRetryBenchmark($options),
         failedJobRequeueBenchmark($options),

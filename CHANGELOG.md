@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added a reproducible v1.10 performance profile covering dispatch, claims, worker execution, retries, reconciliation, scheduled promotion, middleware, event delivery, and failed-job administration with environment, range, CPU, memory, and operation-count data.
+
+### Changed
+
+- Optimized the worker's unconfigured event-listener path to avoid constructing typed lifecycle events while preserving listener names, payloads, ordering, and failure isolation when a listener is configured.
+- Expanded benchmark guardrails to assert database, queue, Redis, middleware, listener, and no-op-path operation-count invariants.
+
 ## [1.9.0] - 2026-08-13
 
 ### Added

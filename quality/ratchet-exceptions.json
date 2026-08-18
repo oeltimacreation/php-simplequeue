@@ -1,6 +1,13 @@
 {
     "schema_version": 1,
     "methods": {},
-    "classes": {},
+    "classes": {
+        "src/Worker.php::Oeltima\\SimpleQueue\\Worker": {
+            "metrics": [
+                "lines"
+            ],
+            "reason": "Keep lazy lifecycle-event construction in private worker helpers so the no-listener hot path does not allocate typed events."
+        }
+    },
     "duplicates": {}
 }
