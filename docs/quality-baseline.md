@@ -42,7 +42,7 @@ tooling audit landed:
 | Scope | PHP files | Classes | Methods | Physical lines | Duplicated windows |
 |---|---:|---:|---:|---:|---:|
 | Production | 81 | 81 | 351 | 7,564 | **0** |
-| Tests | 37 | 64 | 447 | 7,881 | 1,058 |
+| Tests | 41 | 68 | 443 | 7,848 | 1,002 |
 
 All production methods remain within the 15/15/3 complexity and 100-line
 ratchet targets, and production duplication remains at zero. The stored
@@ -77,6 +77,10 @@ exception must be narrowly recorded with its metric and reason in
 | Benchmarks | Counter normalization is shared in the runner. Scenario names, JSON result fields, fixture cleanup, and hard operation-count assertions are unchanged. |
 | Composer and CI | Composer scripts use Composer's current PHP interpreter. The CI matrix retains PHP 8.2–8.5, Redis, Valkey, MySQL, PostgreSQL, lowest dependencies, audit, coverage, examples, and the `Quality gates` job name. Explicit matrix metadata preserves the Redis/MySQL and Valkey/PostgreSQL concurrency pairings, while per-ref cancellation avoids superseded runs. |
 | Static analysis and style | The deprecated PHPUnit assertion ignore was removed. The PHPCS test line-length exclusion was characterized as active and retained; unmatched-ignore reporting, other test-only exclusions, and the optional Predis boundary remain explicit. |
+| Worker tests | Claim/completion/retry/ownership scenarios, run-loop controls, and event delivery now have separate focused suites with a shared unit-only worker setup. Assertions stay in the scenario tests. |
+| Backend fixtures | SQLite creation, Redis connection/skip behavior, and notification cleanup are shared only through backend-specific fixtures; database polling keeps its storage-owned lifecycle explicit. |
+| Contract and integration boundary | Contract suites remain the parity owners, while integration suites retain real-service, concurrency, crash, fault-injection, and soak coverage. No overlapping safety assertion was removed. |
+| Test support | The unused `WorkerHarness` was removed. `ClaimedJobFactory` now requires explicit lease state, and `JobDataFactory` exposes only the running-job fixture used by the worker tests. |
 
 These choices reduce configuration layers without hiding service dimensions or
 removing behavior, backend-parity, coverage, static-analysis, or ratchet gates.
@@ -130,7 +134,7 @@ semantics, and `RedisQueueDriver::dequeue()`. Existing lifecycle, crash
 recovery, and worker failure tests remain part of their characterization map.
 Initial characterization work added these missing edge cases:
 
-- `WorkerTest::testRunReturnsErrorWhenInitialRecoveryFails()` protects fatal
+- `WorkerRunLoopTest::testRunReturnsErrorWhenInitialRecoveryFails()` protects fatal
   startup recovery and the worker exit code;
 - `PdoJobStorageTest::testClaimTransactionRollsBackWhenClaimUpdateFails()`
   protects rollback and durable pending state after an exceptional claim;

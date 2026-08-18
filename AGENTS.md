@@ -58,7 +58,9 @@ tests/
 │   ├── PdoJobStorageTest.php
 │   ├── QueueManagerTest.php
 │   ├── RedisQueueDriverTest.php
-│   └── WorkerTest.php
+│   ├── WorkerProcessingTest.php
+│   ├── WorkerRunLoopTest.php
+│   └── WorkerObservabilityTest.php
 └── Integration/        # Full lifecycle tests
     ├── CrashRecoveryTest.php
     └── JobLifecycleTest.php
