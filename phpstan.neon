@@ -25,10 +25,7 @@ parameters:
         -
             message: '#Call to deprecated method setWorkerId\(\)#'
             path: tests/Unit/DatabaseQueueDriverTest.php
-        # Defensive runtime validation accepts mixed caller input despite precise types.
-        -
-            identifier: function.alreadyNarrowedType
-            path: src/Driver/InMemoryQueueDriver.php
+        # Predis PHPDoc promises this method, while older runtime clients may omit it.
         -
             identifier: function.alreadyNarrowedType
             path: src/Driver/RedisQueueDriver.php

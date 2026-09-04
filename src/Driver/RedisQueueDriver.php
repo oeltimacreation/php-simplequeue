@@ -459,25 +459,41 @@ LUA;
      */
     private function reconciliationArguments(array $availableAtByJobId, int $now, int $pendingScanLimit): array
     {
+        $this->validateReconciliationLimits($now, $pendingScanLimit);
+        $ids = [];
+        $timestamps = [];
+        foreach ($availableAtByJobId as $jobId => $availableAt) {
+            $this->validateReconciliationPair($jobId, $availableAt);
+            $ids[] = (string) $jobId;
+            $timestamps[] = (string) $availableAt;
+        }
+        return [$ids, $timestamps];
+    }
+
+    private function validateReconciliationLimits(int $now, int $pendingScanLimit): void
+    {
         if ($now <= 0) {
             throw new \InvalidArgumentException('Reconciliation current timestamp must be positive');
         }
         if ($pendingScanLimit < 1) {
             throw new \InvalidArgumentException('Pending scan limit must be positive');
         }
-        $ids = [];
-        $timestamps = [];
-        foreach ($availableAtByJobId as $jobId => $availableAt) {
-            if (!is_int($jobId) || $jobId < 1) {
-                throw new \InvalidArgumentException('Reconciliation job IDs must be positive integers');
-            }
-            if (!is_int($availableAt) || $availableAt <= 0) {
-                throw new \InvalidArgumentException('Reconciliation timestamps must be positive integers');
-            }
-            $ids[] = (string) $jobId;
-            $timestamps[] = (string) $availableAt;
+    }
+
+    private function validateReconciliationPair(mixed $jobId, mixed $availableAt): void
+    {
+        if (!is_int($jobId)) {
+            throw new \InvalidArgumentException('Reconciliation job IDs must be positive integers');
         }
-        return [$ids, $timestamps];
+        if ($jobId < 1) {
+            throw new \InvalidArgumentException('Reconciliation job IDs must be positive integers');
+        }
+        if (!is_int($availableAt)) {
+            throw new \InvalidArgumentException('Reconciliation timestamps must be positive integers');
+        }
+        if ($availableAt <= 0) {
+            throw new \InvalidArgumentException('Reconciliation timestamps must be positive integers');
+        }
     }
 
     /** @param array{list<string>, list<string>} $arguments */

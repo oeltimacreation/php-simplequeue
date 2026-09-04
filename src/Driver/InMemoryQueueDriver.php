@@ -465,9 +465,23 @@ final class InMemoryQueueDriver implements
             throw new \InvalidArgumentException('Pending scan limit must be positive');
         }
         foreach ($availableAtByJobId as $jobId => $availableAt) {
-            if (!is_int($jobId) || $jobId < 1 || !is_int($availableAt) || $availableAt <= 0) {
-                throw new \InvalidArgumentException('Reconciliation IDs and timestamps must be positive integers');
-            }
+            $this->validateReconciliationPair($jobId, $availableAt);
+        }
+    }
+
+    private function validateReconciliationPair(mixed $jobId, mixed $availableAt): void
+    {
+        if (!is_int($jobId)) {
+            throw new \InvalidArgumentException('Reconciliation IDs must be positive integers');
+        }
+        if ($jobId < 1) {
+            throw new \InvalidArgumentException('Reconciliation IDs must be positive integers');
+        }
+        if (!is_int($availableAt)) {
+            throw new \InvalidArgumentException('Reconciliation timestamps must be positive integers');
+        }
+        if ($availableAt <= 0) {
+            throw new \InvalidArgumentException('Reconciliation timestamps must be positive integers');
         }
     }
 

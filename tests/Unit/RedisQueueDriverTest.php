@@ -646,6 +646,20 @@ class RedisQueueDriverTest extends TestCase
         self::assertSame([], $this->redis->calls);
     }
 
+    public function testReconciliationPairValidationRejectsEveryInvalidShape(): void
+    {
+        $validation = new \ReflectionMethod(RedisQueueDriver::class, 'validateReconciliationPair');
+        $validation->invoke($this->driver, 1, 1_700_000_000);
+        foreach ([['bad', 1], [0, 1], [1, 'bad'], [1, 0]] as [$jobId, $availableAt]) {
+            try {
+                $validation->invoke($this->driver, $jobId, $availableAt);
+                self::fail('Invalid reconciliation pair must fail');
+            } catch (\InvalidArgumentException) {
+                $this->addToAssertionCount(1);
+            }
+        }
+    }
+
     public function testIsAvailableReturnsTrueOnSuccessfulPing(): void
     {
         $this->redis->returns['ping'] = 'PONG';

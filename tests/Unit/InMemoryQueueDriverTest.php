@@ -365,4 +365,18 @@ class InMemoryQueueDriverTest extends TestCase
             }
         }
     }
+
+    public function testReconciliationPairValidationRejectsEveryInvalidShape(): void
+    {
+        $validation = new \ReflectionMethod(InMemoryQueueDriver::class, 'validateReconciliationPair');
+        $validation->invoke($this->driver, 1, $this->clock->timestamp());
+        foreach ([['bad', 1], [0, 1], [1, 'bad'], [1, 0]] as [$jobId, $availableAt]) {
+            try {
+                $validation->invoke($this->driver, $jobId, $availableAt);
+                self::fail('Invalid reconciliation pair must fail');
+            } catch (\InvalidArgumentException) {
+                $this->addToAssertionCount(1);
+            }
+        }
+    }
 }

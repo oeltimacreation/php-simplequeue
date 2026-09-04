@@ -351,34 +351,10 @@ final class JobDataHydrator
     private static function strictTimestamps(array $row): void
     {
         foreach (['available_at', 'created_at', 'updated_at'] as $field) {
-            self::requireNonEmptyString($row, $field);
+            self::requireString($row, $field, ['nullable' => false, 'nonEmpty' => true, 'maxLength' => null]);
         }
         foreach (['started_at', 'completed_at', 'locked_at'] as $field) {
-            self::requireNullableNonEmptyString($row, $field);
-        }
-    }
-
-    /** @param StrictRow $row */
-    private static function requireNonEmptyString(array $row, string $field): void
-    {
-        $value = $row['data'][$field];
-        if (!is_string($value)) {
-            self::invalid($row['id'], $field);
-        }
-        if (trim($value) === '') {
-            self::invalid($row['id'], $field);
-        }
-    }
-
-    /** @param StrictRow $row */
-    private static function requireNullableNonEmptyString(array $row, string $field): void
-    {
-        $value = $row['data'][$field];
-        if ($value === null) {
-            return;
-        }
-        if (!is_string($value) || trim($value) === '') {
-            self::invalid($row['id'], $field);
+            self::requireString($row, $field, ['nullable' => true, 'nonEmpty' => true, 'maxLength' => null]);
         }
     }
 
@@ -390,38 +366,68 @@ final class JobDataHydrator
     private static function strictNullableStrings(array $row): void
     {
         foreach (['error_message', 'error_trace'] as $field) {
-            self::requireNullableString($row, $field);
-        }
-        foreach (['locked_by', 'progress_message', 'request_id'] as $field) {
-            self::requireNullableBoundedString($row, $field);
+            self::requireString($row, $field, ['nullable' => true, 'nonEmpty' => false, 'maxLength' => null]);
         }
         foreach (['locked_by', 'request_id'] as $field) {
-            self::requireNullableNonEmptyString($row, $field);
+            self::requireString($row, $field, ['nullable' => true, 'nonEmpty' => true, 'maxLength' => 255]);
         }
+        self::requireString(
+            $row,
+            'progress_message',
+            ['nullable' => true, 'nonEmpty' => false, 'maxLength' => 255]
+        );
         self::requireLeaseToken($row);
     }
 
-    /** @param StrictRow $row */
-    private static function requireNullableString(array $row, string $field): void
-    {
-        $value = $row['data'][$field];
-        if ($value !== null && !is_string($value)) {
-            self::invalid($row['id'], $field);
-        }
-    }
-
-    /** @param StrictRow $row */
-    private static function requireNullableBoundedString(array $row, string $field): void
+    /**
+     * @param StrictRow $row
+     * @param array{nullable: bool, nonEmpty: bool, maxLength: int|null} $rules
+     */
+    private static function requireString(array $row, string $field, array $rules): void
     {
         $value = $row['data'][$field];
         if ($value === null) {
-            return;
+            if ($rules['nullable']) {
+                return;
+            }
+            self::invalid($row['id'], $field);
         }
         if (!is_string($value)) {
             self::invalid($row['id'], $field);
         }
-        if (strlen($value) > 255) {
-            self::invalid($row['id'], $field);
+        self::requireConfiguredNonEmptyString([
+            'row' => $row,
+            'field' => $field,
+            'value' => $value,
+            'required' => $rules['nonEmpty'],
+        ]);
+        self::requireConfiguredStringLength([
+            'row' => $row,
+            'field' => $field,
+            'value' => $value,
+            'maxLength' => $rules['maxLength'],
+        ]);
+    }
+
+    /** @param array{row: StrictRow, field: string, value: string, required: bool} $context */
+    private static function requireConfiguredNonEmptyString(array $context): void
+    {
+        if (!$context['required']) {
+            return;
+        }
+        if (trim($context['value']) === '') {
+            self::invalid($context['row']['id'], $context['field']);
+        }
+    }
+
+    /** @param array{row: StrictRow, field: string, value: string, maxLength: int|null} $context */
+    private static function requireConfiguredStringLength(array $context): void
+    {
+        if ($context['maxLength'] === null) {
+            return;
+        }
+        if (strlen($context['value']) > $context['maxLength']) {
+            self::invalid($context['row']['id'], $context['field']);
         }
     }
 

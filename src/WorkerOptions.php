@@ -42,7 +42,10 @@ final readonly class WorkerOptions
         int $retryBaseDelay,
         int $retryMaxDelay
     ): void {
-        if ($pollTimeout < 0 || $stuckJobTtl < 1 || $retryBaseDelay < 0 || $retryMaxDelay < $retryBaseDelay) {
+        self::assertNonNegative($pollTimeout, 'Worker poll timeout');
+        self::assertPositive($stuckJobTtl, 'Worker stuck-job TTL');
+        self::assertNonNegative($retryBaseDelay, 'Worker retry base delay');
+        if ($retryMaxDelay < $retryBaseDelay) {
             throw new \InvalidArgumentException('Worker timeout, TTL, and retry delay options are invalid');
         }
     }
@@ -52,20 +55,38 @@ final readonly class WorkerOptions
         int $maxTime,
         int $memoryLimit
     ): void {
-        if ($maxJobs < 0 || $maxTime < 0 || $memoryLimit < 0) {
-            throw new \InvalidArgumentException('Worker limits and intervals must be finite and non-negative');
-        }
+        self::assertNonNegative($maxJobs, 'Worker maximum jobs');
+        self::assertNonNegative($maxTime, 'Worker maximum time');
+        self::assertNonNegative($memoryLimit, 'Worker memory limit');
     }
 
     private static function validateIntervals(float $promoteInterval, float $recoveryInterval): void
     {
-        if (
-            !is_finite($promoteInterval)
-            || $promoteInterval < 0
-            || !is_finite($recoveryInterval)
-            || $recoveryInterval < 0
-        ) {
-            throw new \InvalidArgumentException('Worker limits and intervals must be finite and non-negative');
+        self::assertFiniteNonNegative($promoteInterval, 'Worker promotion interval');
+        self::assertFiniteNonNegative($recoveryInterval, 'Worker recovery interval');
+    }
+
+    private static function assertNonNegative(int $value, string $field): void
+    {
+        if ($value < 0) {
+            throw new \InvalidArgumentException(sprintf('%s must be non-negative', $field));
+        }
+    }
+
+    private static function assertPositive(int $value, string $field): void
+    {
+        if ($value < 1) {
+            throw new \InvalidArgumentException(sprintf('%s must be positive', $field));
+        }
+    }
+
+    private static function assertFiniteNonNegative(float $value, string $field): void
+    {
+        if (!is_finite($value)) {
+            throw new \InvalidArgumentException(sprintf('%s must be finite', $field));
+        }
+        if ($value < 0) {
+            throw new \InvalidArgumentException(sprintf('%s must be non-negative', $field));
         }
     }
 
