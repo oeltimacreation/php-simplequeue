@@ -1,0 +1,25 @@
+name: BC Check
+
+on:
+  push:
+    branches: [master, 'release/**', 'feat/**']
+  pull_request:
+    branches: [master, 'release/**']
+
+permissions:
+  contents: read
+
+jobs:
+  backward-compatibility:
+    name: Roave BC vs v1.10.0 (PHP 8.5)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+      - uses: shivammathur/setup-php@add91f08e1598a0b6ff470f1e389f9d652559bf0
+        with:
+          php-version: '8.5'
+          extensions: pdo, pdo_sqlite
+          coverage: none
+      - run: bash scripts/bc-check.sh v1.10.0

@@ -32,6 +32,7 @@
     },
     "require-dev": {
         "dealerdirect/phpcodesniffer-composer-installer": "^1.2",
+        "infection/infection": "^0.31.9",
         "phpstan/extension-installer": "^1.4",
         "phpstan/phpstan": "^2.2.2",
         "phpstan/phpstan-deprecation-rules": "^2.0",
@@ -59,22 +60,31 @@
     },
     "scripts": {
         "test": "phpunit --no-coverage",
-        "test-coverage": "phpunit --coverage-html coverage",
+        "test-coverage": "phpunit --coverage-clover coverage/clover.xml --coverage-html coverage",
+        "coverage-check": "@php scripts/check-coverage.php coverage/clover.xml 83.9",
         "phpstan": "phpstan analyse",
         "cs-check": "phpcs",
         "cs-fix": "phpcbf",
-        "quality-fixtures": "@php scripts/quality-metrics-fixtures.php",
-        "quality-report": "@php scripts/quality-metrics.php report",
-        "quality-ratchet": [
-            "@quality-fixtures",
-            "@php scripts/quality-metrics.php check"
-        ],
         "benchmark": "@php benchmarks/run.php",
+        "budgets": "@php benchmarks/operation-count-checks.php",
+        "mutation": "infection --threads=4",
+        "check-fast": [
+            "@test",
+            "@phpstan",
+            "@cs-check"
+        ],
         "check": [
             "@test",
             "@phpstan",
             "@cs-check",
-            "@quality-ratchet"
+            "@budgets"
+        ],
+        "check-ci": [
+            "@test-coverage",
+            "@coverage-check",
+            "@phpstan",
+            "@cs-check",
+            "@budgets"
         ]
     },
     "config": {

@@ -1,0 +1,17 @@
+{
+    "$schema": "https://github.com/infection/infection/blob/master/resources/schema.json",
+    "source": {
+        "directories": ["src"],
+        "excludes": ["Exception", "Contract"]
+    },
+    "logs": {
+        "text": "infection.log",
+        "summary": "infection-summary.log"
+    },
+    "mutators": {
+        "@default": true
+    },
+    "testFramework": "phpunit",
+    "testFrameworkOptions": "--no-coverage",
+    "timeout": 10
+}

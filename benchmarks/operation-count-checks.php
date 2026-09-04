@@ -44,7 +44,13 @@ function assertHotLoopCounters(array $results): void
 }
 
 /**
- * Database dispatch keeps one statement per single job and one batch statement.
+ * Database dispatch keeps one statement per single job; batches are atomic.
+ *
+ * Single inserts remain one statement. Batched inserts hold one
+ * transaction/savepoint across all chunks (SQLite 100 rows, others 1000
+ * rows / 1MiB) so a later failure rolls back the whole logical batch.
+ * A 100-job benchmark batch is one chunk: one transaction + bounded
+ * statements (INSERT plus transaction control).
  *
  * @param array<string, array<string, mixed>> $byName Indexed benchmark results
  */
@@ -62,11 +68,20 @@ function assertDatabaseDispatchPaths(array $byName): void
 
     foreach (['sqlite.dispatch_batch', 'sqlite.dispatch_scheduled_batch'] as $name) {
         $batch = requireScenario($byName, $name);
-        assertMetricEquals(
+        $operations = operationCount($batch);
+        assertMetricAtMost(
+            $batch,
+            'median_db_transactions',
+            1,
+            "{$name} exceeds one transaction per atomic batch"
+        );
+        // One INSERT per 100-row SQLite chunk plus transaction control.
+        $maxQueries = (int) ceil($operations / 100) + 2;
+        assertMetricAtMost(
             $batch,
             'median_db_queries',
-            1,
-            "{$name} is no longer one database statement"
+            $maxQueries,
+            "{$name} exceeds bounded statements per atomic batch chunk"
         );
     }
 }

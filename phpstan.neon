@@ -1,18 +1,42 @@
 parameters:
     level: 9
+    phpVersion: 80200
     paths:
         - src
         - tests
     reportUnmatchedIgnoredErrors: true
     ignoreErrors:
-        # Predis is optional dependency
-        - '#Predis\\ClientInterface#'
-        
+        # Intentional BC: built-in drivers retain deprecated capability interfaces.
+        -
+            message: '#implements deprecated interface Oeltima\\SimpleQueue\\Contract\\SupportsWorkerId#'
+            path: src/Driver/DatabaseQueueDriver.php
+        -
+            message: '#implements deprecated interface Oeltima\\SimpleQueue\\Contract\\SupportsQueueReconciliation#'
+            path: src/Driver/InMemoryQueueDriver.php
+        -
+            message: '#implements deprecated interface Oeltima\\SimpleQueue\\Contract\\SupportsQueueReconciliation#'
+            path: src/Driver/RedisQueueDriver.php
+        -
+            message: '#Call to method setWorkerId\(\) of deprecated interface#'
+            path: src/Worker.php
+        -
+            message: '#Call to deprecated method setWorkerId\(\)#'
+            path: tests/Unit/DatabaseQueueDriverTest.php
+        # Defensive runtime validation accepts mixed caller input despite precise types.
+        -
+            identifier: function.alreadyNarrowedType
+            path: src/Driver/InMemoryQueueDriver.php
+        -
+            identifier: function.alreadyNarrowedType
+            path: src/Driver/RedisQueueDriver.php
+        # Predis magic methods (lpos) via __call.
+        -
+            message: '#Call to an undefined method Predis\\ClientInterface::lpos\(\)#'
+            path: src/Driver/RedisQueueDriver.php
         # Ignore dynamic calls to static PHPUnit assertions in tests
         -
             message: '#Dynamic call to static method PHPUnit\\Framework\\Assert::#'
             path: tests
-            
         # Ignore strict level 9 type-hint and mock object warnings in test files
         -
             identifier: missingType.parameter

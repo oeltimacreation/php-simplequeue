@@ -2,8 +2,8 @@
 
 declare(strict_types=1);
 
-if ($argc !== 3) {
-    fwrite(STDERR, "Usage: check-coverage.php <clover.xml> <minimum-percent>\n");
+if ($argc < 3 || $argc > 4) {
+    fwrite(STDERR, "Usage: check-coverage.php <clover.xml> <min-lines> [min-methods]\n");
     exit(2);
 }
 
@@ -20,11 +20,27 @@ if ($statements === 0) {
     fwrite(STDERR, "Clover report contains no statements\n");
     exit(2);
 }
-$coverage = ($covered / $statements) * 100;
-$minimum = (float) $argv[2];
-if ($coverage < $minimum) {
-    fwrite(STDERR, sprintf("Line coverage %.2f%% is below %.2f%%\n", $coverage, $minimum));
+$lineCoverage = ($covered / $statements) * 100;
+$minLines = (float) $argv[2];
+if ($lineCoverage < $minLines) {
+    fwrite(STDERR, sprintf("Line coverage %.2f%% is below %.2f%%\n", $lineCoverage, $minLines));
     exit(1);
 }
 
-printf("Line coverage %.2f%% meets %.2f%% threshold\n", $coverage, $minimum);
+printf("Line coverage %.2f%% meets %.2f%% threshold\n", $lineCoverage, $minLines);
+
+if ($argc === 4) {
+    $methods = isset($metrics['methods']) ? (int) $metrics['methods'] : 0;
+    $coveredMethods = isset($metrics['coveredmethods']) ? (int) $metrics['coveredmethods'] : 0;
+    if ($methods === 0) {
+        fwrite(STDERR, "Clover report contains no methods\n");
+        exit(2);
+    }
+    $methodCoverage = ($coveredMethods / $methods) * 100;
+    $minMethods = (float) $argv[3];
+    if ($methodCoverage < $minMethods) {
+        fwrite(STDERR, sprintf("Method coverage %.2f%% is below %.2f%%\n", $methodCoverage, $minMethods));
+        exit(1);
+    }
+    printf("Method coverage %.2f%% meets %.2f%% threshold\n", $methodCoverage, $minMethods);
+}

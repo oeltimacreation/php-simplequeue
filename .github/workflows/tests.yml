@@ -15,23 +15,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  compatibility:
-    name: PHP ${{ matrix.php }} / ${{ matrix.service }}
+  service-free:
+    name: PHP ${{ matrix.php }} / in-memory+SQLite
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         php: ['8.2', '8.3', '8.4', '8.5']
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: shivammathur/setup-php@add91f08e1598a0b6ff470f1e389f9d652559bf0
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pdo, pdo_sqlite
+          coverage: none
+      - run: composer install --no-interaction --prefer-dist --no-progress
+      - run: composer test
+
+  redis:
+    name: PHP ${{ matrix.php }} / Redis 7 + Valkey 8
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.5']
         service: [redis, valkey]
-        include:
-          - service: redis
-            redis_port: '6379'
-            db_dsn: 'mysql:host=127.0.0.1;port=3306;dbname=test_simplequeue'
-            db_user: root
-          - service: valkey
-            redis_port: '6380'
-            db_dsn: 'pgsql:host=127.0.0.1;port=5432;dbname=test_simplequeue'
-            db_user: postgres
     services:
       redis:
         image: redis:7
@@ -43,6 +51,34 @@ jobs:
         ports: ['6380:6379']
         options: >-
           --health-cmd "valkey-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: shivammathur/setup-php@add91f08e1598a0b6ff470f1e389f9d652559bf0
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pdo, pdo_sqlite
+          coverage: none
+      - run: composer install --no-interaction --prefer-dist --no-progress
+      - run: composer test
+        env:
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: 6379
+          VALKEY_HOST: 127.0.0.1
+          VALKEY_PORT: 6380
+      - run: php benchmarks/operation-count-checks.php
+        env:
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: ${{ matrix.service == 'redis' && '6379' || '6380' }}
+
+  database:
+    name: PHP ${{ matrix.php }} / MySQL 8 + PostgreSQL 15
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.5']
+        service: [mysql, pgsql]
+    services:
       mysql:
         image: mysql:8.0
         env:
@@ -69,19 +105,12 @@ jobs:
       - run: composer install --no-interaction --prefer-dist --no-progress
       - run: composer test
         env:
-          REDIS_HOST: 127.0.0.1
-          REDIS_PORT: ${{ matrix.redis_port }}
-          VALKEY_HOST: 127.0.0.1
-          VALKEY_PORT: 6380
           MYSQL_DSN: mysql:host=127.0.0.1;port=3306;dbname=test_simplequeue
           MYSQL_USER: root
           MYSQL_PASSWORD: ''
           POSTGRES_DSN: pgsql:host=127.0.0.1;port=5432;dbname=test_simplequeue
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ''
-          DB_DSN: ${{ matrix.db_dsn }}
-          DB_USER: ${{ matrix.db_user }}
-          DB_PASSWORD: ''
 
   quality:
     name: Quality gates
@@ -96,9 +125,11 @@ jobs:
       - run: composer validate --strict --no-check-lock --no-check-version
       - run: composer install --no-interaction --prefer-dist --no-progress
       - run: composer audit
-      - run: composer check
       - run: composer test-coverage
-      - run: php scripts/check-coverage.php coverage/clover.xml 70
+      - run: php scripts/check-coverage.php coverage/clover.xml 83.9 71.2
+      - run: composer phpstan
+      - run: composer cs-check
+      - run: php benchmarks/operation-count-checks.php
       - run: find examples -name '*.php' -print0 | xargs -0 -n1 php -l
 
   lowest-dependencies:
@@ -123,3 +154,4 @@ jobs:
           coverage: none
       - run: composer install --no-dev --no-interaction --prefer-dist --no-progress
       - run: php examples/basic/in-memory.php
+      - run: php -r 'require "vendor/autoload.php"; $pdo = new PDO("sqlite::memory:"); $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION); Oeltima\SimpleQueue\Tests\DbHelper::createSchema($pdo); $s = new Oeltima\SimpleQueue\Storage\PdoJobStorage($pdo); $id = $s->createJob("t", []); $c = $s->claimById($id, "w"); $s->markCompleted($c, ["ok" => true]); echo "PDO smoke OK\n";'
