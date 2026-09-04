@@ -413,6 +413,11 @@ final class WorkerRunLoopTest extends WorkerTestCase
         $prop = $ref->getProperty('lockFile');
         $lockFile = $prop->getValue($worker);
 
-        $this->assertEquals('/tmp/simplequeue-worker-customqueue-name.lock', $lockFile);
+        // Safe defaults isolate by UID + working directory + exact queue name hash.
+        self::assertIsString($lockFile);
+        $this->assertStringNotContainsString('customqueue-name', $lockFile);
+        $other = new Worker($this->storage, $queueManager, $this->registry, $this->logger, 'other-queue');
+        $otherLock = $ref->getProperty('lockFile')->getValue($other);
+        $this->assertNotSame($lockFile, $otherLock);
     }
 }

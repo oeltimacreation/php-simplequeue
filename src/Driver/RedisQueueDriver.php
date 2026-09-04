@@ -5,16 +5,18 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Driver;
 
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
-use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
-use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
 use Oeltima\SimpleQueue\Contract\SupportsBatchEnqueue;
-use Oeltima\SimpleQueue\Contract\SupportsTimeoutValidation;
-use Oeltima\SimpleQueue\Contract\SupportsQueueReconciliation;
-use Oeltima\SimpleQueue\Contract\QueueStatsInterface;
+use Oeltima\SimpleQueue\Contract\SupportsBatchQueueReconciliation;
+use Oeltima\SimpleQueue\Contract\SupportsBoundedQueueMembership;
+use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
 use Oeltima\SimpleQueue\Contract\SupportsJobRemoval;
 use Oeltima\SimpleQueue\Contract\SupportsProcessingHeartbeat;
-use Oeltima\SimpleQueue\Contract\SupportsBoundedQueueMembership;
+use Oeltima\SimpleQueue\Contract\SupportsQueueReconciliation;
+use Oeltima\SimpleQueue\Contract\QueueStatsInterface;
+use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
+use Oeltima\SimpleQueue\Contract\SupportsTimeoutValidation;
 use Oeltima\SimpleQueue\Contract\ClockInterface;
+use Oeltima\SimpleQueue\Exception\QueueException;
 use Oeltima\SimpleQueue\Internal\PositiveJobId;
 use Oeltima\SimpleQueue\Internal\RedisProcessingRepair;
 use Oeltima\SimpleQueue\Internal\RedisResponseNormalizer;
@@ -34,6 +36,7 @@ final class RedisQueueDriver implements
     SupportsDelayedJobs,
     SupportsStaleRecovery,
     SupportsBatchEnqueue,
+    SupportsBatchQueueReconciliation,
     SupportsTimeoutValidation,
     SupportsQueueReconciliation,
     QueueStatsInterface,
@@ -73,13 +76,46 @@ local limit = tonumber(ARGV[2])
 
 local staleJobs = redis.call('ZRANGEBYSCORE', processingZKey, '-inf', staleThreshold, 'LIMIT', 0, limit)
 if #staleJobs > 0 then
-    for _, jobId in ipairs(staleJobs) do
-        redis.call('LREM', processingKey, 1, jobId)
+    local chunkSize = 1000
+    for i = 1, #staleJobs, chunkSize do
+        local j = math.min(i + chunkSize - 1, #staleJobs)
+        for k = i, j do
+            redis.call('LREM', processingKey, 1, staleJobs[k])
+        end
+        redis.call('LPUSH', pendingKey, unpack(staleJobs, i, j))
+        redis.call('ZREM', processingZKey, unpack(staleJobs, i, j))
     end
-    redis.call('LPUSH', pendingKey, unpack(staleJobs))
-    redis.call('ZREM', processingZKey, unpack(staleJobs))
 end
 return #staleJobs
+LUA;
+
+    private const RECONCILE_BATCH_LUA = <<<'LUA'
+local pendingKey = KEYS[1]
+local delayedKey = KEYS[2]
+local now = tonumber(ARGV[1])
+local pendingScanLimit = tonumber(ARGV[2])
+local count = tonumber(ARGV[3])
+local present = {}
+for i = 1, count do
+    local jobId = ARGV[3 + i]
+    local availableAt = tonumber(ARGV[3 + count + i])
+    local found = false
+    if redis.call('LPOS', pendingKey, jobId, 'MAXLEN', pendingScanLimit) then
+        found = true
+    elseif redis.call('ZSCORE', delayedKey, jobId) then
+        found = true
+    end
+    if found then
+        present[#present + 1] = jobId
+    else
+        if availableAt <= now then
+            redis.call('LPUSH', pendingKey, jobId)
+        else
+            redis.call('ZADD', delayedKey, availableAt, jobId)
+        end
+    end
+end
+return present
 LUA;
 
     /** @var array<string, int> */
@@ -239,6 +275,9 @@ LUA;
     public function enqueueDelayed(string $queue, int $jobId, int $availableAt): void
     {
         $this->validateJobId($jobId);
+        if ($availableAt <= 0) {
+            throw new \InvalidArgumentException('Delayed availability timestamp must be positive');
+        }
         $this->redis->zadd($this->delayedKey($queue), [$jobId => $availableAt]);
     }
 
@@ -253,6 +292,9 @@ LUA;
     {
         if ($jobIds === []) {
             return;
+        }
+        if ($availableAt <= 0) {
+            throw new \InvalidArgumentException('Delayed availability timestamp must be positive');
         }
         $members = [];
         foreach ($jobIds as $jobId) {
@@ -271,6 +313,9 @@ LUA;
      */
     public function promoteDelayedJobs(string $queue, int $limit = 100): int
     {
+        if ($limit < 1) {
+            throw new \InvalidArgumentException('Promotion limit must be positive');
+        }
         $now = $this->clock->timestamp();
 
         $result = $this->scripts->run(
@@ -372,10 +417,86 @@ LUA;
         if ($jobIds === []) {
             return;
         }
+        foreach ($jobIds as $jobId) {
+            $this->validateJobId($jobId);
+        }
 
         $key = $this->pendingKey($queue);
         $stringJobIds = array_map(fn($id) => (string) $id, $jobIds);
         $this->redis->lpush($key, $stringJobIds);
+    }
+
+    /**
+     * Reconcile a page of notifications in one direct EVAL roundtrip.
+     *
+     * Inputs are validated in PHP; the script checks bounded pending LPOS
+     * and exact delayed ZSCORE, restores missing due/future IDs, and returns
+     * IDs already present in input order.
+     *
+     * @param string $queue Queue name
+     * @param array<int, int> $availableAtByJobId Job ID => absolute Unix timestamp
+     * @param int $now Current absolute Unix timestamp
+     * @param int $pendingScanLimit Maximum pending-list elements inspected per ID
+     * @return list<int> IDs already present in pending or delayed notifications
+     */
+    public function reconcileNotifications(
+        string $queue,
+        array $availableAtByJobId,
+        int $now,
+        int $pendingScanLimit
+    ): array {
+        if ($availableAtByJobId === []) {
+            return [];
+        }
+        if ($pendingScanLimit < 1) {
+            throw new \InvalidArgumentException('Pending scan limit must be positive');
+        }
+        $ids = [];
+        $timestamps = [];
+        foreach ($availableAtByJobId as $jobId => $availableAt) {
+            if (!is_int($jobId) || $jobId < 1) {
+                throw new \InvalidArgumentException('Reconciliation job IDs must be positive integers');
+            }
+            if (!is_int($availableAt) || $availableAt <= 0) {
+                throw new \InvalidArgumentException('Reconciliation timestamps must be positive integers');
+            }
+            $ids[] = (string) $jobId;
+            $timestamps[] = (string) $availableAt;
+        }
+        // Direct EVAL (not EVALSHA) so a cold script cache cannot add a NOSCRIPT retry.
+        $result = $this->redis->eval(
+            self::RECONCILE_BATCH_LUA,
+            2,
+            $this->pendingKey($queue),
+            $this->delayedKey($queue),
+            (string) $now,
+            (string) $pendingScanLimit,
+            (string) count($ids),
+            ...[...$ids, ...$timestamps]
+        );
+        if ($result === null || $result === false) {
+            return [];
+        }
+        $raw = is_array($result) ? $result : [$result];
+        $present = [];
+        foreach ($raw as $value) {
+            if (!is_scalar($value)) {
+                throw new QueueException('Redis returned a malformed reconciliation ID');
+            }
+            $str = (string) $value;
+            if (preg_match('/^(0|[1-9][0-9]*)$/', $str) !== 1) {
+                throw new QueueException('Redis returned a malformed reconciliation ID');
+            }
+            $present[] = (int) $str;
+        }
+        // Return unique already-present IDs in input order.
+        $order = array_flip(array_map('strval', array_keys($availableAtByJobId)));
+        usort($present, static function (int $a, int $b) use ($order): int {
+            $rankA = $order[(string) $a] ?? PHP_INT_MAX;
+            $rankB = $order[(string) $b] ?? PHP_INT_MAX;
+            return $rankA <=> $rankB;
+        });
+        return array_values(array_unique($present));
     }
 
     /**

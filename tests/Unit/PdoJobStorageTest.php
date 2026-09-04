@@ -158,10 +158,9 @@ class PdoJobStorageTest extends TestCase
 
         $storage = new PdoJobStorage($factory);
 
-        $id = $storage->createJob('test.job', []);
-
-        $this->assertSame(1, $id);
-        $this->assertSame(2, $callCount);
+        // Mutations never replay after a statement attempt; uncertain outcomes raise.
+        $this->expectException(\Oeltima\SimpleQueue\Exception\IndeterminateStorageOutcomeException::class);
+        $storage->createJob('test.job', []);
     }
 
     public function testCreateJobStoresPayload(): void

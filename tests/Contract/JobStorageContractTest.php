@@ -103,7 +103,7 @@ final class JobStorageContractTest extends TestCase
 
         $job = $storage->find($id);
         self::assertSame(JobStatus::Failed, $job->status);
-        self::assertSame(1, $job->attempts);
+        self::assertSame(2, $job->attempts);
         self::assertSame('Job timed out / worker crashed (stale recovery)', $job->errorMessage);
         self::assertNotNull($job->completedAt);
         self::assertNull($job->leaseToken);
@@ -129,7 +129,7 @@ final class JobStorageContractTest extends TestCase
             self::fail('Invalid retry arguments must fail');
         } catch (\InvalidArgumentException $exception) {
             self::assertSame(
-                'Attempts must be positive and retry delay must not be negative',
+                'Attempts must not be negative and retry delay must not be negative',
                 $exception->getMessage()
             );
         }

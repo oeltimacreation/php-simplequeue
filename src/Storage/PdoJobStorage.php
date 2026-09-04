@@ -14,7 +14,11 @@ use Oeltima\SimpleQueue\Contract\IdempotentJobResult;
 use Oeltima\SimpleQueue\Contract\SupportsIdempotentJobCreation;
 use Oeltima\SimpleQueue\Contract\SupportsFailedJobAdministration;
 use Oeltima\SimpleQueue\Contract\SupportsPendingJobCursor;
+use Oeltima\SimpleQueue\Contract\SupportsPendingNotificationCursor;
+use Oeltima\SimpleQueue\Contract\PendingNotification;
 use Oeltima\SimpleQueue\Contract\SupportsQueueScopedStaleRecovery;
+use Oeltima\SimpleQueue\Exception\IndeterminateStorageOutcomeException;
+use Oeltima\SimpleQueue\Internal\JobDataHydrator;
 use Oeltima\SimpleQueue\Internal\JobFilter;
 use Oeltima\SimpleQueue\Internal\PdoFailedJobAdministration;
 use Oeltima\SimpleQueue\Internal\JobStorageRules;
@@ -32,6 +36,7 @@ use PDOStatement;
  * Works with MySQL, PostgreSQL, SQLite, and other PDO-supported databases.
  *
  * @phpstan-import-type JobDefinitionShape from JobStorageInterface
+ * @phpstan-import-type ValidatedJobShape from JobStorageRules
  *
  * Supports auto-reconnect for long-running workers via connection factory.
  */
@@ -41,6 +46,7 @@ class PdoJobStorage implements
     SupportsIdempotentJobCreation,
     SupportsFailedJobAdministration,
     SupportsPendingJobCursor,
+    SupportsPendingNotificationCursor,
     SupportsQueueScopedStaleRecovery
 {
     use PdoFailedJobAdministration;
@@ -61,6 +67,7 @@ class PdoJobStorage implements
         protected string $table = 'background_jobs',
         private readonly ?ClockInterface $clock = null
     ) {
+        $this->table = JobStorageRules::validateTableName($table);
         if ($connection instanceof PDO) {
             $this->pdo = $this->configurePdo($connection);
         } else {
@@ -88,14 +95,23 @@ class PdoJobStorage implements
 
     /**
      * Force reconnection on next database operation.
+     *
+     * Factory-backed storage reconnects lazily. Direct-PDO instances reject
+     * the call without discarding their usable connection.
      */
     public function reconnect(): void
     {
+        if ($this->connectionFactory === null) {
+            throw new \LogicException('Direct-PDO storage has no connection factory to reconnect with');
+        }
         $this->pdo = null;
     }
 
     /**
-     * Run a database operation, retrying once after a connection-loss exception.
+     * Run a read operation, retrying once after a connection-loss exception.
+     *
+     * Reads retry only when a connection factory exists and the connection
+     * is not inside a caller-owned transaction.
      *
      * @template T
      * @param callable(PDO): T $operation Database operation
@@ -104,9 +120,21 @@ class PdoJobStorage implements
     protected function withReconnect(callable $operation): mixed
     {
         try {
-            return $operation($this->getPdo());
+            $pdo = $this->getPdo();
+            if ($pdo->inTransaction()) {
+                return $operation($pdo);
+            }
+            return $operation($pdo);
         } catch (PDOException $e) {
             if ($this->connectionFactory === null || !$this->isConnectionException($e)) {
+                throw $e;
+            }
+            // Caller-owned transactions must not transparently retry reads.
+            try {
+                if ($this->pdo !== null && $this->pdo->inTransaction()) {
+                    throw $e;
+                }
+            } catch (PDOException) {
                 throw $e;
             }
 
@@ -116,7 +144,66 @@ class PdoJobStorage implements
     }
 
     /**
+     * Run a mutation without replaying after a statement or commit attempt.
+     *
+     * Connection creation before the mutation begins may retry once. After
+     * that boundary, a connection/commit failure is indeterminate (the write
+     * may already have committed) and raises IndeterminateStorageOutcomeException.
+     *
+     * @template T
+     * @param string $operation Operation name for indeterminate errors
+     * @param callable(PDO): T $mutation Mutation callback
+     * @return T Mutation result
+     */
+    protected function withMutation(string $operation, callable $mutation): mixed
+    {
+        $pdo = $this->freshPdoForMutation();
+        try {
+            return $mutation($pdo);
+        } catch (PDOException $e) {
+            if ($this->isConnectionException($e)) {
+                $this->discardFactoryConnection($pdo);
+                throw IndeterminateStorageOutcomeException::forOperation($operation, $e);
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * Acquire a PDO handle for a mutation, retrying creation once.
+     *
+     * @return PDO Fresh or existing PDO handle
+     */
+    private function freshPdoForMutation(): PDO
+    {
+        try {
+            return $this->getPdo();
+        } catch (PDOException $e) {
+            if ($this->connectionFactory === null || !$this->isConnectionException($e)) {
+                throw $e;
+            }
+            $this->pdo = null;
+            return $this->getPdo();
+        }
+    }
+
+    /**
+     * Discard only a factory-owned failed connection for the next call.
+     *
+     * @param PDO $pdo Connection that observed the failure
+     */
+    private function discardFactoryConnection(PDO $pdo): void
+    {
+        if ($this->connectionFactory !== null && $this->pdo === $pdo) {
+            $this->pdo = null;
+        }
+    }
+
+    /**
      * Prepare and execute a SQL statement with reconnect support.
+     *
+     * Read-safe path: retries once only with a factory and outside
+     * caller-owned transactions.
      *
      * @param string $sql SQL statement
      * @param array<string, mixed> $params Bound parameters
@@ -132,22 +219,60 @@ class PdoJobStorage implements
     }
 
     /**
+     * Prepare and execute a mutation without transparent replay.
+     *
+     * @param string $sql SQL statement
+     * @param array<string, mixed> $params Bound parameters
+     * @param string $operation Operation name for indeterminate errors
+     * @return PDOStatement Executed statement
+     */
+    protected function executeMutation(string $sql, array $params, string $operation): PDOStatement
+    {
+        return $this->withMutation($operation, function (PDO $pdo) use ($sql, $params): PDOStatement {
+            $stmt = $this->prepare($pdo, $sql);
+            $stmt->execute($params);
+            return $stmt;
+        });
+    }
+
+    /**
      * Check whether a PDO exception likely represents a lost connection.
+     *
+     * Classifies SQLSTATE class 08 plus verified MySQL connection codes
+     * without misclassifying constraint, serialization, or deadlock errors.
      *
      * @param PDOException $e PDO exception
      * @return bool True for connection-loss errors
      */
     protected function isConnectionException(PDOException $e): bool
     {
+        $sqlState = '';
+        if (isset($e->errorInfo[0]) && is_string($e->errorInfo[0])) {
+            $sqlState = $e->errorInfo[0];
+        } elseif (is_string($e->getCode()) && strlen($e->getCode()) === 5) {
+            $sqlState = $e->getCode();
+        }
+        // Never misclassify constraint (23xxx), serialization/deadlock (40xxx).
+        if (str_starts_with($sqlState, '23') || str_starts_with($sqlState, '40')) {
+            return false;
+        }
+        // SQLSTATE connection-exception class.
+        if (str_starts_with($sqlState, '08')) {
+            return true;
+        }
         $message = strtolower($e->getMessage());
         $code = (string) $e->getCode();
         $errorInfoCode = isset($e->errorInfo[1]) ? (string) $e->errorInfo[1] : '';
 
-        if (in_array($code, ['2006', '2013', '08003', '08006'], true)) {
+        // MySQL deadlock (1213) and lock timeout (1205) are not connection loss.
+        if (in_array($errorInfoCode, ['1213', '1205'], true)) {
+            return false;
+        }
+        if (in_array($code, ['2002', '2003', '2006', '2013', '08003', '08006'], true)) {
             return true;
         }
 
-        if (in_array($errorInfoCode, ['2006', '2013'], true)) {
+        if (in_array($errorInfoCode, ['2002', '2003', '2006', '2013'], true)) {
             return true;
         }
 
@@ -190,6 +315,16 @@ class PdoJobStorage implements
         int $maxAttempts = 3,
         ?string $requestId = null
     ): int {
+        JobStorageRules::validateQueueOrType($queue, 'Queue');
+        JobStorageRules::validateQueueOrType($type, 'Job type');
+        JobStorageRules::validateMaxAttempts($maxAttempts);
+        if ($requestId !== null) {
+            JobStorageRules::validateBoundedString($requestId, 'Request ID');
+            if (trim($requestId) === '') {
+                throw new \InvalidArgumentException('Request ID must not be empty when provided');
+            }
+        }
+        $encodedPayload = JobStorageRules::encodeJson($payload, 'job payload');
         $now = $this->now();
 
         $sql = "INSERT INTO {$this->table} (
@@ -202,19 +337,35 @@ class PdoJobStorage implements
             NULL, NULL, :request_id, :created_at, :updated_at
         )";
 
-        return $this->withReconnect(
-            function (PDO $pdo) use ($sql, $queue, $type, $payload, $maxAttempts, $requestId, $now): int {
+        return $this->withMutation(
+            'createJob',
+            function (PDO $pdo) use ($sql, $queue, $type, $encodedPayload, $maxAttempts, $requestId, $now): int {
                 $stmt = $this->prepare($pdo, $sql);
-                $stmt->execute([
-                    'queue' => $queue,
-                    'type' => $type,
-                    'payload' => JobStorageRules::encodeJson($payload, 'job payload'),
-                    'max_attempts' => $maxAttempts,
-                    'available_at' => $now,
-                    'request_id' => $requestId,
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ]);
+                try {
+                    $stmt->execute([
+                        'queue' => $queue,
+                        'type' => $type,
+                        'payload' => $encodedPayload,
+                        'max_attempts' => $maxAttempts,
+                        'available_at' => $now,
+                        'request_id' => $requestId,
+                        'created_at' => $now,
+                        'updated_at' => $now,
+                    ]);
+                } catch (PDOException $e) {
+                    if ($this->isConnectionException($e)) {
+                        $this->discardFactoryConnection($pdo);
+                        // Ambiguous idempotent create: return existing active row if found.
+                        if ($requestId !== null) {
+                            $existing = $this->findActiveByRequestId($requestId);
+                            if ($existing !== null) {
+                                return $existing->id;
+                            }
+                        }
+                        throw IndeterminateStorageOutcomeException::forOperation('createJob', $e);
+                    }
+                    throw $e;
+                }
 
                 return (int) $pdo->lastInsertId();
             }
@@ -223,6 +374,10 @@ class PdoJobStorage implements
 
     /**
      * Batch create multiple job records in a single operation.
+     *
+     * All definitions are validated and JSON-encoded before any row is
+     * mutated. Chunks hold one transaction/savepoint across the whole
+     * logical batch so a later failure rolls back earlier chunks.
      *
      * @param array<int, JobDefinitionShape> $jobs Array of job definitions
      * @return int[] Array of created job IDs
@@ -234,63 +389,269 @@ class PdoJobStorage implements
         }
 
         $now = $this->now();
+        $clock = $this->clock();
+        // Validate every definition (and encode payloads) before mutating rows.
+        $validated = [];
+        foreach ($jobs as $job) {
+            $validated[] = JobStorageRules::validateJobDefinition($job, $clock);
+        }
 
-        return $this->withReconnect(function (PDO $pdo) use ($jobs, $now): array {
+        return $this->withMutation('createJobs', function (PDO $pdo) use ($validated, $now): array {
             $driverAttr = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
             $driver = is_string($driverAttr) ? $driverAttr : '';
-
-            $columns = [
-                'queue', 'type', 'status', 'payload', 'attempts', 'max_attempts',
-                'available_at', 'request_id', 'created_at', 'updated_at'
-            ];
-
-            $placeholders = [];
-            $params = [];
-
-            foreach ($jobs as $job) {
-                $placeholders[] = "(?, ?, 'pending', ?, 0, ?, ?, ?, ?, ?)";
-                $params[] = $job['queue'] ?? 'default';
-                $params[] = $job['type'];
-                $params[] = JobStorageRules::encodeJson($job['payload'], 'job payload');
-                $params[] = $job['maxAttempts'] ?? 3;
-                $params[] = $this->rowAvailableAt($job, $now);
-                $params[] = $job['requestId'] ?? null;
-                $params[] = $now;
-                $params[] = $now;
-            }
-
-            $sql = "INSERT INTO {$this->table} (" . implode(', ', $columns) . ") " .
-                "VALUES " . implode(', ', $placeholders);
-
-            if ($driver === 'pgsql') {
-                $sql .= " RETURNING id";
-                $stmt = $this->prepare($pdo, $sql);
-                $stmt->execute($params);
-                return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN, 0));
-            }
-
-            $stmt = $this->prepare($pdo, $sql);
-            $stmt->execute($params);
-            $count = $stmt->rowCount();
-
-            if ($count === 0) {
-                return [];
-            }
-
-            $lastId = (int) $pdo->lastInsertId();
-
-            if ($driver === 'sqlite') {
-                $firstId = $lastId - $count + 1;
-                return range($firstId, $lastId);
+            $chunks = $this->chunkValidatedJobs($validated);
+            $ownsTransaction = !$pdo->inTransaction();
+            $savepoint = null;
+            if ($ownsTransaction) {
+                $pdo->beginTransaction();
             } else {
-                $firstId = $lastId;
-                return range($firstId, $firstId + $count - 1);
+                $savepoint = 'simplequeue_batch_create';
+                $pdo->exec('SAVEPOINT ' . $savepoint);
+            }
+            try {
+                $ids = [];
+                foreach ($chunks as $chunk) {
+                    $chunkIds = $this->insertValidatedChunk($pdo, $driver, $chunk, $now);
+                    foreach ($chunkIds as $id) {
+                        $ids[] = $id;
+                    }
+                }
+                if ($ownsTransaction) {
+                    $pdo->commit();
+                } else {
+                    $pdo->exec('RELEASE SAVEPOINT ' . $savepoint);
+                }
+                return $ids;
+            } catch (\Throwable $e) {
+                try {
+                    if ($ownsTransaction) {
+                        $pdo->rollBack();
+                    } else {
+                        $pdo->exec('ROLLBACK TO SAVEPOINT ' . $savepoint);
+                        $pdo->exec('RELEASE SAVEPOINT ' . $savepoint);
+                    }
+                } catch (\Throwable) {
+                    // Preserve original failure; rollback failure leaves indeterminate state.
+                }
+                if ($e instanceof PDOException && $this->isConnectionException($e)) {
+                    $this->discardFactoryConnection($pdo);
+                    throw IndeterminateStorageOutcomeException::forOperation('createJobs', $e);
+                }
+                throw $e;
             }
         });
     }
 
+    /**
+     * Chunk validated jobs by row count and ~1MiB encoded parameter budget.
+     *
+     * Row caps (SQLite 100, MySQL/PostgreSQL 1000) are enforced at insert
+     * time per driver; this pre-chunk uses the largest cap (1000) plus the
+     * 1MiB budget so SQLite sub-chunking stays within one transaction.
+     *
+     * @param list<ValidatedJobShape> $validated Validated job definitions
+     * @return list<list<ValidatedJobShape>> Chunks
+     */
+    private function chunkValidatedJobs(array $validated): array
+    {
+        $chunks = [];
+        $current = [];
+        $currentBytes = 0;
+        foreach ($validated as $job) {
+            $size = strlen($job['encodedPayload']) + strlen($job['queue']) + strlen($job['type']) + 64;
+            if ($current !== [] && ($currentBytes + $size > 1_048_576 || count($current) >= 1000)) {
+                $chunks[] = $current;
+                $current = [];
+                $currentBytes = 0;
+            }
+            $current[] = $job;
+            $currentBytes += $size;
+            if (count($current) >= 1000 || $currentBytes >= 1_048_576) {
+                $chunks[] = $current;
+                $current = [];
+                $currentBytes = 0;
+            }
+        }
+        if ($current !== []) {
+            $chunks[] = $current;
+        }
+        return $chunks;
+    }
+
+    /**
+     * Insert one validated chunk and return exact IDs.
+     *
+     * SQLite chunks are sub-divided to 100 rows so bind limits hold;
+     * MySQL/PostgreSQL use 1000-row chunks. All run inside the caller's
+     * transaction/savepoint.
+     *
+     * @param PDO $pdo Active connection (transaction/savepoint already held)
+     * @param string $driver PDO driver name
+     * @param list<ValidatedJobShape> $chunk Validated jobs
+     * @param string $now Creation timestamp
+     * @return list<int> Exact inserted IDs in definition order
+     */
+    private function insertValidatedChunk(PDO $pdo, string $driver, array $chunk, string $now): array
+    {
+        if ($driver === 'sqlite' && count($chunk) > 100) {
+            $ids = [];
+            foreach (array_chunk($chunk, 100) as $sub) {
+                foreach ($this->insertValidatedChunk($pdo, $driver, $sub, $now) as $id) {
+                    $ids[] = $id;
+                }
+            }
+            return $ids;
+        }
+        $columns = [
+            'queue', 'type', 'status', 'payload', 'attempts', 'max_attempts',
+            'available_at', 'request_id', 'created_at', 'updated_at',
+        ];
+        if ($driver === 'pgsql' || $driver === 'sqlite') {
+            // Prefer INSERT ... RETURNING id on PostgreSQL and modern SQLite.
+            // Older SQLite without RETURNING falls back to row-by-row inserts
+            // within the same transaction.
+            if ($driver === 'pgsql' || $this->sqliteSupportsReturning($pdo)) {
+                $placeholders = [];
+                $params = [];
+                foreach ($chunk as $job) {
+                    $placeholders[] = "(?, ?, 'pending', ?, 0, ?, ?, ?, ?, ?)";
+                    $params[] = $job['queue'];
+                    $params[] = $job['type'];
+                    $params[] = $job['encodedPayload'];
+                    $params[] = $job['maxAttempts'];
+                    $params[] = $job['availableAt'];
+                    $params[] = $job['requestId'];
+                    $params[] = $now;
+                    $params[] = $now;
+                }
+                $sql = "INSERT INTO {$this->table} (" . implode(', ', $columns) . ") " .
+                    "VALUES " . implode(', ', $placeholders) . " RETURNING id";
+                $stmt = $this->prepare($pdo, $sql);
+                $stmt->execute($params);
+                /** @var list<string|int> $raw */
+                $raw = $stmt->fetchAll(PDO::FETCH_COLUMN, 0);
+                return array_map(static fn ($id): int => (int) $id, $raw);
+            }
+            // Older SQLite: one row at a time, same transaction, exact IDs.
+            $ids = [];
+            $sql = "INSERT INTO {$this->table} (" . implode(', ', $columns) . ") " .
+                "VALUES (?, ?, 'pending', ?, 0, ?, ?, ?, ?, ?)";
+            foreach ($chunk as $job) {
+                $stmt = $this->prepare($pdo, $sql);
+                $stmt->execute([
+                    $job['queue'], $job['type'], $job['encodedPayload'], $job['maxAttempts'],
+                    $job['availableAt'], $job['requestId'], $now, $now,
+                ]);
+                $ids[] = (int) $pdo->lastInsertId();
+            }
+            return $ids;
+        }
+
+        // MySQL and others: multi-row insert, derive exact IDs via session increment.
+        $placeholders = [];
+        $params = [];
+        foreach ($chunk as $job) {
+            $placeholders[] = "(?, ?, 'pending', ?, 0, ?, ?, ?, ?, ?)";
+            $params[] = $job['queue'];
+            $params[] = $job['type'];
+            $params[] = $job['encodedPayload'];
+            $params[] = $job['maxAttempts'];
+            $params[] = $job['availableAt'];
+            $params[] = $job['requestId'];
+            $params[] = $now;
+            $params[] = $now;
+        }
+        // Merge small 100-row chunks into 1000-row/1MiB chunks for MySQL/Pg efficiency
+        // is handled by caller batching; here each 100-row chunk inserts directly.
+        $sql = "INSERT INTO {$this->table} (" . implode(', ', $columns) . ") " .
+            "VALUES " . implode(', ', $placeholders);
+        $stmt = $this->prepare($pdo, $sql);
+        $stmt->execute($params);
+        $count = $stmt->rowCount();
+        if ($count === 0) {
+            return [];
+        }
+        $firstId = (int) $pdo->lastInsertId();
+        $increment = $this->mysqlAutoIncrementIncrement($pdo, $driver);
+        $ids = [];
+        for ($i = 0; $i < $count; $i++) {
+            $ids[] = $firstId + ($i * $increment);
+        }
+        $this->validateInsertedIds($pdo, $ids);
+        return $ids;
+    }
+
+    /**
+     * Check whether SQLite supports INSERT ... RETURNING.
+     *
+     * @param PDO $pdo Active connection
+     * @return bool True when RETURNING is supported
+     */
+    private function sqliteSupportsReturning(PDO $pdo): bool
+    {
+        try {
+            $version = $pdo->query('select sqlite_version()');
+            if (!$version instanceof PDOStatement) {
+                return false;
+            }
+            $raw = $version->fetchColumn(0);
+            if (!is_string($raw)) {
+                return false;
+            }
+            return version_compare($raw, '3.35.0', '>=');
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /**
+     * Read MySQL session auto_increment_increment without assuming 1.
+     *
+     * @param PDO $pdo Active connection
+     * @param string $driver PDO driver name
+     * @return int Positive increment, default 1
+     */
+    private function mysqlAutoIncrementIncrement(PDO $pdo, string $driver): int
+    {
+        if ($driver !== 'mysql') {
+            return 1;
+        }
+        try {
+            $stmt = $pdo->query('SELECT @@SESSION.auto_increment_increment');
+            if (!$stmt instanceof PDOStatement) {
+                return 1;
+            }
+            $raw = $stmt->fetchColumn(0);
+            $increment = is_numeric($raw) ? (int) $raw : 1;
+            return $increment >= 1 ? $increment : 1;
+        } catch (\Throwable) {
+            return 1;
+        }
+    }
+
+    /**
+     * Validate derived IDs exist to catch increment mis-derivation.
+     *
+     * @param PDO $pdo Active connection
+     * @param list<int> $ids Derived IDs
+     */
+    private function validateInsertedIds(PDO $pdo, array $ids): void
+    {
+        if ($ids === []) {
+            return;
+        }
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $this->prepare($pdo, "SELECT COUNT(*) FROM {$this->table} WHERE id IN ({$placeholders})");
+        $stmt->execute($ids);
+        $count = $stmt->fetchColumn(0);
+        if ((int) $count !== count($ids)) {
+            throw new \RuntimeException('Batch insert ID derivation mismatch');
+        }
+    }
+
     public function find(int $id): ?JobData
     {
+        JobStorageRules::validatePositiveId($id);
         $sql = "SELECT * FROM {$this->table} WHERE id = :id";
         $stmt = $this->execute($sql, ['id' => $id]);
 
@@ -299,6 +660,10 @@ class PdoJobStorage implements
 
     public function findActiveByRequestId(string $requestId): ?JobData
     {
+        if (trim($requestId) === '') {
+            throw new \InvalidArgumentException('Request ID must not be empty');
+        }
+        JobStorageRules::validateBoundedString($requestId, 'Request ID');
         $sql = "SELECT * FROM {$this->table}
             WHERE request_id = :request_id
             AND status IN ('pending', 'running')
@@ -402,10 +767,23 @@ class PdoJobStorage implements
 
     private function claimJob(?string $queue, ?int $id, string $workerId): ?ClaimedJob
     {
+        // Claims behave consistently inside caller-owned transactions:
+        // reject before any SQL on every driver.
+        try {
+            if ($this->getPdo()->inTransaction()) {
+                throw new \RuntimeException('Job claims are not allowed inside a caller-owned transaction');
+            }
+        } catch (PDOException $e) {
+            if ($this->isConnectionException($e)) {
+                $this->pdo = null;
+                throw IndeterminateStorageOutcomeException::forOperation('claimJob', $e);
+            }
+            throw $e;
+        }
         $now = $this->now();
         $leaseToken = $this->generateLeaseToken();
 
-        return $this->withReconnect(function (PDO $pdo) use ($queue, $id, $workerId, $leaseToken, $now): ?ClaimedJob {
+        $claim = function (PDO $pdo) use ($queue, $id, $workerId, $leaseToken, $now): ?ClaimedJob {
             $driverAttr = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
             $driver = is_string($driverAttr) ? $driverAttr : '';
 
@@ -414,18 +792,24 @@ class PdoJobStorage implements
             }
 
             return $this->claimJobWithTransaction($pdo, $driver, $queue, $id, $workerId, $leaseToken, $now);
-        });
+        };
+
+        return $this->withMutation('claimJob', $claim);
     }
 
     public function markCompleted(ClaimedJob $claim, mixed $result = null): bool
     {
         $now = $this->now();
+        // Encode before any mutation so serialization failure never touches storage.
+        $encodedResult = $result === null ? null : JobStorageRules::encodeJson($result, 'job result');
 
         $stmt = $this->executeClaimUpdate($claim, "status = 'completed',
             result = :result, completed_at = :completed_at,
+            error_message = NULL, error_trace = NULL,
+            progress = NULL, progress_message = NULL,
             locked_by = NULL, locked_at = NULL, lease_token = NULL,
             updated_at = :updated_at", [
-            'result' => $result === null ? null : JobStorageRules::encodeJson($result, 'job result'),
+            'result' => $encodedResult,
             'completed_at' => $now,
             'updated_at' => $now,
         ]);
@@ -437,7 +821,9 @@ class PdoJobStorage implements
     {
         $now = $this->now();
 
+        // Canonical terminal failure consumes one failed execution.
         $stmt = $this->executeClaimUpdate($claim, "status = 'failed',
+            attempts = attempts + 1,
             error_message = :error_message, error_trace = :error_trace,
             completed_at = :completed_at, locked_by = NULL, locked_at = NULL,
             lease_token = NULL, updated_at = :updated_at", [
@@ -481,9 +867,12 @@ class PdoJobStorage implements
         $now = $this->now();
         $availableAt = JobStorageRules::timestamp($this->clock(), $this->dateFormat, $delaySeconds);
 
+        // Canonical retry: consume failure, reset result/completion/progress.
         $stmt = $this->executeClaimUpdate($claim, "status = 'pending',
             attempts = :attempts, available_at = :available_at,
-            error_message = :error_message, locked_by = NULL, locked_at = NULL,
+            error_message = :error_message, result = NULL, completed_at = NULL,
+            progress = NULL, progress_message = NULL,
+            locked_by = NULL, locked_at = NULL,
             lease_token = NULL, updated_at = :updated_at", [
             'attempts' => $attempts,
             'available_at' => $availableAt,
@@ -513,47 +902,57 @@ class PdoJobStorage implements
 
     public function recoverStaleJobs(int $ttlSeconds): int
     {
+        JobStorageRules::validateStaleRecovery($ttlSeconds, 1);
         $now = $this->now();
         $staleThreshold = JobStorageRules::timestamp($this->clock(), $this->dateFormat, -$ttlSeconds);
+        $staleError = 'Job timed out / worker crashed (stale recovery)';
 
-        // Fail poison jobs that have reached max attempts
+        // Fail poison jobs that have reached max attempts; retain progress for diagnosis.
         $sqlFailed = "UPDATE {$this->table}
             SET status = 'failed',
-                error_message = 'Job timed out / worker crashed (stale recovery)',
+                attempts = attempts + 1,
+                error_message = :error_message,
                 completed_at = :completed_at,
                 locked_by = NULL,
                 locked_at = NULL,
                 lease_token = NULL,
                 updated_at = :updated_at
             WHERE status = 'running'
-            AND locked_at < :stale_threshold
+            AND (locked_at IS NULL OR locked_at < :stale_threshold)
             AND attempts + 1 >= max_attempts";
 
-        $stmtFailed = $this->execute($sqlFailed, [
+        $stmtFailed = $this->executeMutation($sqlFailed, [
             'stale_threshold' => $staleThreshold,
+            'error_message' => $staleError,
             'completed_at' => $now,
             'updated_at' => $now,
-        ]);
+        ], 'recoverStaleJobs');
         $countFailed = $stmtFailed->rowCount();
 
-        // Recover the rest to pending, incrementing attempts
+        // Recover the rest to pending, incrementing attempts and resetting retry state.
         $sqlPending = "UPDATE {$this->table}
             SET status = 'pending',
                 attempts = attempts + 1,
                 locked_by = NULL,
                 locked_at = NULL,
                 lease_token = NULL,
+                error_message = :error_message,
+                result = NULL,
+                completed_at = NULL,
+                progress = NULL,
+                progress_message = NULL,
                 available_at = :available_at,
                 updated_at = :updated_at
             WHERE status = 'running'
-            AND locked_at < :stale_threshold
+            AND (locked_at IS NULL OR locked_at < :stale_threshold)
             AND attempts + 1 < max_attempts";
 
-        $stmtPending = $this->execute($sqlPending, [
+        $stmtPending = $this->executeMutation($sqlPending, [
             'stale_threshold' => $staleThreshold,
+            'error_message' => $staleError,
             'available_at' => $now,
             'updated_at' => $now,
-        ]);
+        ], 'recoverStaleJobs');
         $countPending = $stmtPending->rowCount();
 
         return $countFailed + $countPending;
@@ -561,32 +960,53 @@ class PdoJobStorage implements
 
     public function recoverStaleJobsForQueue(string $queue, int $ttlSeconds, int $limit): int
     {
+        JobStorageRules::validateQueueOrType($queue, 'Queue');
         JobStorageRules::validateStaleRecovery($ttlSeconds, $limit);
         $now = $this->now();
         $threshold = JobStorageRules::timestamp($this->clock(), $this->dateFormat, -$ttlSeconds);
+        $staleError = 'Job timed out / worker crashed (stale recovery)';
         $sql = "SELECT * FROM {$this->table} WHERE queue = :queue AND status = 'running' " .
-            'AND locked_at < :threshold ORDER BY locked_at ASC LIMIT :limit';
+            'AND (locked_at IS NULL OR locked_at < :threshold) ORDER BY locked_at ASC LIMIT :limit';
         $params = ['queue' => $queue, 'threshold' => $threshold];
         $statement = $this->withReconnect(
             fn (PDO $pdo): PDOStatement => $this->boundedStatement($pdo, $sql, $params, $limit)
         );
         $recovered = 0;
         foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
-            $job = JobData::fromRaw($row);
+            /** @var array<string, mixed> $row */
+            $job = JobDataHydrator::hydrateStrict($this->associativeRow($row));
             $terminal = !RetryDecision::forAttempt($job->attempts + 1, $job->maxAttempts)->shouldRetry();
-            $update = "UPDATE {$this->table} SET status = :status, attempts = :attempts, " .
-                'available_at = :available_at, completed_at = :completed_at, locked_by = NULL, ' .
-                "locked_at = NULL, lease_token = NULL, updated_at = :updated_at WHERE id = :id " .
-                "AND status = 'running' AND locked_at < :threshold";
-            $changed = $this->execute($update, [
-                'status' => $terminal ? 'failed' : 'pending',
-                'attempts' => $job->attempts + 1,
-                'available_at' => $now,
-                'completed_at' => $terminal ? $now : null,
-                'updated_at' => $now,
-                'id' => $job->id,
-                'threshold' => $threshold,
-            ]);
+            if ($terminal) {
+                $update = "UPDATE {$this->table} SET status = :status, attempts = :attempts, " .
+                    'error_message = :error_message, available_at = :available_at, completed_at = :completed_at, ' .
+                    'locked_by = NULL, locked_at = NULL, lease_token = NULL, updated_at = :updated_at WHERE id = :id ' .
+                    "AND status = 'running' AND (locked_at IS NULL OR locked_at < :threshold)";
+                $changed = $this->executeMutation($update, [
+                    'status' => 'failed',
+                    'attempts' => $job->attempts + 1,
+                    'error_message' => $staleError,
+                    'available_at' => $now,
+                    'completed_at' => $now,
+                    'updated_at' => $now,
+                    'id' => $job->id,
+                    'threshold' => $threshold,
+                ], 'recoverStaleJobsForQueue');
+            } else {
+                $update = "UPDATE {$this->table} SET status = :status, attempts = :attempts, " .
+                    'error_message = :error_message, result = NULL, completed_at = NULL, progress = NULL, ' .
+                    'progress_message = NULL, available_at = :available_at, locked_by = NULL, ' .
+                    "locked_at = NULL, lease_token = NULL, updated_at = :updated_at WHERE id = :id " .
+                    "AND status = 'running' AND (locked_at IS NULL OR locked_at < :threshold)";
+                $changed = $this->executeMutation($update, [
+                    'status' => 'pending',
+                    'attempts' => $job->attempts + 1,
+                    'error_message' => $staleError,
+                    'available_at' => $now,
+                    'updated_at' => $now,
+                    'id' => $job->id,
+                    'threshold' => $threshold,
+                ], 'recoverStaleJobsForQueue');
+            }
             $recovered += $changed->rowCount();
         }
         return $recovered;
@@ -594,17 +1014,18 @@ class PdoJobStorage implements
 
     public function cancel(int $id): bool
     {
+        JobStorageRules::validatePositiveId($id);
         $now = $this->now();
         $sql = "UPDATE {$this->table}
             SET status = 'cancelled', completed_at = :completed_at,
                 locked_by = NULL, locked_at = NULL, lease_token = NULL, updated_at = :updated_at
             WHERE id = :id AND status = 'pending'";
 
-        $stmt = $this->execute($sql, [
+        $stmt = $this->executeMutation($sql, [
             'id' => $id,
             'completed_at' => $now,
             'updated_at' => $now,
-        ]);
+        ], 'cancel');
 
         return $stmt->rowCount() > 0;
     }
@@ -636,6 +1057,11 @@ class PdoJobStorage implements
      */
     public function list(?JobStatus $status = null, ?string $queue = null, int $limit = 100, int $offset = 0): array
     {
+        JobStorageRules::validatePositiveLimit($limit, 'List limit');
+        JobStorageRules::validateNonNegative($offset, 'List offset');
+        if ($queue !== null) {
+            JobStorageRules::validateQueueOrType($queue, 'Queue');
+        }
         [$sql, $params] = $this->filteredQuery('SELECT *', new JobFilter($status, $queue));
         $sql .= " ORDER BY id DESC LIMIT :limit OFFSET :offset";
 
@@ -650,8 +1076,10 @@ class PdoJobStorage implements
      */
     public function scanPending(string $queue, ?int $afterId, int $limit): array
     {
-        if ($limit < 1) {
-            throw new \InvalidArgumentException('Scan limit must be positive');
+        JobStorageRules::validateQueueOrType($queue, 'Queue');
+        JobStorageRules::validatePositiveLimit($limit, 'Scan limit');
+        if ($afterId !== null) {
+            JobStorageRules::validatePositiveId($afterId);
         }
         $sql = "SELECT * FROM {$this->table} WHERE queue = :queue AND status = 'pending'";
         $params = ['queue' => $queue];
@@ -667,6 +1095,45 @@ class PdoJobStorage implements
     }
 
     /**
+     * Scan pending notifications without decoding payload/result JSON.
+     *
+     * @param string $queue Queue name
+     * @param int|null $afterId Exclusive keyset cursor
+     * @param int $limit Maximum rows to return
+     * @return list<PendingNotification> Pending projections in ascending ID order
+     */
+    public function scanPendingNotifications(string $queue, ?int $afterId, int $limit): array
+    {
+        JobStorageRules::validateQueueOrType($queue, 'Queue');
+        JobStorageRules::validatePositiveLimit($limit, 'Scan limit');
+        if ($afterId !== null) {
+            JobStorageRules::validatePositiveId($afterId);
+        }
+        $sql = "SELECT id, available_at FROM {$this->table} WHERE queue = :queue AND status = 'pending'";
+        $params = ['queue' => $queue];
+        if ($afterId !== null) {
+            $sql .= ' AND id > :after_id';
+            $params['after_id'] = $afterId;
+        }
+        $sql .= ' ORDER BY id ASC LIMIT :limit';
+        $stmt = $this->withReconnect(
+            fn (PDO $pdo): PDOStatement => $this->boundedStatement($pdo, $sql, $params, $limit)
+        );
+        /** @var list<array<string, mixed>> $rows */
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $notifications = [];
+        foreach ($rows as $row) {
+            $id = isset($row['id']) && is_numeric($row['id']) ? (int) $row['id'] : 0;
+            if ($id < 1) {
+                continue;
+            }
+            $availableAt = $row['available_at'] ?? null;
+            $notifications[] = new PendingNotification($id, is_string($availableAt) ? $availableAt : null);
+        }
+        return $notifications;
+    }
+
+    /**
      * Count jobs by status.
      *
      * @param JobStatus|null $status Filter by status (null for all)
@@ -674,6 +1141,9 @@ class PdoJobStorage implements
      */
     public function count(?JobStatus $status = null, ?string $queue = null): int
     {
+        if ($queue !== null) {
+            JobStorageRules::validateQueueOrType($queue, 'Queue');
+        }
         [$sql, $params] = $this->filteredQuery('SELECT COUNT(*) as cnt', new JobFilter($status, $queue));
         $stmt = $this->execute($sql, $params);
 
@@ -689,35 +1159,20 @@ class PdoJobStorage implements
      */
     public function pruneCompleted(int $days = 7): int
     {
+        JobStorageRules::validateNonNegative($days, 'Retention days');
         $threshold = JobStorageRules::timestamp($this->clock(), $this->dateFormat, -$days * 86400);
 
         $sql = "DELETE FROM {$this->table}
             WHERE status IN ('completed', 'cancelled')
             AND completed_at < :threshold";
 
-        $stmt = $this->execute($sql, ['threshold' => $threshold]);
+        $stmt = $this->executeMutation($sql, ['threshold' => $threshold], 'pruneCompleted');
 
         return $stmt->rowCount();
     }
     protected function now(): string
     {
         return $this->clock()->now();
-    }
-
-    /**
-     * Resolve the available-at timestamp for one createJobs() definition.
-     *
-     * @param array<string, mixed> $job Job definition
-     * @param string $now Default "now" timestamp for absent keys
-     * @return string UTC timestamp the job becomes available
-     */
-    private function rowAvailableAt(array $job, string $now): string
-    {
-        $availableAt = $job['availableAt'] ?? null;
-
-        return $availableAt === null
-            ? $now
-            : JobStorageRules::normalizeAvailableAt($availableAt, $this->clock());
     }
 
     private function clock(): ClockInterface
@@ -748,7 +1203,9 @@ class PdoJobStorage implements
     {
         $sql = "UPDATE {$this->table} SET {$assignments}
             WHERE id = :id AND status = 'running' AND lease_token = :lease_token";
-        return $this->execute($sql, array_merge($this->claimIdentity($claim), $params));
+        $merged = array_merge($this->claimIdentity($claim), $params);
+        // Guard against duplicate placeholder collisions between identity and assignments.
+        return $this->executeMutation($sql, $merged, 'fencedUpdate');
     }
 
     private function claimStillOwned(ClaimedJob $claim): bool
@@ -790,7 +1247,7 @@ class PdoJobStorage implements
     private function fetchJobs(PDOStatement $statement): array
     {
         return array_values(array_map(
-            fn (array $row): JobData => JobData::fromRaw($this->associativeRow($row)),
+            fn (array $row): JobData => JobDataHydrator::hydrateStrict($this->associativeRow($row)),
             $statement->fetchAll(PDO::FETCH_ASSOC)
         ));
     }
@@ -798,7 +1255,7 @@ class PdoJobStorage implements
     private function fetchJob(PDOStatement $statement): ?JobData
     {
         $row = $statement->fetch(PDO::FETCH_ASSOC);
-        return is_array($row) ? JobData::fromRaw($this->associativeRow($row)) : null;
+        return is_array($row) ? JobDataHydrator::hydrateStrict($this->associativeRow($row)) : null;
     }
 
     /**
@@ -921,10 +1378,22 @@ class PdoJobStorage implements
                 $leaseToken,
                 $now
             );
-            $transaction->commit();
+            try {
+                $transaction->commit();
+            } catch (\PDOException $commitException) {
+                if ($this->isConnectionException($commitException)) {
+                    $this->discardFactoryConnection($pdo);
+                    throw IndeterminateStorageOutcomeException::forOperation('claimJob', $commitException);
+                }
+                throw $commitException;
+            }
             return $statement === null ? null : $this->claimFromStatement($statement, $workerId, $leaseToken);
         } catch (\Throwable $exception) {
             $transaction->rollbackIgnoringFailure();
+            if ($exception instanceof \PDOException && $this->isConnectionException($exception)) {
+                $this->discardFactoryConnection($pdo);
+                throw IndeterminateStorageOutcomeException::forOperation('claimJob', $exception);
+            }
             throw $exception;
         }
     }
@@ -998,7 +1467,7 @@ class PdoJobStorage implements
         }
 
         /** @var array<string, mixed> $row */
-        return new ClaimedJob(JobData::fromRaw($row), $workerId, $leaseToken);
+        return new ClaimedJob(JobDataHydrator::hydrateStrict($this->associativeRow($row)), $workerId, $leaseToken);
     }
 
     private function generateLeaseToken(): string

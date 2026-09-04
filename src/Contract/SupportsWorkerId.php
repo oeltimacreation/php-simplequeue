@@ -6,6 +6,8 @@ namespace Oeltima\SimpleQueue\Contract;
 
 /**
  * Interface for queue drivers that require a worker ID.
+ *
+ * @deprecated Use SupportsWorkerAwareClaimedDequeue instead; retained for third-party compatibility.
  */
 interface SupportsWorkerId
 {

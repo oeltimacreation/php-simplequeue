@@ -30,6 +30,10 @@ final readonly class ReconciliationJobProcessor
     /**
      * Reconcile one pending job.
      *
+     * Membership in either pending or delayed counts as already notified,
+     * regardless of whether the job is currently due (at-least-once delivery
+     * permits harmless duplicates from bounded-scan false negatives).
+     *
      * @param string $queue Queue name
      * @param JobData $job Durable pending job
      * @param ReconcileOptions $options Bounded reconciliation options
@@ -42,21 +46,45 @@ final readonly class ReconciliationJobProcessor
         }
 
         $parsedAvailableAt = $this->parseAvailableAt($job->availableAt);
-        $availableAt = $parsedAvailableAt === false ? $this->clock->timestamp() : $parsedAvailableAt;
-        $isDue = $availableAt <= $this->clock->timestamp();
-        $exists = $isDue
-            ? $this->driver->hasPendingJob($queue, $job->id, $options->membershipScanLimit)
-            : $this->driver->hasDelayedJob($queue, $job->id);
-        if ($exists) {
+        if ($parsedAvailableAt === false) {
+            return ReconcileJobOutcome::Invalid;
+        }
+        $availableAt = $parsedAvailableAt;
+        $now = $this->clock->timestamp();
+        $isDue = $availableAt <= $now;
+        // Either structure counts as notified, regardless of due state.
+        if (
+            $this->driver->hasPendingJob($queue, $job->id, $options->membershipScanLimit)
+            || $this->driver->hasDelayedJob($queue, $job->id)
+        ) {
             return ReconcileJobOutcome::Duplicate;
         }
 
         if ($isDue) {
             $this->driver->enqueue($queue, $job->id);
         } else {
-            $this->driver->nack($queue, $job->id, max(0, $availableAt - $this->clock->timestamp()));
+            $this->driver->nack($queue, $job->id, max(0, $availableAt - $now));
         }
         return ReconcileJobOutcome::Restored;
+    }
+
+    /**
+     * Parse a stored availability timestamp strictly.
+     *
+     * @param string|null $availableAt Stored availability timestamp
+     * @return int|false Unix timestamp, or false when unparseable
+     */
+    public static function parseTimestamp(?string $availableAt, ClockInterface $clock): int|false
+    {
+        if ($availableAt === null || $availableAt === '') {
+            return $clock->timestamp();
+        }
+        $parsed = \DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $availableAt, new \DateTimeZone('UTC'));
+        if ($parsed !== false) {
+            return $parsed->getTimestamp();
+        }
+        $fallback = strtotime($availableAt . ' UTC');
+        return $fallback === false ? false : $fallback;
     }
 
     /**
@@ -74,17 +102,6 @@ final readonly class ReconciliationJobProcessor
      */
     private function parseAvailableAt(?string $availableAt): int|false
     {
-        if ($availableAt === null || $availableAt === '') {
-            return $this->clock->timestamp();
-        }
-
-        $parsed = \DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $availableAt, new \DateTimeZone('UTC'));
-        if ($parsed !== false) {
-            return $parsed->getTimestamp();
-        }
-
-        $fallback = strtotime($availableAt . ' UTC');
-
-        return $fallback === false ? false : $fallback;
+        return self::parseTimestamp($availableAt, $this->clock);
     }
 }

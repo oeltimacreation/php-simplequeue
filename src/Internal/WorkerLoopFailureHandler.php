@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Internal;
 
 use Oeltima\SimpleQueue\Contract\InfrastructureErrorEvent;
+use Oeltima\SimpleQueue\Contract\SleeperInterface;
 use Oeltima\SimpleQueue\Contract\WorkerBackoffEvent;
 use Psr\Log\LoggerInterface;
 
@@ -18,10 +19,12 @@ final class WorkerLoopFailureHandler
     /**
      * @param LoggerInterface $logger Worker logger
      * @param WorkerPolicy $policy Pure worker failure policy
+     * @param SleeperInterface|null $sleeper Deterministic sleep boundary
      */
     public function __construct(
         private readonly LoggerInterface $logger,
-        private readonly WorkerPolicy $policy
+        private readonly WorkerPolicy $policy,
+        private readonly ?SleeperInterface $sleeper = null
     ) {
     }
 
@@ -60,8 +63,13 @@ final class WorkerLoopFailureHandler
 
     private function sleep(float $seconds): void
     {
-        if ($seconds > 0) {
-            usleep((int) ($seconds * 1_000_000));
+        if ($seconds <= 0) {
+            return;
         }
+        if ($this->sleeper !== null) {
+            $this->sleeper->sleep($seconds);
+            return;
+        }
+        usleep((int) ($seconds * 1_000_000));
     }
 }

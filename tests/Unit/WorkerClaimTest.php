@@ -26,7 +26,10 @@ final class WorkerClaimTest extends WorkerTestCase
                 $this->callback(fn(array $context): bool => isset($context['job_id']) && $context['job_id'] === 123)
             );
 
-        $this->assertFalse($this->createWorkerWithDriver($driver)->processOne());
+        // Claim/infrastructure errors escape processOne(); only empty claims return false.
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Database connection lost');
+        $this->createWorkerWithDriver($driver)->processOne();
     }
 
     public function testWorkerContinuesWhenJobAlreadyClaimedByAnotherWorker(): void

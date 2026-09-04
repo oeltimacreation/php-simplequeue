@@ -54,7 +54,10 @@ final class WorkerCompletionTest extends WorkerTestCase
                 $this->callback(fn(array $context): bool => isset($context['job_id']) && $context['job_id'] === 500)
             );
 
-        $this->assertTrue($this->createWorkerWithDriver($driver)->processOne());
+        // Durable completion is authoritative; ACK failure escapes as infrastructure.
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Redis error');
+        $this->createWorkerWithDriver($driver)->processOne();
     }
 
     public function testProgressCallbackTriggersUpdateProgressWithoutRedundantStorageHeartbeat(): void

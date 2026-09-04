@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue;
 
-use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\ClaimedJob;
+use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\InfrastructureFailureEvent;
 use Oeltima\SimpleQueue\Contract\JobClaimedEvent;
 use Oeltima\SimpleQueue\Contract\JobCompletedEvent;
@@ -14,17 +14,21 @@ use Oeltima\SimpleQueue\Contract\JobLostOwnershipEvent;
 use Oeltima\SimpleQueue\Contract\JobRetriedEvent;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
-use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
-use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
-use Oeltima\SimpleQueue\Contract\SupportsProcessingHeartbeat;
-use Oeltima\SimpleQueue\Contract\SupportsWorkerId;
-use Oeltima\SimpleQueue\Contract\SupportsTimeoutValidation;
+use Oeltima\SimpleQueue\Contract\SleeperInterface;
 use Oeltima\SimpleQueue\Contract\SupportsClaimedDequeue;
+use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
+use Oeltima\SimpleQueue\Contract\SupportsProcessingHeartbeat;
+use Oeltima\SimpleQueue\Contract\SupportsQueueScopedStaleRecovery;
+use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
+use Oeltima\SimpleQueue\Contract\SupportsTimeoutValidation;
+use Oeltima\SimpleQueue\Contract\SupportsWorkerAwareClaimedDequeue;
+use Oeltima\SimpleQueue\Contract\SupportsWorkerId;
 use Oeltima\SimpleQueue\Exception\HandlerNotFoundException;
 use Oeltima\SimpleQueue\Exception\SerializationException;
 use Oeltima\SimpleQueue\Internal\JobMiddlewareRunner;
 use Oeltima\SimpleQueue\Internal\WorkerEventEmitter;
 use Oeltima\SimpleQueue\Internal\WorkerLoopFailureHandler;
+use Oeltima\SimpleQueue\Internal\WorkerOwnershipLost;
 use Oeltima\SimpleQueue\Internal\WorkerPolicy;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -34,6 +38,11 @@ use Psr\Log\NullLogger;
  *
  * The worker runs in a loop, fetching and processing jobs until
  * it receives a shutdown signal or is manually stopped.
+ *
+ * Effect ordering per claimed job: persist the fenced durable transition
+ * first, emit the matching lifecycle event second, and ACK/NACK third.
+ * A false fenced result means ownership was lost and never permits
+ * notification cleanup or further handler work.
  */
 final class Worker
 {
@@ -50,6 +59,7 @@ final class Worker
 
     private readonly WorkerOptions $options;
     private readonly ClockInterface $clock;
+    private readonly SleeperInterface $sleeper;
     private readonly WorkerPolicy $policy;
     private readonly WorkerEventEmitter $eventEmitter;
     private readonly WorkerLoopFailureHandler $loopFailureHandler;
@@ -58,6 +68,11 @@ final class Worker
     private float $lastPromoteTime = 0.0;
     private float $lastRecoveryTime = 0.0;
     private ?int $reconcileCursor = null;
+    private bool $executing = false;
+    private bool $shutdownReleaseFailed = false;
+    private mixed $priorSigterm = null;
+    private mixed $priorSigint = null;
+    private ?bool $priorAsyncSignals = null;
 
     private ?\Closure $eventListener = null;
 
@@ -86,8 +101,9 @@ final class Worker
         $this->options = $options instanceof WorkerOptions ? $options : WorkerOptions::fromArray($options);
         $this->lockFile = $this->resolveLockFile($queue, $options);
         $this->policy = new WorkerPolicy($this->options->retryBaseDelay, $this->options->retryMaxDelay);
-        $this->loopFailureHandler = new WorkerLoopFailureHandler($this->logger, $this->policy);
         $this->clock = $this->options->clock ?? new SystemClock();
+        $this->sleeper = $this->options->sleeper ?? new SystemSleeper();
+        $this->loopFailureHandler = new WorkerLoopFailureHandler($this->logger, $this->policy, $this->sleeper);
         if ($driver instanceof SupportsTimeoutValidation) {
             $driver->validateTimeout($this->options->pollTimeout);
         }
@@ -103,19 +119,56 @@ final class Worker
      */
     private function resolveLockFile(string $queue, array|WorkerOptions $options): ?string
     {
-        if ($options instanceof WorkerOptions) {
-            return $options->lockFile ?? sprintf(
-                '/tmp/simplequeue-worker-%s.lock',
+        $typed = $options instanceof WorkerOptions ? $options : null;
+        if ($typed !== null) {
+            if (!$typed->lockingEnabled) {
+                return null;
+            }
+            return $typed->lockFile ?? self::defaultLockFile($queue);
+        }
+        // Array form: explicit null disables, non-empty string is custom, absent is default.
+        if (array_key_exists('lock_file', $options)) {
+            $raw = $options['lock_file'];
+            if ($raw === null) {
+                return null;
+            }
+            if (is_string($raw) && trim($raw) !== '') {
+                return $raw;
+            }
+        }
+        if (array_key_exists('locking_enabled', $options) && $options['locking_enabled'] === false) {
+            return null;
+        }
+        if ($this->options->lockFile !== null) {
+            return $this->options->lockFile;
+        }
+        if (!$this->options->lockingEnabled) {
+            return null;
+        }
+        return self::defaultLockFile($queue);
+    }
+
+    /**
+     * Build the collision-safe default lock path for a queue.
+     *
+     * @param string $queue Queue name
+     * @return string Default lock file path
+     */
+    private static function defaultLockFile(string $queue): string
+    {
+        if (PHP_OS_FAMILY === 'Windows') {
+            return sprintf(
+                '%s/simplequeue-worker-%s.lock',
+                rtrim(sys_get_temp_dir(), '/\\'),
                 preg_replace('/[^a-zA-Z0-9_-]/', '', $queue)
             );
         }
-        if (array_key_exists('lock_file', $options)) {
-            return $this->options->lockFile;
-        }
-        return sprintf(
-            '/tmp/simplequeue-worker-%s.lock',
-            preg_replace('/[^a-zA-Z0-9_-]/', '', $queue)
-        );
+        $uid = function_exists('posix_geteuid') ? posix_geteuid() : 0;
+        $dir = rtrim(sys_get_temp_dir(), '/') . '/simplequeue-' . $uid;
+        $cwdRaw = getcwd();
+        $cwd = $cwdRaw !== false ? $cwdRaw : '.';
+        $name = hash('sha256', $cwd . "\0" . $queue);
+        return $dir . '/worker-' . $name . '.lock';
     }
 
     public static function withOptions(
@@ -149,9 +202,19 @@ final class Worker
      */
     public function run(): int
     {
+        if ($this->executing) {
+            throw new \LogicException('Worker is already executing');
+        }
+        $this->executing = true;
+        // Sequential reuse resets run state.
+        $this->shouldRun = true;
+        $this->processedJobsCount = 0;
+        $this->reconcileCursor = null;
+        $this->shutdownReleaseFailed = false;
         $this->logger->info('Worker starting', ['worker_id' => $this->workerId, 'queue' => $this->queue]);
 
         if (!$this->acquireLock()) {
+            $this->executing = false;
             $this->logger->error('Failed to acquire singleton lock. Another worker may be running.');
             return self::EXIT_LOCK_UNAVAILABLE;
         }
@@ -165,9 +228,15 @@ final class Worker
             ]);
             return self::EXIT_ERROR;
         } finally {
+            $this->restoreSignalHandlers();
             $this->releaseLock();
+            $this->executing = false;
         }
 
+        if ($this->shutdownReleaseFailed) {
+            $this->logger->error('Worker shutdown release failed; supervisor should react');
+            return self::EXIT_ERROR;
+        }
         $this->logger->info('Worker stopped gracefully', ['worker_id' => $this->workerId]);
         return self::EXIT_SUCCESS;
     }
@@ -175,12 +244,13 @@ final class Worker
     private function initializeRun(): void
     {
         $this->registerSignalHandlers();
+        // Delayed promotion runs before reconciliation so a due job still in
+        // delayed produces one notification, not two.
+        $this->promoteDelayedJobs();
+        $this->lastPromoteTime = $this->clock->monotonic();
         $this->recoverStaleJobs();
         $this->reconcileDbAndRedis();
         $this->lastRecoveryTime = $this->clock->monotonic();
-
-        $this->promoteDelayedJobs();
-        $this->lastPromoteTime = $this->clock->monotonic();
 
         $driverClass = get_class($this->queueManager->driver());
         $this->logger->info('Using queue driver', ['driver' => $driverClass]);
@@ -224,7 +294,9 @@ final class Worker
         }
 
         if (!$this->shouldRun) {
-            $this->releaseClaimForShutdown($claim, $driver);
+            if (!$this->releaseClaimForShutdown($claim, $driver)) {
+                $this->shutdownReleaseFailed = true;
+            }
             return false;
         }
 
@@ -232,46 +304,74 @@ final class Worker
         return true;
     }
 
-    private function releaseClaimForShutdown(ClaimedJob $claim, QueueDriverInterface $driver): void
+    /**
+     * Release a post-signal claim with unchanged attempts.
+     *
+     * @param ClaimedJob $claim Claimed job to release
+     * @param QueueDriverInterface $driver Queue driver
+     * @return bool True when durable release (and NACK) succeeded
+     */
+    private function releaseClaimForShutdown(ClaimedJob $claim, QueueDriverInterface $driver): bool
     {
         $this->logger->info('Worker shutting down, releasing claimed job', ['job_id' => $claim->job->id]);
         try {
-            $this->storage->scheduleRetry($claim, $claim->job->attempts, 0, 'Worker shutting down');
-            $driver->nack($this->queue, $claim->job->id, 0);
+            $released = $this->storage->scheduleRetry($claim, $claim->job->attempts, 0, 'Worker shutting down');
         } catch (\Throwable $exception) {
             $this->logger->error('Failed to release job during shutdown', [
                 'job_id' => $claim->job->id,
                 'error' => $exception->getMessage(),
             ]);
+            return false;
         }
+        if (!$released) {
+            $this->emitLostOwnershipEvent($claim, 'shutdown_release');
+            return true;
+        }
+        try {
+            $driver->nack($this->queue, $claim->job->id, 0);
+        } catch (\Throwable $exception) {
+            $this->logger->error('Failed to nack released job during shutdown', [
+                'job_id' => $claim->job->id,
+                'error' => $exception->getMessage(),
+            ]);
+            return false;
+        }
+        return true;
     }
 
     /**
      * Process a single job (useful for testing or manual processing).
      *
+     * Returns false only when no claim is available. Promotion, claim,
+     * storage, and notifier errors are thrown to the caller.
+     *
      * @return bool True if a job was processed, false if queue was empty
      */
     public function processOne(): bool
     {
-        $driver = $this->queueManager->driver();
-
-        // Promote any delayed jobs that are now due
-        if ($driver instanceof SupportsDelayedJobs) {
-            $driver->promoteDelayedJobs($this->queue, $this->options->promoteLimit);
+        if ($this->executing) {
+            throw new \LogicException('Worker is already executing');
         }
-
+        $this->executing = true;
         try {
+            $driver = $this->queueManager->driver();
+
+            // Promote any delayed jobs that are now due
+            if ($driver instanceof SupportsDelayedJobs) {
+                $driver->promoteDelayedJobs($this->queue, $this->options->promoteLimit);
+            }
+
             $claim = $this->claimNextJob(0);
-        } catch (\Throwable) {
-            return false;
-        }
 
-        if ($claim === null) {
-            return false;
-        }
+            if ($claim === null) {
+                return false;
+            }
 
-        $this->processClaimedJob($claim, $driver);
-        return true;
+            $this->processClaimedJob($claim, $driver);
+            return true;
+        } finally {
+            $this->executing = false;
+        }
     }
 
     /**
@@ -297,11 +397,20 @@ final class Worker
         $jobId = null;
 
         try {
+            if ($driver instanceof SupportsWorkerAwareClaimedDequeue) {
+                $claim = $driver->dequeueClaimedForWorker($this->queue, $timeoutSeconds, $this->workerId);
+                if ($claim === null) {
+                    return null;
+                }
+                $this->emitClaimedEvent($claim, ($this->clock->monotonic() - $startTime) * 1000.0);
+                return $claim;
+            }
             if ($driver instanceof SupportsClaimedDequeue) {
                 $claim = $driver->dequeueClaimed($this->queue, $timeoutSeconds);
                 if ($claim === null) {
                     return null;
                 }
+                $this->emitClaimedEvent($claim, ($this->clock->monotonic() - $startTime) * 1000.0);
                 return $claim;
             }
             $jobId = $driver->dequeue($this->queue, $timeoutSeconds);
@@ -478,15 +587,35 @@ final class Worker
             return true;
         }
 
-        if ($this->options->memoryLimit > 0 && memory_get_usage(true) >= $this->options->memoryLimit) {
-            $this->logger->info('Worker limit reached: memory_limit', [
-                'memory_limit' => $this->options->memoryLimit,
-                'current_memory' => memory_get_usage(true)
-            ]);
-            return true;
+        if ($this->options->memoryLimit > 0) {
+            $limitBytes = $this->memoryLimitBytes();
+            if ($limitBytes !== null && memory_get_usage(true) >= $limitBytes) {
+                $this->logger->info('Worker limit reached: memory_limit', [
+                    'memory_limit' => $this->options->memoryLimit,
+                    'current_memory' => memory_get_usage(true),
+                ]);
+                return true;
+            }
         }
 
         return false;
+    }
+
+    /**
+     * Interpret memoryLimit as MiB with overflow-safe byte conversion.
+     *
+     * @return int|null Byte limit or null when disabled
+     */
+    private function memoryLimitBytes(): ?int
+    {
+        if ($this->options->memoryLimit <= 0) {
+            return null;
+        }
+        $mib = $this->options->memoryLimit;
+        if ($mib > intdiv(PHP_INT_MAX, 1048576)) {
+            return PHP_INT_MAX;
+        }
+        return $mib * 1048576;
     }
 
     private function runDueMaintenance(): void
@@ -530,19 +659,39 @@ final class Worker
         ]);
 
         $startTime = $this->clock->monotonic();
+        $handlerCounted = false;
 
         try {
-            $completed = $this->executeJob($claim);
+            // Handler/middleware exceptions are job failures even for PDO/Redis types.
+            try {
+                $result = $this->executeHandler($claim);
+            } catch (WorkerOwnershipLost $lost) {
+                // Progress ownership loss already emitted; handler had begun so count it.
+                $this->processedJobsCount++;
+                return;
+            } catch (\Throwable $handlerException) {
+                $durationMs = ($this->clock->monotonic() - $startTime) * 1000.0;
+                $this->processedJobsCount++;
+                $handlerCounted = true;
+                $this->handleJobFailure($claim, $handlerException, $driver, $durationMs);
+                return;
+            }
             $durationMs = ($this->clock->monotonic() - $startTime) * 1000.0;
-            $this->handleJobCompletion($claim, $driver, $completed, $durationMs);
-        } catch (SerializationException $exception) {
-            $durationMs = ($this->clock->monotonic() - $startTime) * 1000.0;
-            $this->handleSerializationFailure($claim, $driver, $exception, $durationMs);
-        } catch (\Throwable $exception) {
-            $durationMs = ($this->clock->monotonic() - $startTime) * 1000.0;
-            $this->handleJobFailure($claim, $exception, $driver, $durationMs);
-        } finally {
             $this->processedJobsCount++;
+            $handlerCounted = true;
+            // Durable transition errors escape as infrastructure (never handler failures).
+            try {
+                $completed = $this->storage->markCompleted($claim, $result);
+            } catch (SerializationException $exception) {
+                $this->handleResultSerializationFailure($claim, $driver, $exception, $durationMs);
+                return;
+            }
+            $this->handleJobCompletion($claim, $driver, $completed, $durationMs);
+        } finally {
+            if (!$handlerCounted) {
+                // Handler never began (e.g. ownership lost before execution).
+                // max_jobs counts only started handler attempts.
+            }
         }
     }
 
@@ -564,6 +713,7 @@ final class Worker
             'type' => $job->type,
             'duration_seconds' => round($durationMs / 1000.0, 3),
         ]);
+        // Persisted first, emit second, ACK third.
         $this->emitCompletedEvent($claim, $durationMs);
 
         try {
@@ -571,27 +721,58 @@ final class Worker
         } catch (\Throwable $exception) {
             $this->logger->error('Failed to ack completed job', [
                 'job_id' => $job->id,
+                'operation' => 'ack',
                 'error' => $exception->getMessage(),
             ]);
+            throw $exception;
         }
     }
 
-    private function handleSerializationFailure(
+    /**
+     * Handle result-serialization failure as an immediate fenced terminal failure.
+     *
+     * @param ClaimedJob $claim Claimed job
+     * @param QueueDriverInterface $driver Queue driver
+     * @param SerializationException $exception Serialization failure
+     * @param float $durationMs Handler duration in milliseconds
+     */
+    private function handleResultSerializationFailure(
         ClaimedJob $claim,
         QueueDriverInterface $driver,
         SerializationException $exception,
         float $durationMs
     ): void {
-        $this->storage->markFailed($claim, $exception->getMessage(), $this->truncateTrace($exception));
-        $driver->ack($this->queue, $claim->job->id);
+        // Never rerun the handler merely to recreate its result.
+        $marked = $this->storage->markFailed($claim, $exception->getMessage(), $this->truncateTrace($exception));
+        if ($this->policy->ownershipOutcome($marked)->isLost()) {
+            $this->emitLostOwnershipEvent($claim, 'result_serialization');
+            return;
+        }
         $this->logger->error('Job result serialization failed after handler completion', [
             'job_id' => $claim->job->id,
             'duration_ms' => $durationMs,
             'error' => $exception->getMessage(),
         ]);
+        $this->emitFailedEvent($claim, $durationMs, $exception);
+        try {
+            $driver->ack($this->queue, $claim->job->id);
+        } catch (\Throwable $ackException) {
+            $this->logger->error('Failed to ack serialization-failed job', [
+                'job_id' => $claim->job->id,
+                'operation' => 'ack',
+                'error' => $ackException->getMessage(),
+            ]);
+            throw $ackException;
+        }
     }
 
-    private function executeJob(ClaimedJob $claim): bool
+    /**
+     * Execute middleware/handler outside the durable completion call.
+     *
+     * @param ClaimedJob $claim Claimed job
+     * @return mixed Handler result
+     */
+    private function executeHandler(ClaimedJob $claim): mixed
     {
         $job = $claim->job;
 
@@ -602,9 +783,15 @@ final class Worker
         $handler = $this->registry->get($job->type);
 
         $progressCallback = function (int $percent, ?string $message = null) use ($claim): void {
-            $updated = $this->storage->updateProgress($claim, $percent, $message);
+            try {
+                $updated = $this->storage->updateProgress($claim, $percent, $message);
+            } catch (\Throwable $exception) {
+                // Progress storage exception leaves the claim running; infra failure escapes.
+                throw $exception;
+            }
             if (!$updated) {
-                return;
+                $this->emitLostOwnershipEvent($claim, 'progress');
+                throw new WorkerOwnershipLost('Lost job ownership during progress update');
             }
 
             $driver = $this->queueManager->driver();
@@ -615,6 +802,7 @@ final class Worker
             try {
                 $driver->heartbeatProcessing($this->queue, $claim->job->id);
             } catch (\Throwable $exception) {
+                // Queue heartbeat failure is non-fatal after durable heartbeat; fencing still protects completion.
                 $this->logger->error('Failed to refresh queue processing visibility', [
                     'job_id' => $claim->job->id,
                     'error' => $exception->getMessage(),
@@ -623,9 +811,7 @@ final class Worker
             }
         };
 
-        $result = JobMiddlewareRunner::run($this->registry->middleware->all(), $claim, $handler, $progressCallback);
-
-        return $this->storage->markCompleted($claim, $result);
+        return JobMiddlewareRunner::run($this->registry->middleware->all(), $claim, $handler, $progressCallback);
     }
 
     private function handleJobFailure(
@@ -646,21 +832,12 @@ final class Worker
             'error' => $exception->getMessage(),
         ]);
 
-        try {
-            if ($this->policy->retryDecision($attempts, $job->maxAttempts)->shouldRetry()) {
-                $this->retryFailedJob($claim, $exception, $driver, $durationMs);
-                return;
-            }
-
-            $this->failJobPermanently($claim, $exception, $driver, $durationMs);
-        } catch (\Throwable $storageError) {
-            $this->logger->error('Failed to update job status after failure', [
-                'job_id' => $job->id,
-                'original_error' => $exception->getMessage(),
-                'storage_error' => $storageError->getMessage(),
-            ]);
-            // Leave job in processing state - will be recovered as stale
+        if ($this->policy->retryDecision($attempts, $job->maxAttempts)->shouldRetry()) {
+            $this->retryFailedJob($claim, $exception, $driver, $durationMs);
+            return;
         }
+
+        $this->failJobPermanently($claim, $exception, $driver, $durationMs);
     }
 
     private function retryFailedJob(
@@ -677,8 +854,18 @@ final class Worker
             return;
         }
 
-        $driver->nack($this->queue, $claim->job->id, $delay);
+        // Emit second, NACK third; NACK failure preserves the event and escapes as infra.
         $this->emitRetriedEvent($claim, $durationMs, $exception);
+        try {
+            $driver->nack($this->queue, $claim->job->id, $delay);
+        } catch (\Throwable $nackException) {
+            $this->logger->error('Failed to nack retried job', [
+                'job_id' => $claim->job->id,
+                'operation' => 'nack',
+                'error' => $nackException->getMessage(),
+            ]);
+            throw $nackException;
+        }
     }
 
     private function failJobPermanently(
@@ -698,8 +885,17 @@ final class Worker
             return;
         }
 
-        $driver->ack($this->queue, $claim->job->id);
         $this->emitFailedEvent($claim, $durationMs, $exception);
+        try {
+            $driver->ack($this->queue, $claim->job->id);
+        } catch (\Throwable $ackException) {
+            $this->logger->error('Failed to ack failed job', [
+                'job_id' => $claim->job->id,
+                'operation' => 'ack',
+                'error' => $ackException->getMessage(),
+            ]);
+            throw $ackException;
+        }
     }
 
     private function scheduleRetry(ClaimedJob $claim, int $delay, \Throwable $e): bool
@@ -723,7 +919,7 @@ final class Worker
     private function recoverStaleJobs(): void
     {
         $stuckJobTtl = $this->options->stuckJobTtl;
-        $recovered = $this->storage instanceof \Oeltima\SimpleQueue\Contract\SupportsQueueScopedStaleRecovery
+        $recovered = $this->storage instanceof SupportsQueueScopedStaleRecovery
             ? $this->storage->recoverStaleJobsForQueue($this->queue, $stuckJobTtl, 100)
             : $this->storage->recoverStaleJobs($stuckJobTtl);
 
@@ -779,15 +975,55 @@ final class Worker
 
     private function acquireLock(): bool
     {
-        if ($this->lockFile === null || PHP_OS_FAMILY === 'Windows') {
+        if ($this->lockFile === null) {
+            $this->logger->warning('Locking disabled - unsafe for production, dev use only');
+            return true;
+        }
+        if (PHP_OS_FAMILY === 'Windows') {
             $this->logger->warning('Locking disabled - unsafe for production, dev use only');
             return true;
         }
 
+        $dir = dirname($this->lockFile);
+        if (!is_dir($dir)) {
+            $oldUmask = umask(0077);
+            try {
+                if (!mkdir($dir, 0700, true) && !is_dir($dir)) {
+                    return false;
+                }
+            } finally {
+                umask($oldUmask);
+            }
+        }
+        // Require a real current-user-owned directory with mode 0700.
+        $realDir = realpath($dir);
+        if ($realDir === false || !is_dir($realDir)) {
+            return false;
+        }
+        if (function_exists('posix_geteuid')) {
+            $owner = @fileowner($realDir);
+            if ($owner !== posix_geteuid()) {
+                $this->logger->error('Lock directory is not owned by the current user');
+                return false;
+            }
+            $perms = @fileperms($realDir);
+            if ($perms !== false && ($perms & 0777) !== 0700) {
+                @chmod($realDir, 0700);
+            }
+        }
+        // Reject symlink/non-regular lock targets.
+        if (file_exists($this->lockFile) || is_link($this->lockFile)) {
+            if (is_link($this->lockFile) || (file_exists($this->lockFile) && !is_file($this->lockFile))) {
+                $this->logger->error('Lock path is not a regular file');
+                return false;
+            }
+        }
         $handle = fopen($this->lockFile, 'c');
         if ($handle === false) {
             return false;
         }
+        // Create with 0600 regardless of umask.
+        @chmod($this->lockFile, 0600);
         $this->lockHandle = $handle;
 
         if (!flock($this->lockHandle, LOCK_EX | LOCK_NB)) {
@@ -823,6 +1059,11 @@ final class Worker
             return;
         }
 
+        $this->priorAsyncSignals = pcntl_async_signals();
+        if (function_exists('pcntl_signal_get_handler')) {
+            $this->priorSigterm = pcntl_signal_get_handler(SIGTERM);
+            $this->priorSigint = pcntl_signal_get_handler(SIGINT);
+        }
         pcntl_async_signals(true);
 
         $shutdown = function (int $signal): void {
@@ -835,11 +1076,44 @@ final class Worker
         pcntl_signal(SIGINT, $shutdown);
     }
 
+    private function restoreSignalHandlers(): void
+    {
+        if (!function_exists('pcntl_signal')) {
+            return;
+        }
+        try {
+            if (function_exists('pcntl_signal_get_handler')) {
+                if ($this->priorSigterm !== null && (is_callable($this->priorSigterm) || is_int($this->priorSigterm))) {
+                    pcntl_signal(SIGTERM, $this->priorSigterm);
+                }
+                if ($this->priorSigint !== null && (is_callable($this->priorSigint) || is_int($this->priorSigint))) {
+                    pcntl_signal(SIGINT, $this->priorSigint);
+                }
+            }
+            if ($this->priorAsyncSignals !== null) {
+                pcntl_async_signals($this->priorAsyncSignals);
+            }
+        } catch (\Throwable) {
+            // Best-effort restore; never mask the run outcome.
+        } finally {
+            $this->priorSigterm = null;
+            $this->priorSigint = null;
+            $this->priorAsyncSignals = null;
+        }
+    }
+
     private function generateWorkerId(): string
     {
         $host = gethostname();
         $hostname = $host === false ? 'unknown' : $host;
-        return sprintf('%s:%d', $hostname, getmypid());
+        $hostname = substr($hostname, 0, 200);
+        $random = bin2hex(random_bytes(8));
+        $id = sprintf('%s:%d:%s', $hostname, getmypid(), $random);
+        // Fit the 255-byte storage limit.
+        if (strlen($id) > 255) {
+            $id = substr($id, 0, 255);
+        }
+        return $id;
     }
 
     private function truncateTrace(\Throwable $e, int $maxLength = 4000): string

@@ -44,12 +44,23 @@ final class RedisResponseNormalizer
     /**
      * Normalize an integer-like Redis script response.
      *
+     * Accepts only canonical non-negative integers within PHP range;
+     * malformed or negative responses raise QueueException.
+     *
      * @param mixed $result Raw Redis command result
-     * @return int Integer result, or zero for an unexpected response
+     * @return int Integer result
      */
     public static function integer(mixed $result): int
     {
-        return is_int($result) ? $result : (is_numeric($result) ? (int) $result : 0);
+        if (is_int($result) && $result >= 0) {
+            return $result;
+        }
+        if (is_string($result) && preg_match('/^(0|[1-9][0-9]*)$/', $result) === 1) {
+            if (strlen($result) < strlen((string) PHP_INT_MAX) || $result <= (string) PHP_INT_MAX) {
+                return (int) $result;
+            }
+        }
+        throw new QueueException('Redis returned a malformed integer response');
     }
 
     /**

@@ -5,7 +5,10 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Contract;
 
 /**
- * Interface for queue drivers that support pending/delayed job ID listing for reconciliation.
+ * Interface for queue drivers that support pending/delayed job ID listing.
+ *
+ * @deprecated Use lean cursor with batch reconciliation instead;
+ *             retained for third-party fallback.
  */
 interface SupportsQueueReconciliation
 {

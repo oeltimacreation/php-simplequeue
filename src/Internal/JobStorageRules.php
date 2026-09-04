@@ -11,6 +11,15 @@ use Oeltima\SimpleQueue\Exception\SerializationException;
  * Domain rules shared by storage implementations.
  *
  * @internal
+ * @phpstan-type ValidatedJobShape array{
+ *     type: non-empty-string,
+ *     payload: array<mixed, mixed>,
+ *     encodedPayload: string,
+ *     queue: non-empty-string,
+ *     maxAttempts: int,
+ *     requestId: non-empty-string|null,
+ *     availableAt: string
+ * }
  */
 final class JobStorageRules
 {
@@ -35,13 +44,17 @@ final class JobStorageRules
     /**
      * Validate retry transition arguments.
      *
+     * Non-negative persisted attempt counts are accepted so a graceful
+     * pre-execution release can reuse the unchanged count; handler-driven
+     * retries always pass a positive count.
+     *
      * @param int $attempts Current attempt count
      * @param int $delaySeconds Retry delay in seconds
      */
     public static function validateRetry(int $attempts, int $delaySeconds): void
     {
-        if ($attempts < 1 || $delaySeconds < 0) {
-            throw new \InvalidArgumentException('Attempts must be positive and retry delay must not be negative');
+        if ($attempts < 0 || $delaySeconds < 0) {
+            throw new \InvalidArgumentException('Attempts must not be negative and retry delay must not be negative');
         }
     }
 
@@ -117,5 +130,174 @@ final class JobStorageRules
         } catch (\JsonException $exception) {
             throw new SerializationException(sprintf('Unable to encode %s as JSON', $context), 0, $exception);
         }
+    }
+
+    /**
+     * Validate a storage table name as one or two dot-separated identifiers.
+     *
+     * @param string $table Table name, optionally schema-qualified
+     * @return string Validated table name
+     */
+    public static function validateTableName(string $table): string
+    {
+        $segments = explode('.', $table);
+        if ($table === '' || count($segments) > 2) {
+            throw new \InvalidArgumentException('Table name must be one or two dot-separated identifiers');
+        }
+        foreach ($segments as $segment) {
+            if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $segment) !== 1) {
+                throw new \InvalidArgumentException('Table name contains an invalid identifier');
+            }
+        }
+
+        return $table;
+    }
+
+    /**
+     * Validate a positive job identifier.
+     *
+     * @param int $id Job identifier
+     * @return int Validated job identifier
+     */
+    public static function validatePositiveId(int $id): int
+    {
+        if ($id < 1) {
+            throw new \InvalidArgumentException('Job ID must be a positive integer');
+        }
+
+        return $id;
+    }
+
+    /**
+     * Validate a non-empty queue or type value within storage limits.
+     *
+     * @param string $value Queue or type value
+     * @param string $field Field name for error messages
+     * @return string Validated value
+     */
+    public static function validateQueueOrType(string $value, string $field): string
+    {
+        if (trim($value) === '') {
+            throw new \InvalidArgumentException(sprintf('%s must not be empty', $field));
+        }
+        if (strlen($value) > 255) {
+            throw new \InvalidArgumentException(sprintf('%s must not exceed 255 bytes', $field));
+        }
+
+        return $value;
+    }
+
+    /**
+     * Validate a bounded string column (queue, type, request/worker ID, progress message).
+     *
+     * @param string $value Column value
+     * @param string $field Field name for error messages
+     * @return string Validated value
+     */
+    public static function validateBoundedString(string $value, string $field): string
+    {
+        if (strlen($value) > 255) {
+            throw new \InvalidArgumentException(sprintf('%s must not exceed 255 bytes', $field));
+        }
+
+        return $value;
+    }
+
+    /**
+     * Validate a max-attempts value.
+     *
+     * @param int $maxAttempts Maximum retry attempts
+     * @return int Validated value
+     */
+    public static function validateMaxAttempts(int $maxAttempts): int
+    {
+        if ($maxAttempts < 1) {
+            throw new \InvalidArgumentException('Maximum attempts must be at least 1');
+        }
+
+        return $maxAttempts;
+    }
+
+    /**
+     * Validate a non-negative integer (retry counts, delays, retention days, offsets).
+     *
+     * @param int $value Value to validate
+     * @param string $field Field name for error messages
+     * @return int Validated value
+     */
+    public static function validateNonNegative(int $value, string $field): int
+    {
+        if ($value < 0) {
+            throw new \InvalidArgumentException(sprintf('%s must not be negative', $field));
+        }
+
+        return $value;
+    }
+
+    /**
+     * Validate a positive limit.
+     *
+     * @param int $limit Limit value
+     * @param string $field Field name for error messages
+     * @return int Validated value
+     */
+    public static function validatePositiveLimit(int $limit, string $field = 'Limit'): int
+    {
+        if ($limit < 1) {
+            throw new \InvalidArgumentException(sprintf('%s must be positive', $field));
+        }
+
+        return $limit;
+    }
+
+    /**
+     * Validate a single job definition before any row is mutated or ID consumed.
+     *
+     * @param array<string, mixed> $job Job definition
+     * @param ClockInterface $clock Clock used as the time source
+     * @return ValidatedJobShape Normalized definition
+     */
+    public static function validateJobDefinition(array $job, ClockInterface $clock): array
+    {
+        $type = $job['type'] ?? null;
+        if (!is_string($type) || trim($type) === '') {
+            throw new \InvalidArgumentException('Job type must be a non-empty string');
+        }
+        self::validateBoundedString($type, 'Job type');
+        $queue = $job['queue'] ?? 'default';
+        if (!is_string($queue) || trim($queue) === '') {
+            throw new \InvalidArgumentException('Job queue must be a non-empty string');
+        }
+        self::validateBoundedString($queue, 'Queue');
+        $payload = $job['payload'] ?? null;
+        if (!is_array($payload)) {
+            throw new \InvalidArgumentException('Job payload must be an array');
+        }
+        // Encode eagerly so serialization failure precedes any mutation/ID consumption.
+        $encodedPayload = self::encodeJson($payload, 'job payload');
+        $maxAttempts = $job['maxAttempts'] ?? 3;
+        if (!is_int($maxAttempts)) {
+            throw new \InvalidArgumentException('Maximum attempts must be an integer');
+        }
+        self::validateMaxAttempts($maxAttempts);
+        $requestId = $job['requestId'] ?? null;
+        if ($requestId !== null) {
+            if (!is_string($requestId) || trim($requestId) === '') {
+                throw new \InvalidArgumentException('Request ID must be a non-empty string when provided');
+            }
+            self::validateBoundedString($requestId, 'Request ID');
+        }
+        $availableAtRaw = $job['availableAt'] ?? null;
+        $availableAt = $availableAtRaw === null ? $clock->now() : self::normalizeAvailableAt($availableAtRaw, $clock);
+
+        return [
+            'type' => $type,
+            'payload' => $payload,
+            'encodedPayload' => $encodedPayload,
+            'queue' => $queue,
+            'maxAttempts' => $maxAttempts,
+            'requestId' => $requestId,
+            'availableAt' => $availableAt,
+        ];
     }
 }

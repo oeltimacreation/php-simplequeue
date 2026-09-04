@@ -41,9 +41,9 @@ final class WorkerFailureTest extends WorkerTestCase
             ->method('scheduleRetry')
             ->willThrowException(new \RuntimeException('Storage error during retry'));
 
-        $this->logger->expects($this->atLeastOnce())
-            ->method('error');
-
-        $this->assertTrue($this->createWorkerWithDriver($driver)->processOne());
+        // Storage errors escape as infrastructure; they never masquerade as handler retry.
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Storage error during retry');
+        $this->createWorkerWithDriver($driver)->processOne();
     }
 }

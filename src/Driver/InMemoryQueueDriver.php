@@ -5,14 +5,15 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Driver;
 
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
-use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
-use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
 use Oeltima\SimpleQueue\Contract\SupportsBatchEnqueue;
-use Oeltima\SimpleQueue\Contract\SupportsQueueReconciliation;
-use Oeltima\SimpleQueue\Contract\QueueStatsInterface;
+use Oeltima\SimpleQueue\Contract\SupportsBatchQueueReconciliation;
+use Oeltima\SimpleQueue\Contract\SupportsBoundedQueueMembership;
+use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
 use Oeltima\SimpleQueue\Contract\SupportsJobRemoval;
 use Oeltima\SimpleQueue\Contract\SupportsProcessingHeartbeat;
-use Oeltima\SimpleQueue\Contract\SupportsBoundedQueueMembership;
+use Oeltima\SimpleQueue\Contract\SupportsQueueReconciliation;
+use Oeltima\SimpleQueue\Contract\QueueStatsInterface;
+use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
 use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Internal\PositiveJobId;
 use Oeltima\SimpleQueue\SystemClock;
@@ -28,14 +29,18 @@ final class InMemoryQueueDriver implements
     SupportsDelayedJobs,
     SupportsStaleRecovery,
     SupportsBatchEnqueue,
+    SupportsBatchQueueReconciliation,
     SupportsQueueReconciliation,
     QueueStatsInterface,
     SupportsJobRemoval,
     SupportsProcessingHeartbeat,
     SupportsBoundedQueueMembership
 {
-    /** @var array<string, int[]> */
+    /** @var array<string, list<int>> Append-only buffers in insertion order */
     private array $pending = [];
+
+    /** @var array<string, int> Consumed head indexes per queue */
+    private array $pendingHead = [];
 
     /** @var array<string, int[]> */
     private array $processing = [];
@@ -60,8 +65,10 @@ final class InMemoryQueueDriver implements
         $this->validateJobId($jobId);
         if (!isset($this->pending[$queue])) {
             $this->pending[$queue] = [];
+            $this->pendingHead[$queue] = 0;
         }
-        array_unshift($this->pending[$queue], $jobId);
+        // Amortized O(1) append; dequeue consumes from head.
+        $this->pending[$queue][] = $jobId;
     }
 
     public function dequeue(string $queue, int $timeoutSeconds): ?int
@@ -69,11 +76,15 @@ final class InMemoryQueueDriver implements
         if ($timeoutSeconds < 0) {
             throw new \InvalidArgumentException('Dequeue timeout must not be negative');
         }
-        if (!isset($this->pending[$queue]) || $this->pending[$queue] === []) {
+        $head = $this->pendingHead[$queue] ?? 0;
+        $buffer = $this->pending[$queue] ?? [];
+        if ($head >= count($buffer)) {
             return null;
         }
 
-        $jobId = array_pop($this->pending[$queue]);
+        $jobId = $buffer[$head];
+        $this->pendingHead[$queue] = $head + 1;
+        $this->compactPending($queue);
 
         if (!isset($this->processing[$queue])) {
             $this->processing[$queue] = [];
@@ -83,6 +94,34 @@ final class InMemoryQueueDriver implements
         $this->processingStartedAt[$queue][$jobId] = $this->clock->timestamp();
 
         return $jobId;
+    }
+
+    /**
+     * Compact the consumed head when it exceeds 1024 entries and half the buffer.
+     *
+     * @param string $queue Queue name
+     */
+    private function compactPending(string $queue): void
+    {
+        $head = $this->pendingHead[$queue] ?? 0;
+        $buffer = $this->pending[$queue] ?? [];
+        if ($head > 1024 && $head * 2 >= count($buffer)) {
+            $this->pending[$queue] = array_slice($buffer, $head);
+            $this->pendingHead[$queue] = 0;
+        }
+    }
+
+    /**
+     * Visible pending IDs in legacy newest-first order.
+     *
+     * @param string $queue Queue name
+     * @return list<int> Pending IDs newest-first
+     */
+    private function visiblePending(string $queue): array
+    {
+        $head = $this->pendingHead[$queue] ?? 0;
+        $slice = array_slice($this->pending[$queue] ?? [], $head);
+        return array_reverse($slice);
     }
 
     public function ack(string $queue, int $jobId): void
@@ -95,10 +134,12 @@ final class InMemoryQueueDriver implements
     public function remove(string $queue, int $jobId): void
     {
         $this->validateJobId($jobId);
-        $this->pending[$queue] = array_values(array_filter(
-            $this->pending[$queue] ?? [],
-            static fn (int $id): bool => $id !== $jobId
-        ));
+        $head = $this->pendingHead[$queue] ?? 0;
+        $buffer = $this->pending[$queue] ?? [];
+        $visible = array_slice($buffer, $head);
+        $filtered = array_values(array_filter($visible, static fn (int $id): bool => $id !== $jobId));
+        $this->pending[$queue] = $filtered;
+        $this->pendingHead[$queue] = 0;
         $this->processing[$queue] = array_values(array_filter(
             $this->processing[$queue] ?? [],
             static fn (int $id): bool => $id !== $jobId
@@ -119,7 +160,8 @@ final class InMemoryQueueDriver implements
         if ($maxElements < 1) {
             throw new \InvalidArgumentException('Membership scan limit must be positive');
         }
-        return in_array($jobId, array_slice($this->pending[$queue] ?? [], 0, $maxElements), true);
+        // Match Redis LPOS newest-first scan order for bounded parity.
+        return in_array($jobId, array_slice($this->visiblePending($queue), 0, $maxElements), true);
     }
 
     public function hasDelayedJob(string $queue, int $jobId): bool
@@ -154,6 +196,9 @@ final class InMemoryQueueDriver implements
     public function enqueueDelayed(string $queue, int $jobId, int $availableAt): void
     {
         $this->validateJobId($jobId);
+        if ($availableAt <= 0) {
+            throw new \InvalidArgumentException('Delayed availability timestamp must be positive');
+        }
         if (!isset($this->delayed[$queue])) {
             $this->delayed[$queue] = [];
         }
@@ -172,11 +217,16 @@ final class InMemoryQueueDriver implements
         if ($jobIds === []) {
             return;
         }
+        if ($availableAt <= 0) {
+            throw new \InvalidArgumentException('Delayed availability timestamp must be positive');
+        }
+        foreach ($jobIds as $jobId) {
+            $this->validateJobId($jobId);
+        }
         if (!isset($this->delayed[$queue])) {
             $this->delayed[$queue] = [];
         }
         foreach ($jobIds as $jobId) {
-            $this->validateJobId($jobId);
             $this->delayed[$queue][$jobId] = $availableAt;
         }
     }
@@ -184,27 +234,43 @@ final class InMemoryQueueDriver implements
     /**
      * Promote delayed jobs that are now due to the pending queue.
      *
+     * Promotion selects by earliest availability; same-timestamp order is
+     * deterministic but remains an undocumented implementation detail.
+     *
      * @param string $queue Queue name
      * @return int Number of jobs promoted
      */
     public function promoteDelayedJobs(string $queue, int $limit = 100): int
     {
+        if ($limit < 1) {
+            throw new \InvalidArgumentException('Promotion limit must be positive');
+        }
         if (!isset($this->delayed[$queue]) || $this->delayed[$queue] === []) {
             return 0;
         }
 
         $now = $this->clock->timestamp();
-        $promoted = 0;
-
+        $due = [];
         foreach ($this->delayed[$queue] as $jobId => $availableAt) {
+            if ($availableAt <= $now) {
+                $due[] = ['id' => $jobId, 'at' => $availableAt];
+            }
+        }
+        usort($due, static function (array $a, array $b): int {
+            $byTime = $a['at'] <=> $b['at'];
+            if ($byTime !== 0) {
+                return $byTime;
+            }
+            return $a['id'] <=> $b['id'];
+        });
+        $promoted = 0;
+        foreach ($due as $item) {
             if ($promoted >= $limit) {
                 break;
             }
-            if ($availableAt <= $now) {
-                $this->enqueue($queue, $jobId);
-                unset($this->delayed[$queue][$jobId]);
-                $promoted++;
-            }
+            $this->enqueue($queue, $item['id']);
+            unset($this->delayed[$queue][$item['id']]);
+            $promoted++;
         }
 
         return $promoted;
@@ -254,7 +320,7 @@ final class InMemoryQueueDriver implements
      */
     public function getPending(string $queue): array
     {
-        return $this->pending[$queue] ?? [];
+        return $this->visiblePending($queue);
     }
 
     /**
@@ -307,6 +373,7 @@ final class InMemoryQueueDriver implements
     public function clear(): void
     {
         $this->pending = [];
+        $this->pendingHead = [];
         $this->processing = [];
         $this->processingStartedAt = [];
         $this->delayed = [];
@@ -320,14 +387,60 @@ final class InMemoryQueueDriver implements
     /**
      * Enqueue multiple job IDs efficiently.
      *
+     * The complete batch is validated before any queue is changed.
+     *
      * @param string $queue Queue name
      * @param int[] $jobIds Array of job identifiers
      */
     public function enqueueBatch(string $queue, array $jobIds): void
     {
         foreach ($jobIds as $jobId) {
+            $this->validateJobId($jobId);
+        }
+        foreach ($jobIds as $jobId) {
             $this->enqueue($queue, $jobId);
         }
+    }
+
+    /**
+     * Reconcile a page of notifications atomically (in-memory parity).
+     *
+     * @param string $queue Queue name
+     * @param array<int, int> $availableAtByJobId Job ID => absolute Unix timestamp
+     * @param int $now Current absolute Unix timestamp
+     * @param int $pendingScanLimit Maximum pending-list elements inspected per ID
+     * @return list<int> IDs already present in pending or delayed notifications
+     */
+    public function reconcileNotifications(
+        string $queue,
+        array $availableAtByJobId,
+        int $now,
+        int $pendingScanLimit
+    ): array {
+        if ($pendingScanLimit < 1) {
+            throw new \InvalidArgumentException('Pending scan limit must be positive');
+        }
+        $present = [];
+        foreach ($availableAtByJobId as $jobId => $availableAt) {
+            if (!is_int($jobId) || $jobId < 1 || !is_int($availableAt) || $availableAt <= 0) {
+                throw new \InvalidArgumentException('Reconciliation IDs and timestamps must be positive integers');
+            }
+            $inPending = $this->hasPendingJob($queue, $jobId, $pendingScanLimit);
+            $inDelayed = $this->hasDelayedJob($queue, $jobId);
+            if ($inPending || $inDelayed) {
+                $present[] = $jobId;
+                continue;
+            }
+            if ($availableAt <= $now) {
+                $this->enqueue($queue, $jobId);
+            } else {
+                if (!isset($this->delayed[$queue])) {
+                    $this->delayed[$queue] = [];
+                }
+                $this->delayed[$queue][$jobId] = $availableAt;
+            }
+        }
+        return $present;
     }
 
     /**

@@ -59,10 +59,20 @@ final readonly class JobData
 
     /**
      * Check if the job can be retried.
+     *
+     * Only non-terminal jobs with consumed failures below max attempts retry.
      */
     public function canRetry(): bool
     {
-        return $this->attempts < $this->maxAttempts;
+        return !$this->status->isTerminal() && $this->attempts < $this->maxAttempts;
+    }
+
+    /**
+     * Current execution ordinal exposed to handlers (persisted failures + 1).
+     */
+    public function currentAttempt(): int
+    {
+        return $this->attempts + 1;
     }
 
     /**
