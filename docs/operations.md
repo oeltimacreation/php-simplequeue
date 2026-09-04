@@ -27,11 +27,13 @@ means the singleton lock was unavailable.
 
 ## Typed worker events
 
-The worker builds a typed readonly value object for every lifecycle event before
-invoking the configured listener. The existing listener remains compatible and
-receives the same `(string $event, array $data)` arguments; the worker converts
-the typed object through `getName()` and `toArray()` at that boundary. Listener
-failures are logged and do not change the job transition.
+The worker allocates typed readonly lifecycle events only when a listener is
+configured; the unconfigured hot path avoids construction while preserving
+listener names, payloads, ordering, and failure isolation. The existing
+listener remains compatible and receives the same `(string $event, array $data)`
+arguments; the worker converts the typed object through `getName()` and
+`toArray()` at that boundary. Listener failures are logged and do not change
+the job transition.
 
 The stable event catalog and payload keys are:
 
@@ -161,10 +163,11 @@ medians and counters before deploying.
 
 ## Upgrade safety
 
-The v1.4 lease migration must be applied before using lease-based custom
-storage implementations. Preserve existing Redis keys and add new keys only
-with an upgrade-safe rollout. Validate configuration and run the compatibility
-smoke test after deploying a new library version.
+The v1.3.0 lease migration (`examples/migrations/1.3.0-lease-based-claims.sql`)
+must be applied before using lease-based custom storage implementations.
+Preserve existing Redis keys and add new keys only with an upgrade-safe
+rollout. Validate configuration and run the compatibility smoke test after
+deploying a new library version.
 
 ## Release and deployment checks
 

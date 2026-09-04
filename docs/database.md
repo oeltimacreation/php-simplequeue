@@ -102,3 +102,29 @@ are deliberately excluded, so a later request may create a new job.
 
 Apply [the v1.3 lease migration](../examples/migrations/1.3.0-lease-based-claims.sql)
 before upgrading. It adds `available_at`, lease fields, and required indexes.
+
+## v1.11 durability notes
+
+- **Strict hydration**: built-in storage reads use a strict hydrator requiring
+  all persisted fields with enum/counter/nullability invariants; corrupt rows
+  raise `QueueException` with job ID and field. Public `JobData::fromRaw()`
+  stays permissive for BC.
+- **Validation**: table names must be one or two dot-separated identifiers;
+  queue/type/request/worker IDs and progress messages are capped at 255 bytes;
+  IDs, limits, TTLs, and timestamps are validated identically in PDO and
+  memory. Job definitions and payload JSON are validated/encoded before any
+  row mutation or ID consumption.
+- **Connection factory vs direct PDO**: prefer `fn() => new PDO(...)` for
+  workers. Reads retry once only with a factory outside caller transactions;
+  mutations never replay after a statement/commit attempt and raise
+  `IndeterminateStorageOutcomeException` on uncertain commit. `reconnect()`
+  rejects direct-PDO instances. Claims are rejected inside caller-owned
+  transactions on every driver; ordinary CRUD may participate via
+  storage-owned transactions or savepoints.
+- **Batch chunking and exact IDs**: SQLite 100 rows, MySQL/PostgreSQL 1,000
+  rows, plus 1 MiB splits; one transaction/savepoint across chunks.
+  PostgreSQL/modern SQLite use `INSERT ... RETURNING id`; older SQLite
+  inserts row-by-row in the same transaction; MySQL derives from the first ID
+  plus session `auto_increment_increment` with validation.
+- **Migration**: apply `examples/migrations/1.3.0-lease-based-claims.sql`
+  (v1.3.0, not v1.4).

@@ -48,10 +48,11 @@ stateDiagram-v2
     [*] --> pending: dispatch() / dispatchAfter()
     pending --> running: Worker claims job (lease granted)
     running --> completed: Handler succeeds
-    running --> running: Handler fails & attempts < maxAttempts (retry with backoff)
+    running --> pending: Handler fails & attempts < maxAttempts (retry with backoff)
     running --> failed: Handler fails & attempts >= maxAttempts
-    running --> cancelled: Job manually cancelled
-    running --> pending: Lease expires / lost ownership reclaimed
+    pending --> cancelled: Job manually cancelled
+    running --> pending: Stale lease recovered with retries left
+    running --> failed: Stale lease recovered with no retries left
 ```
 
 ### State Definitions
@@ -70,7 +71,7 @@ stateDiagram-v2
 
 SimpleQueue enforces **at-least-once delivery with optimistic claim fencing**:
 
-1. **Claiming**: When a worker dequeues a job ID, it issues a fenced claim to storage (`claimNextAvailable()` or `claimById()`). Storage assigns a `worker_id`, generates a fresh `lease_token`, sets `locked_at` to the current timestamp, and increments `attempts`.
+1. **Claiming**: When a worker dequeues a job ID, it issues a fenced claim to storage (`claimNextAvailable()` or `claimById()`). Storage assigns a `worker_id`, generates a fresh `lease_token`, and sets `locked_at`/`started_at` to the current timestamp. Claiming does not increment `attempts`; `attempts` counts failed executions already consumed and the current ordinal is `attempts + 1`.
 2. **Fenced Updates**: Every state update (`markCompleted()`, `markFailed()`, `scheduleRetry()`, `updateProgress()`) MUST pass the exact `ClaimedJob` token. If another worker reclaimed the job due to a lease expiration (e.g. network stall or worker crash), the original worker's update is rejected with an `OwnershipOutcome::Lost` / `lost_ownership` event.
 3. **Progress Heartbeat**: Long-running jobs update their lease by calling progress callbacks (`$progress($percent, $message)`), extending their active lease window.
 
@@ -90,7 +91,7 @@ Jobs can be scheduled for future execution using `dispatchAfter()`, `dispatchAt(
 `QueueReconciler` automatically repairs inconsistency between storage and drivers:
 
 - **Unnotified Jobs**: Identifies `pending` jobs in storage that lack notifications in the queue driver and re-enqueues them.
-- **Stale Running Leases**: Identifies `running` jobs whose lease expired (`locked_at + stuck_job_ttl < NOW()`) and returns them to `pending` state or triggers recovery.
+- **Stale Running Leases**: Stale `running` lease recovery (`locked_at + stuck_job_ttl < NOW()`) is a separate Worker/storage responsibility that retries (`running -> pending`) or fails (`running -> failed`) with one consumed attempt and the canonical stale error; `QueueReconciler` does not own it.
 - **Bounded Execution**: Reconciliation processes jobs in bounded pages (default 100 rows per pass) to ensure zero impact on production latency.
 
 ---

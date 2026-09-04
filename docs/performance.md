@@ -385,3 +385,40 @@ items; reconciliation remains limited to a 100-row page, a 250-entry membership
 scan, and one second. The worker retains only one reconciliation cursor and one
 Redis repair cursor per configured queue, so this profile found no per-iteration
 memory accumulation or unbounded idle work.
+
+## v1.11 operation deltas and reproducibility
+
+v1.11 changes operation budgets only where correctness requires it; unchanged
+hot paths gain no database statement, transaction, Redis roundtrip, or
+listener-disabled event allocation (proven by `benchmarks/operation-count-checks.php`).
+
+- **PDO batches are atomic**: one transaction/savepoint across all chunks
+  (SQLite 100 rows, MySQL/PostgreSQL 1,000 rows, plus 1 MiB encoded-parameter
+  splits). A 100-job SQLite batch is one transaction with bounded statements
+  (one INSERT per chunk plus transaction control) instead of one bare INSERT.
+  Later-chunk failure rolls back earlier chunks; IDs are exact via
+  `RETURNING` (PostgreSQL/modern SQLite), row-by-row fallback (older SQLite),
+  or session `auto_increment_increment` derivation with validation (MySQL).
+- **Redis reconciliation is one roundtrip per page**: the optimized batch
+  contract validates in PHP, checks bounded `LPOS` plus exact `ZSCORE`, restores
+  missing due/future IDs, and returns already-present IDs via one direct `EVAL`
+  (no `NOSCRIPT` retry). Storage scans use the lean `id, available_at`
+  projection without payload/result JSON. Per-item membership remains for
+  third-party fallback drivers.
+- **In-memory queues are amortized O(1)**: append/head-index replaces repeated
+  prepend; compaction runs only after the consumed head exceeds 1,024 entries
+  and half the buffer. Batches validate fully before mutating. Delayed
+  promotion selects earliest availability. Simulated 10,000 enqueue+dequeue:
+  before (prepend) ~122 ms quadratic vs after (append) ~0.6 ms linear;
+  measured driver (with processing bookkeeping): 10→100→1,000→10,000 scales
+  linearly (0.05→0.18→1.8→19.3 ms in this environment). Wall-clock varies by
+  machine; the gate is asymptotic work and operation counts, not shared-CI
+  timing.
+- **Stale Lua expansion chunks at 1,000 members**, matching delayed promotion
+  and avoiding Lua stack limits.
+
+Methodology (repeatable): `composer benchmark -- --jobs=100 --iterations=2
+--warmup=1` for budgets; 10/100/1,000/10,000 profiles for in-memory queues,
+storage creation, PDO batches, worker paths, and all-hit/all-miss/mixed
+reconciliation. Archive JSON retains PHP, OS, CPU, database, Redis/Valkey,
+dependency, sample-count, warmup, and variance metadata.

@@ -1,5 +1,35 @@
 # Upgrading
 
+## To v1.11.x
+
+v1.11 is a hardening release that corrects durable outcomes, attempt counts,
+worker effect ordering, configuration, locking, reconciliation, and batch
+atomicity without breaking the v1.10 public/protected API. No schema or Redis
+key migration is required.
+
+- **Attempts**: `attempts` counts failed executions; terminal failures
+  (handler, serialization, stale) consume one attempt. `canRetry()` is false
+  for terminal jobs. First-attempt shutdown releases preserve `attempts 0`.
+- **Worker effects**: durable transitions persist first, events emit second,
+  and ACK/NACK runs third. Notification failures after a durable transition
+  escape as infrastructure; lost ownership never ACKs/NACKs.
+- **Options**: numeric options require canonical strings, booleans require
+  actual booleans, `memory_limit` is MiB, and array `lock_file: null` disables
+  locking while typed defaults use safe per-queue locks. `processOne()`
+  throws infrastructure errors instead of returning `false`.
+- **Scheduling**: future dispatch requires `SupportsDelayedJobs` or
+  `SupportsStorageBackedScheduling`; otherwise it throws before storage
+  mutation.
+- **Deprecations**: `SupportsWorkerId` and `SupportsQueueReconciliation`
+  remain functional; prefer worker-aware claimed dequeue and lean/batch
+  reconciliation. v2 removal candidates.
+
+## To v1.10.x
+
+v1.10 established the test and static-analysis baseline with reproducible
+performance profiles and operation-count guardrails. No schema migration is
+required from v1.9.
+
 ## To v1.9.x
 
 v1.9 adds middleware, typed worker event value objects, and failed-job
