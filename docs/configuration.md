@@ -24,8 +24,11 @@ the resulting keys.
 ## Worker options
 
 Pass an array to `Worker` for compatibility, or create validated options with
-`WorkerOptions` and `Worker::withOptions()`. Numeric strings are accepted in
-the array form for environment-based configuration.
+`WorkerOptions` and `Worker::withOptions()`. Array integers accept integers or
+canonical non-negative base-10 strings; decimal intervals accept finite
+non-negative numbers or canonical decimal strings. Boolean options accept only
+native booleans. Malformed known values throw instead of silently using a
+default.
 
 | Option | Default | Meaning |
 |---|---:|---|
@@ -33,18 +36,31 @@ the array form for environment-based configuration.
 | `stuck_job_ttl` | `600` | Positive lease age after which a running job may be recovered. |
 | `retry_base_delay` | `2` | Initial retry delay in seconds. |
 | `retry_max_delay` | `300` | Maximum retry delay in seconds. |
-| `lock_file` | queue-scoped `/tmp` path | Set a unique path per worker/queue; use `null` only for controlled tests. |
+| `lock_file` | safe generated path | Custom lock path. In array form, an explicit `null` disables locking for backward compatibility; typed `null` retains the safe default. |
+| `locking_enabled` | `true` | Explicitly enable/disable locking. Prefer `new WorkerOptions(lockingEnabled: false)` for controlled single-process tests. |
 | `max_jobs` | `0` | Stop after this many jobs; `0` disables the limit. |
 | `max_time` | `0` | Stop after this many seconds; `0` disables the limit. |
-| `memory_limit` | `0` | Stop once PHP memory exceeds this many MB; `0` disables the limit. |
+| `memory_limit` | `0` | Stop once PHP memory exceeds this many MiB (`value * 1,048,576` bytes); `0` disables the limit. |
 | `stop_when_empty` | `false` | Stop instead of continuing to poll after no job is found. |
 | `promote_interval` | `5.0` | Minimum seconds between delayed-job promotion passes. |
 | `promote_limit` | `100` | Maximum delayed jobs promoted per pass. Raise for large scheduled backlogs (see [operations](operations.md)). |
 | `recovery_interval` | `60.0` | Minimum seconds between recovery and reconciliation passes. |
 | `event_listener` | `null` | Callable receiving `(string $event, array $data)`. Listener failures are logged. |
+| `clock` | system clock | A `ClockInterface` instance for deterministic time. |
+| `sleeper` | system sleeper | A `SleeperInterface` instance used for polling and infrastructure backoff. |
+
+On Unix, the generated lock is scoped by effective user, working directory,
+and exact queue name. Its directory and file are secured to `0700` and `0600`;
+symlinks, non-regular targets, foreign owners, and unsafe modes are rejected.
+Windows currently degrades to an explicit warning because `flock()` semantics
+are not used there. Supplying both a custom path and disabled locking is invalid.
 
 `Worker::run()` returns `0` on a normal stop or configured limit, `1` on an
 unhandled worker error, and `2` when its singleton lock cannot be acquired.
+Sequential `run()` calls reset run-local counters and restore the process's
+previous signal handlers/async-signal mode. Re-entrant calls are rejected.
+`processOne()` returns `false` only for an empty queue and otherwise returns
+`true` or throws an infrastructure exception.
 
 ## Dispatching and progress
 
@@ -100,9 +116,9 @@ Semantics:
 - With Redis or the In-Memory driver the notification is added to the delayed
   structure and promoted when due. With database polling no notification change
   is needed because claims already gate on `available_at`.
-- Third-party notification drivers must implement `SupportsDelayedJobs` for
-  schedules to be honored; otherwise the notification falls back to a plain
-  enqueue and only storage-gated claims protect the availability window.
+- Third-party drivers must implement `SupportsDelayedJobs` or explicitly
+  advertise `SupportsStorageBackedScheduling`. Every other future dispatch is
+  rejected before storage mutation; it never falls back to a plain enqueue.
 - Scheduled `dispatchBatch()` batches delayed notifications into a single
   roundtrip on drivers that implement `SupportsDelayedJobs::enqueueDelayedBatch()`
   (Redis and In-Memory do). Drivers that only implement `enqueueDelayed()`

@@ -9,7 +9,15 @@ key migration is required.
 
 - **Attempts**: `attempts` counts failed executions; terminal failures
   (handler, serialization, stale) consume one attempt. `canRetry()` is false
-  for terminal jobs. First-attempt shutdown releases preserve `attempts 0`.
+  for terminal jobs, and direct retry scheduling rejects an exhausted count.
+  First-attempt shutdown releases preserve `attempts 0` and prior error data.
+- **PDO outcomes**: an error after a mutation may have reached the server now
+  raises `IndeterminateStorageOutcomeException`; do not retry it blindly.
+  Reads may retry once only with a connection factory and outside a caller
+  transaction. Claims inside caller-owned transactions are rejected.
+- **Storage boundaries**: built-in hydration now rejects missing/corrupt durable
+  fields. Table names and schema-sized strings are validated, batches validate
+  completely before mutation, and PDO chunks remain one atomic transaction.
 - **Worker effects**: durable transitions persist first, events emit second,
   and ACK/NACK runs third. Notification failures after a durable transition
   escape as infrastructure; lost ownership never ACKs/NACKs.
@@ -20,6 +28,10 @@ key migration is required.
 - **Scheduling**: future dispatch requires `SupportsDelayedJobs` or
   `SupportsStorageBackedScheduling`; otherwise it throws before storage
   mutation.
+- **Reconciliation/Redis**: built-ins scan lean notification projections and
+  reconcile a page in one queue operation. Availability must be canonical UTC;
+  `duplicates` reflects delayed membership or a bounded pending hit. Duplicate
+  processing entries retain a recoverable visibility score after ACK/NACK.
 - **Deprecations**: `SupportsWorkerId` and `SupportsQueueReconciliation`
   remain functional; prefer worker-aware claimed dequeue and lean/batch
   reconciliation. v2 removal candidates.

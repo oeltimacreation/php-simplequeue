@@ -63,7 +63,7 @@ stateDiagram-v2
 | `running` | Job has been claimed by a worker with an active `worker_id` and unique `lease_token`. |
 | `completed` | Terminal state. Job finished successfully; result payload is stored. |
 | `failed` | Terminal state. Job exhausted all retry attempts or suffered an unrecoverable failure; error message is stored. |
-| `cancelled` | Terminal state. Job was cancelled prior to or during execution. |
+| `cancelled` | Terminal state. A pending job was cancelled before execution. |
 
 ---
 
@@ -72,7 +72,7 @@ stateDiagram-v2
 SimpleQueue enforces **at-least-once delivery with optimistic claim fencing**:
 
 1. **Claiming**: When a worker dequeues a job ID, it issues a fenced claim to storage (`claimNextAvailable()` or `claimById()`). Storage assigns a `worker_id`, generates a fresh `lease_token`, and sets `locked_at`/`started_at` to the current timestamp. Claiming does not increment `attempts`; `attempts` counts failed executions already consumed and the current ordinal is `attempts + 1`.
-2. **Fenced Updates**: Every state update (`markCompleted()`, `markFailed()`, `scheduleRetry()`, `updateProgress()`) MUST pass the exact `ClaimedJob` token. If another worker reclaimed the job due to a lease expiration (e.g. network stall or worker crash), the original worker's update is rejected with an `OwnershipOutcome::Lost` / `lost_ownership` event.
+2. **Fenced Updates**: Every state update (`markCompleted()`, `markFailed()`, `scheduleRetry()`, `updateProgress()`) MUST pass the exact `ClaimedJob` token. If another worker reclaimed the job due to a lease expiration (e.g. network stall or worker crash), the original worker's update returns `false`; Worker emits `lost_ownership` and performs no ACK/NACK.
 3. **Progress Heartbeat**: Long-running jobs update their lease by calling progress callbacks (`$progress($percent, $message)`), extending their active lease window.
 
 ---
@@ -88,11 +88,15 @@ Jobs can be scheduled for future execution using `dispatchAfter()`, `dispatchAt(
 
 ## Bounded Queue Repair (`QueueReconciler`)
 
-`QueueReconciler` automatically repairs inconsistency between storage and drivers:
+`QueueReconciler` repairs inconsistency between storage and drivers when called
+directly or by periodic Worker maintenance:
 
 - **Unnotified Jobs**: Identifies `pending` jobs in storage that lack notifications in the queue driver and re-enqueues them.
 - **Stale Running Leases**: Stale `running` lease recovery (`locked_at + stuck_job_ttl < NOW()`) is a separate Worker/storage responsibility that retries (`running -> pending`) or fails (`running -> failed`) with one consumed attempt and the canonical stale error; `QueueReconciler` does not own it.
-- **Bounded Execution**: Reconciliation processes jobs in bounded pages (default 100 rows per pass) to ensure zero impact on production latency.
+- **Lean, Bounded Execution**: Built-in storage reads only IDs and availability
+  in bounded pages (default 100 rows). Built-in queue drivers check and restore
+  a page in one operation; legacy drivers use bounded per-item membership.
+  Invalid non-canonical UTC availability is counted and never enqueued.
 
 ---
 
@@ -124,4 +128,3 @@ Batch job creation in `JobStorageInterface::createJobs()` expects an array of ty
     'availableAt' => 1770000000,                          // (int|DateTimeInterface|null, optional) Scheduled timestamp
 ]
 ```
-

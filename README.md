@@ -13,7 +13,7 @@ SimpleQueue is designed to be physically compact and easy to hold in one head wh
 | **Scheduled Dispatch** | Delay initial job availability using `dispatchAfter()`, `dispatchAt()`, or `$availableAt`. |
 | **At-Least-Once Delivery & Fencing** | Worker claims use worker IDs and lease tokens to fence completion, retry, and progress updates. |
 | **Idempotency & Deduplication** | `dispatchIdempotent()` prevents duplicate active jobs for a given request ID. |
-| **Bounded Queue Repair** | Built-in `QueueReconciler` detects lost notifications and repairs stale leases safely. |
+| **Bounded Queue Repair** | `QueueReconciler` restores missing pending/delayed notifications; Worker/storage maintenance separately recovers stale leases. |
 | **Middleware & Execution Context** | Wrap handlers in ordered middleware with typed job identity, payload, queue, and attempt context. |
 | **Typed Worker Events** | Stable readonly lifecycle event objects retain the existing string/array listener compatibility layer. |
 | **Failed-Job Administration** | List, inspect, re-queue, and purge failed jobs through `AdminManager`. |
@@ -77,7 +77,7 @@ $dispatcher = new JobDispatcher(storage: $storage, queueManager: $queues);
 $jobId = $dispatcher->dispatch(type: 'email.welcome', payload: ['email' => 'ada@example.test']);
 
 // 3. Process the job with a worker
-$workerOptions = WorkerOptions::fromArray(['lock_file' => null]);
+$workerOptions = new WorkerOptions(lockingEnabled: false); // Controlled one-process example only.
 $worker = new Worker(
     storage: $storage,
     queueManager: $queues,
@@ -90,6 +90,10 @@ $worker->processOne();
 // 4. Inspect job status
 echo $dispatcher->getStatus(jobId: $jobId)?->status->value; // 'completed'
 ```
+
+`processOne()` returns `false` only when no job is available. Storage or driver
+failures are thrown to the caller; `run()` applies bounded infrastructure
+backoff and returns a non-zero exit code for an unrecoverable loop failure.
 
 For runnable examples with durable databases and Redis, see [examples/](examples/README.md).
 
@@ -152,11 +156,15 @@ For cross-process request deduplication, use `dispatchIdempotent()` along with t
 ## Development & Quality Gates
 
 ```bash
-composer check        # Full quality check (tests, PHPStan Level 9, PHPCS, quality ratchet)
+composer check        # Tests, PHPStan Level 9, PHPCS, and operation budgets
 composer test         # Run PHPUnit test suite
+composer test-random  # Run the committed random-order seed
+composer test-coverage && composer coverage-check
 composer phpstan      # Run static analysis
 composer cs-check     # Run code style check
 composer cs-fix       # Auto-fix code style issues
+composer budgets      # Enforce deterministic operation counts
+composer mutation     # Enforce the focused Infection baseline
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [LICENSE](LICENSE) for license details.

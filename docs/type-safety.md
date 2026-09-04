@@ -1,13 +1,13 @@
 # Internal type-safety boundaries
 
 This document records the primitive, array-shape, and type-safety inventory for
-v1.9.0. Public scalar signatures and serialized job data remain compatible;
+v1.11. Public scalar signatures and serialized job data remain compatible;
 normalization happens after values enter the library.
 
 ## PHP 8.2+ Audit & Invariants
 
-- **Strict Types**: `declare(strict_types=1)` is verified across all 80 production source files and all 37 unit/integration test files.
-- **Readonly Classes**: Immutable value objects (`DelayedBatch`, `IdempotentJobResult`, `WorkerOptions`, `ReconcileOptions`, `ReconcileResult`, `PositiveJobId`, `WorkerPolicy`, `ClaimedJob`, `JobData`) utilize `final readonly class` or `readonly` properties.
+- **Strict Types**: `declare(strict_types=1)` is enforced across source, tests, benchmarks, scripts, and executable examples.
+- **Readonly Classes**: Immutable values such as `DelayedBatch`, `IdempotentJobResult`, `PendingNotification`, `WorkerOptions`, `ReconcileOptions`, `ReconcileResult`, `WorkerPolicy`, `ClaimedJob`, and `JobData` use readonly state.
 - **Language Compatibility**: Strictly targets PHP 8.2+ features (backed enums, standalone types, `readonly` classes). No PHP 8.3+ features (such as `#[Override]` or typed class constants) are used.
 
 ## Inventory and decisions
@@ -15,12 +15,12 @@ normalization happens after values enter the library.
 | Value or shape | Boundary | Internal representation | Decision |
 |---|---|---|---|
 | Job definitions | Dispatcher & storage `createJobs()` | `JobDefinitionShape` | Typed array shape `@phpstan-type JobDefinitionShape` enforcing `type`, `payload`, and optional `queue`, `maxAttempts`, `requestId`, and `availableAt` as `int|DateTimeInterface|null`. |
-| Storage rows | PDO & in-memory hydration | `StorageRowShape` | Typed array shape `@phpstan-type StorageRowShape` in `JobDataHydrator` mapping database columns and types. |
-| Positive job IDs | Dispatcher and queue-driver scalar arguments | `PositiveJobId` | Centralizes the `> 0` invariant while preserving each public error message. |
+| Storage rows | PDO & in-memory hydration | strict durable-row and permissive public shapes | `hydrateStrict()` requires every persisted field and validates canonical scalars/state; public `JobData::fromRaw()` retains v1 defaults. |
+| Positive job IDs | Dispatcher, storage, and queue-driver arguments | validated `int` | Boundaries reject values below one without allocating an internal wrapper. |
 | Queue names | Public dispatcher, worker, and driver arguments | `string` | Remains scalar because v1.8 cannot trim or rewrite backend key names without changing behavior. Existing dispatch validation rejects empty names. |
 | Worker IDs and lease tokens | Storage claims and fenced mutations | `ClaimedJob` | The existing immutable claim object keeps job, worker, and lease together. Separate wrappers would add no new invariant and would complicate custom storage compatibility. |
 | Retry decisions | Worker policy | `RetryDecision` | Replaces a policy boolean with exhaustive `Retry` and `Fail` outcomes. |
-| Fenced-write ownership | Storage result entering the worker | `OwnershipOutcome` | Converts the public storage boolean into exhaustive `Owned` and `Lost` outcomes before acknowledgement decisions. |
+| Fenced-write ownership | Storage result entering the worker | checked `bool` | `false` is handled immediately as lost ownership; no event or notification path can reinterpret it as success. |
 | Claim outcomes | Storage API | `?ClaimedJob` | Retained for public compatibility; a successful claim cannot omit its job, worker, or lease components. |
 | Job status and terminal outcomes | Storage rows and `JobData` | `JobStatus` | In-memory state and dispatcher comparisons use enum cases instead of status strings. Terminal-state behavior remains owned by `JobStatus::isTerminal()`. |
 | Storage rows | PDO and in-memory storage | `JobDataHydrator` and `StoredJobRow` | PDO/object rows cross one hydration boundary. In-memory rows have a complete PHPStan shape with typed status, counters, timestamps, ownership, progress, and serialized values. |
@@ -31,10 +31,13 @@ normalization happens after values enter the library.
 
 ## Trusted transitions
 
-Raw PDO rows, storage objects, encoded payloads, and encoded results enter
-`JobData` through `JobDataHydrator`. It supplies field defaults, converts
-status values to `JobStatus`, validates payload object keys, and reports invalid
-JSON through the existing `SerializationException` messages.
+Built-in storage rows enter `JobData` through
+`JobDataHydrator::hydrateStrict()`. It requires all durable columns, canonical
+integer representations, valid status/attempt/progress ranges, correctly
+paired ownership fields, terminal timestamps, bounded identifiers, and valid
+payload/result JSON. Corrupt data fails with the job ID and field context.
+The public `JobData::fromRaw()` factory remains permissive so existing consumer
+input and serialized shapes stay compatible.
 
 In-memory storage retains encoded payload/result parity with PDO storage, but
 its private row has a complete `StoredJobRow` shape. Status transitions use
@@ -42,8 +45,8 @@ its private row has a complete `StoredJobRow` shape. Status transitions use
 worker, lock timestamp, and lease token together. This removes the casts and
 numeric checks that previously treated trusted private state as untyped input.
 
-The worker maps retry eligibility and fenced mutation results to exhaustive
-enums before choosing retry, failure, ACK, or lost-ownership paths. Public
+The worker maps retry eligibility to `RetryDecision` and checks each fenced
+mutation result before choosing retry, failure, ACK, or lost ownership. Public
 storage methods still return booleans, and public queue/storage methods still
 accept integers and strings, so custom implementations and named arguments are
 unchanged.
@@ -83,5 +86,5 @@ Type-safety refactoring deliberately does not change public method signatures, n
 arguments, serialized array keys, queue key construction, timestamp formats,
 exception messages, or listener payloads. Internal wrappers were introduced
 only where they enforce an invariant or make an outcome exhaustive. PHPStan
-continues at Level 9 with strict rules and no new ignore pattern or ratchet
-exception.
+continues at Level 9 with strict rules and narrowly scoped deprecation
+suppression only for retained v1 fallback calls.

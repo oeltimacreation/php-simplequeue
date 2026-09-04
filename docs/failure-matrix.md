@@ -1,80 +1,84 @@
 # Failure and recovery matrix
 
-SimpleQueue treats storage as the source of truth and queue notifications as
-repairable, at-least-once delivery hints. The matrix below records the expected
-state at each failure boundary. “ACK” includes removing a notification that no
-longer represents claimable work.
+Storage is authoritative. Queue entries are repairable delivery notifications,
+and delivery remains at least once. A fenced storage result of `false` means
+ownership was lost; it never authorizes ACK, NACK, or more handler work.
 
-| Failure boundary | Durable storage state | Queue state | ACK/NACK decision | Recovery path | Observable signal |
-|---|---|---|---|---|---|
-| Storage create/write fails before dispatch notification | No new job; the previous durable state is unchanged | No notification is added | None | Caller may retry the operation | Original storage exception |
-| Notification enqueue fails after storage commit | `pending` job exists | Notification is missing | None | Bounded reconciliation restores the notification; idempotent dispatch avoids a second active job | Dispatch exception; reconciliation log reports `restored` |
-| Crash after scheduled storage create before delayed notification | `pending` with a future `available_at` | Delayed notification is missing | None | Bounded reconciliation parses `available_at` as UTC and restores the notification into the delayed structure with the remaining delay — never into pending | Dispatch exception; reconciliation log reports `restored` |
-| Duplicate notification after a retry dispatch | `pending` with a future `available_at` and incremented attempts | Notification exists in delayed (and optionally a stale pending member) | None | Reconciliation detects the existing delayed notification and reports a duplicate instead of adding another; storage claims gate on `available_at` | `Duplicate` outcome; no extra notification |
-| Dispatcher/worker clock skew | `pending` with an absolute UTC `available_at` | Delayed notification scored by the dispatcher clock | None | Claim queries compare the worker clock with the stored absolute `available_at`; a worker clock behind cannot claim early, a clock ahead may claim up to the skew amount early | Early/late claim timings; availability remains absolute time |
-| Past/now schedule clamping | `pending` with `available_at` equal to now | Immediate notification | None | The schedule path is skipped entirely; the storage claim is immediately eligible | Immediate dispatch path unchanged |
-| Cancel of a scheduled job | `cancelled`, ownership cleared, completion time set | Delayed notification removed | Removal of the delayed member | Repeating cancellation retries idempotent notification removal | `cancelJob()` returns `true` |
-| Max-attempts exhaustion with scheduled retries | `failed` after the final attempt; retry delays kept the job out of `pending` while waiting | Processing notification removed after the fenced failure write | ACK only after the fenced terminal write | No further notifications are produced; administrative redispatch may re-schedule | Failure log plus `failed` event |
-| Failed job is re-queued administratively | `pending`, attempts reset to `0`, terminal/error/progress fields cleared | A fresh notification is enqueued | None beyond normal worker claim | The job follows the ordinary claim, retry, and completion path | `AdminManager::requeueFailed()` returns `true` |
-| Failed-job re-queue notification fails | `pending` reset is durable | No new notification | None | Bounded reconciliation restores the pending notification; the re-queue call reports a `QueueException` | Deterministic fault injection in `FailedJobAdministrationTest` |
-| Failed job is purged administratively | Row is deleted | Pending, delayed, and processing notifications are removed | None | Purge is terminal; repeated purge is idempotent and returns `false` | `AdminManager::purgeFailed()` returns `true` |
-| Failed-job purge cleanup fails | Failed row has already been deleted | A stale notification may remain | Cleanup exception is reported; no storage rollback | Queue removal retry or a worker later ACKs the notification after the missing row is observed | Deterministic fault injection in `FailedJobAdministrationTest` |
-| Middleware throws during execution | `pending` with incremented attempts, or `failed` on the final attempt | Processing notification moves to delayed/pending, or is ACKed after terminal failure | Existing retry/failure path decides NACK or ACK | Normal delayed promotion or `AdminManager` re-queue | Middleware exception is preserved as the job error; `FailureInjectionTest` covers both boundaries |
-| Failed-job re-queue races a worker claim | One atomic reset wins; the claiming worker owns the fresh lease | One notification is consumed into processing | The winner's fenced transition controls completion; no duplicate handler execution | Worker completes the claimed job or stale recovery handles an abandoned lease | Deterministic re-queue/enqueue/claim sequence in `FailureInjectionTest` |
-| Worker event listener throws | Durable job transition remains unchanged | ACK/NACK follows the normal transition | Listener error is logged and swallowed | No repair is needed for the job lifecycle | Completion remains successful in `FailureInjectionTest` |
-| Connection is lost while claiming after a notification is popped | Job normally remains `pending`; a completed claim transaction remains authoritative if the response was lost | Notification is in processing | Immediate NACK when possible | PDO reconnect retries recognized connection-loss errors once; failed NACK is repaired by stale queue recovery and storage fencing rejects duplicate claims | Claim/requeue error log; loop-level infrastructure event and bounded backoff |
-| Backend returns a malformed notification or stored JSON | Valid durable jobs are unchanged; malformed stored JSON cannot be hydrated | Malformed Redis member is removed instead of becoming job `0` | Discard malformed member; do not ACK a valid job | Producer/data repair is required for malformed durable JSON; queue processing continues after malformed notification cleanup | Contextual `SerializationException`, or a `null` dequeue plus removed malformed member |
-| Handler throws before the final attempt | `pending`, attempts incremented, retry time and error recorded | Processing notification moves to delayed/pending | NACK with the selected delay, only after durable retry scheduling | Delayed promotion and normal worker processing | Failure log plus `retried` event |
-| Handler throws on the final attempt | `failed`, error and bounded trace stored, ownership released | Processing notification removed | ACK only after the fenced terminal write | Administrative inspection or redispatch | Failure log plus `failed` event |
-| Handler succeeds but result JSON cannot be encoded | `failed` with serialization error; never transiently `completed` | Processing notification removed | ACK after the fenced failure write | Correct the handler result and redispatch | Result-serialization error log |
-| Lease is lost before progress, completion, retry, or failure write | New owner’s durable state remains authoritative | Old delivery is left untouched so the new owner’s notification is not removed | No ACK/NACK by the stale owner | New owner completes, or bounded stale recovery restores work | Warning plus `lost_ownership` event with transition context |
-| Process stops after claim but before a storage transition | `running` with the old lease | Notification remains processing | No ACK/NACK occurred | Storage and queue stale-recovery passes return the job to `pending`; max attempts bound repeated crashes | Stale-recovery count/log |
-| Process stops after a retry write but before NACK | `pending` with incremented attempts and delay | Notification remains processing | NACK did not occur | Queue stale recovery restores delivery; storage claim enforces `available_at` | Recovery count; duplicate execution is fenced |
-| Process stops after completion/failure write but before ACK | Terminal durable state | Notification remains processing | ACK did not occur | Queue stale recovery redelivers; failed claim causes the duplicate notification to be ACKed without handler execution | ACK error log followed by duplicate cleanup |
-| Retry/failure storage transition itself fails | Original `running` state and lease remain | Notification remains processing | No ACK/NACK | Storage and queue stale recovery retry the attempt after the TTL | Job failure log plus storage-transition error log |
-| Cancellation cleanup fails after durable cancellation | `cancelled`, ownership cleared, completion time set | Stale pending/delayed/processing notification remains | Removal failed | Repeating cancellation retries idempotent notification removal | `QueueException` states that cancellation is durable but cleanup failed |
+## PDO outcome classes
 
-## Deterministic coverage
+| Boundary | What is known | Result | Safe caller action |
+|---|---|---|---|
+| Connection factory fails before a mutation begins | No statement was attempted | The factory is retried once; the final connection exception escapes | Retry according to application policy |
+| Validation or JSON encoding fails | No database mutation began | `InvalidArgumentException` or `SerializationException` | Correct input; do not reconcile |
+| Constraint/statement error with a successful owned rollback | The mutation did not commit | Original PDO exception | Correct or retry only when the error is retryable |
+| Prepare/execute/commit connection error after mutation entry | The server outcome cannot be proven | `IndeterminateStorageOutcomeException` names the operation and preserves the cause | Inspect by durable identifier/request ID, then reconcile; never replay blindly |
+| Idempotent create is ambiguous, then the request ID resolves one active row | One durable active job is proven | `IdempotentJobResult(created: false)` | Use the returned job ID |
+| Read/result-consumption connection error outside a caller transaction | No write is replayed | One complete read retry is allowed with a connection factory | Use the result or handle the final error |
+| Read error inside a caller transaction | Transaction ownership prevents reconnect | Original exception escapes, no retry | Caller decides whether to roll back |
+| Claim while the caller PDO is already in a transaction | Claim atomicity cannot be isolated portably | Rejected before SQL | Claim outside the caller-owned transaction |
+| Claim response is lost after execute/commit | A row may already be `running` | `IndeterminateStorageOutcomeException`; no second claim is attempted | Inspect/recover the first lease; do not issue an automatic second claim |
+| Rollback itself fails while preserving a known statement failure | Commit was not reported; connection state may be unusable | Original known failure remains primary | Discard/reconnect the connection and inspect transaction state |
 
-The transition boundaries are exercised with an in-memory fault-injecting
-driver in `tests/Integration/FailurePathTest.php`. The scheduled-dispatch rows
-are covered deterministically there: delayed-notification failure after a
-scheduled storage create is repaired into the delayed structure, a duplicate
-notification after a retry dispatch is not amplified, a worker clock behind
-the dispatcher cannot claim early, past/now schedules follow the immediate
-path, cancelling a scheduled job removes the delayed notification, and
-max-attempts exhaustion stops rescheduling. UTC-safe reconciliation timestamp
-parsing is characterized in `tests/Unit/QueueReconcilerTest.php` under
-non-UTC default timezones. Crash recovery, lease
-fencing, duplicate delivery, cursor continuation, and backend contracts are
-also covered by:
+## Dispatch, reconciliation, and administration
 
-- `tests/Integration/CrashRecoveryTest.php`;
-- `tests/Integration/ConcurrencyTest.php`;
-- `tests/Unit/QueueReconcilerTest.php`;
-- `tests/Contract/JobStorageContractTest.php` and
-  `tests/Contract/QueueDriverContractTest.php`.
+| Boundary | Durable state | Notification state | Recovery |
+|---|---|---|---|
+| Notification enqueue fails after create | `pending` exists | Missing | Report the dispatch error; bounded reconciliation restores it |
+| Future dispatch uses an unsupported driver | Unchanged | Unchanged | Capability preflight throws before storage mutation |
+| Scheduled create commits but delayed notification fails | Future `pending` exists | Missing delayed entry | Reconciliation strictly parses UTC availability and restores delayed, not pending |
+| Due job is already in delayed during startup | `pending` | One delayed member | Promotion runs before reconciliation, producing one pending notification |
+| Pending membership lies beyond a bounded scan | `pending` | Existing member may be missed | A harmless duplicate can be restored; handlers must remain idempotent |
+| Availability is missing/non-canonical | Unchanged | No new entry | Reconciliation increments `invalid` and advances its cursor |
+| Administrative requeue notification fails | Fresh `pending`, attempts/error/progress reset | Missing | `QueueException`; reconciliation restores notification |
+| Failed-job purge cleanup fails | Failed row is already deleted | Stale member may remain | `QueueException`; retry removal or let a later missing-row delivery be cleaned up |
 
-`tests/Integration/WorkerSoakTest.php` repeatedly recycles workers, reconnects
-PDO factories, checks memory growth, drives a long infrastructure-error
-sequence, and sends a real `SIGTERM`. Existing deterministic worker tests keep
-maintenance cadence and infrastructure retry/reset behavior observable without
-wall-clock-dependent assertions.
+`ReconcileResult::$duplicates` means an ID was already delayed or was found
+inside the bounded pending scan. It is not a global proof of uniqueness.
 
-`tests/Integration/WorkerReliabilitySoakTest.php` adds a middleware-enabled 300-job worker
-recycling run and pages/purges a 150-job failed backlog, asserting bounded memory
-growth and no notification residue. `FailureInjectionTest.php` characterizes
-middleware exceptions, re-queue/claim races, and listener failures.
+## Worker effects
 
-`tests/Contract/FailedJobAdminContractTest.php` compares failed-job listing,
-inspection, reset, purge, and notification cleanup across in-memory and PDO
-storage. `tests/Integration/FailedJobAdministrationTest.php` injects queue
-failures during re-queue and purge.
+| Boundary | Durable transition | Event | Queue action | Recovery/meaning |
+|---|---|---|---|---|
+| Handler succeeds | `running -> completed` | `completed` | ACK | Normal terminal path |
+| Handler fails with retry remaining | `running -> pending`, attempts `+1` | `retried` | NACK with delay | Promotion/claim performs the next execution |
+| Handler fails on final attempt | `running -> failed`, attempts `+1` | `failed` | ACK | Administrative action is required |
+| Handler returns an unserializable result | Fenced `running -> failed`, attempts `+1` | `failed` | ACK | Handler is not rerun merely to recreate its result |
+| Completion storage call throws | Unknown/original claim state; never treated as handler failure | No completed/retried event | No ACK/NACK | `processOne()` throws; `run()` reports infrastructure and backs off |
+| Retry/failure storage call throws | Original or indeterminate claim state | No durable-outcome event | No ACK/NACK | Stale recovery or explicit durable inspection |
+| Any fenced transition returns `false` | New owner's state remains authoritative | `lost_ownership` with exact context | None | Old worker stops that path immediately |
+| Progress update returns `false` | New owner's state remains authoritative | `lost_ownership(progress)` | None | Handler is interrupted by an internal ownership-loss exception |
+| Progress storage call throws | Claim state is not assumed | No job outcome event | None | Infrastructure exception escapes; handler is stopped |
+| Processing-heartbeat notification throws after durable progress | Progress/lease refresh is durable | `infrastructure_failure` | Handler continues | Storage fencing remains sufficient; queue visibility is repairable |
+| Listener throws while receiving an event | Durable transition is unchanged | Delivery failure is logged/isolated | Normal ACK/NACK still runs | Telemetry never changes job state |
+| ACK fails after completion/failure | Terminal transition remains authoritative and its event was attempted first | Already attempted | Stale processing member remains | Error escapes; later delivery cannot claim terminal storage and is cleaned up |
+| NACK fails after retry scheduling | Pending retry remains authoritative and `retried` was attempted first | Already attempted | Processing member may remain | Error escapes; queue stale recovery restores delivery; availability still gates claim |
+| Dequeued notification has no claimable row and ACK fails | Storage remains authoritative | No claimed event | Cleanup failed | Infrastructure exception escapes instead of masquerading as an empty queue |
+| Signal arrives after claim but before handler | `running -> pending` with unchanged attempts and prior error metadata | Lost-ownership only if fenced release returns `false` | Immediate NACK after successful release | Handler is not started |
+| Shutdown release storage/NACK throws | Release may be incomplete | Error log | No further action assumed | `run()` returns `EXIT_ERROR` so the supervisor reacts |
+| Process crashes while `running` | Lease remains `running` until TTL | Processing member may remain | None | Storage and queue stale recovery consume one failed execution and retry/fail canonically |
 
-## Operational rule
+All handler/middleware exceptions—including PDO/Redis exception classes thrown
+by application code—are job failures because they occur inside the handler
+boundary. Exceptions from Worker-owned storage, driver, maintenance, claim, or
+cleanup calls are infrastructure failures. `processOne()` throws them; `run()`
+emits `infra_error` and `backoff` and sleeps through the configured sleeper.
 
-Handlers must remain idempotent. Recovery can deliberately produce duplicate
-notifications, but fenced storage writes prevent an expired worker from
-overwriting the current owner. Logs and listener events contain identifiers,
-timings, transition context, error messages, and exception class names; they do
-not include payloads, results, throwable objects, credentials, or stack data.
+## Deterministic evidence
+
+- `tests/Unit/PdoFaultHarnessTest.php` injects acquisition, prepare, execute,
+  result-read, rollback, commit, and post-commit claim faults while recording
+  durable rows, ownership, transaction state, and replay count.
+- `tests/Support/StorageTransitionMatrix.php` runs canonical transitions across
+  in-memory, SQLite, MySQL, and PostgreSQL.
+- `tests/Unit/WorkerCompletionTest.php`, `WorkerFailureTest.php`,
+  `WorkerOwnershipTest.php`, `WorkerObservabilityTest.php`, and
+  `WorkerRunLoopTest.php` cover storage/notifier/listener/shutdown ordering.
+- `tests/Unit/QueueReconcilerTest.php` covers optimized and legacy paths,
+  delayed membership, invalid timestamps, bounded false negatives, cursor wrap,
+  and duration exhaustion.
+- `tests/Integration/FailurePathTest.php`, `FailureInjectionTest.php`, and
+  `FailedJobAdministrationTest.php` cover composed lifecycle failures.
+
+Handlers must make external side effects idempotent. Lease fencing protects
+SimpleQueue state; it cannot roll back an email, payment, or external API call
+that happened before a crash.
