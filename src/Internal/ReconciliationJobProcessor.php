@@ -41,11 +41,29 @@ final readonly class ReconciliationJobProcessor
      */
     public function process(string $queue, JobData $job, ReconcileOptions $options): ReconcileJobOutcome
     {
-        if ($job->id < 1) {
+        return $this->processNotification($queue, $job->id, $job->availableAt, $options);
+    }
+
+    /**
+     * Reconcile one lean pending notification.
+     *
+     * @param string $queue Queue name
+     * @param int $jobId Pending job identifier
+     * @param string|null $availableAt Stored availability timestamp
+     * @param ReconcileOptions $options Bounded reconciliation options
+     * @return ReconcileJobOutcome Observable reconciliation outcome
+     */
+    public function processNotification(
+        string $queue,
+        int $jobId,
+        ?string $availableAt,
+        ReconcileOptions $options
+    ): ReconcileJobOutcome {
+        if ($jobId < 1) {
             return ReconcileJobOutcome::Invalid;
         }
 
-        $parsedAvailableAt = $this->parseAvailableAt($job->availableAt);
+        $parsedAvailableAt = self::parseTimestamp($availableAt);
         if ($parsedAvailableAt === false) {
             return ReconcileJobOutcome::Invalid;
         }
@@ -54,16 +72,16 @@ final readonly class ReconciliationJobProcessor
         $isDue = $availableAt <= $now;
         // Either structure counts as notified, regardless of due state.
         if (
-            $this->driver->hasPendingJob($queue, $job->id, $options->membershipScanLimit)
-            || $this->driver->hasDelayedJob($queue, $job->id)
+            $this->driver->hasPendingJob($queue, $jobId, $options->membershipScanLimit)
+            || $this->driver->hasDelayedJob($queue, $jobId)
         ) {
             return ReconcileJobOutcome::Duplicate;
         }
 
         if ($isDue) {
-            $this->driver->enqueue($queue, $job->id);
+            $this->driver->enqueue($queue, $jobId);
         } else {
-            $this->driver->nack($queue, $job->id, max(0, $availableAt - $now));
+            $this->driver->nack($queue, $jobId, max(0, $parsedAvailableAt - $now));
         }
         return ReconcileJobOutcome::Restored;
     }
@@ -74,34 +92,16 @@ final readonly class ReconciliationJobProcessor
      * @param string|null $availableAt Stored availability timestamp
      * @return int|false Unix timestamp, or false when unparseable
      */
-    public static function parseTimestamp(?string $availableAt, ClockInterface $clock): int|false
+    public static function parseTimestamp(?string $availableAt): int|false
     {
         if ($availableAt === null || $availableAt === '') {
-            return $clock->timestamp();
+            return false;
         }
         $parsed = \DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $availableAt, new \DateTimeZone('UTC'));
-        if ($parsed !== false) {
-            return $parsed->getTimestamp();
-        }
-        $fallback = strtotime($availableAt . ' UTC');
-        return $fallback === false ? false : $fallback;
-    }
-
-    /**
-     * Parse a stored availability timestamp as UTC.
-     *
-     * Storage implementations write availability timestamps with gmdate() in
-     * UTC. Parsing those strings with the server default timezone would shift
-     * due/not-due reconciliation decisions by the timezone offset on non-UTC
-     * hosts, so the storage format is decoded against the UTC timezone
-     * explicitly. Unparseable values fall back to a UTC-annotated strtotime()
-     * so alternate storage shapes still reconcile.
-     *
-     * @param string|null $availableAt Stored availability timestamp, or null for now
-     * @return int|false Unix timestamp, or false when the value cannot be parsed
-     */
-    private function parseAvailableAt(?string $availableAt): int|false
-    {
-        return self::parseTimestamp($availableAt, $this->clock);
+        $parseErrors = \DateTimeImmutable::getLastErrors();
+        $strict = $parsed !== false
+            && ($parseErrors === false || ($parseErrors['warning_count'] === 0 && $parseErrors['error_count'] === 0))
+            && $parsed->format('Y-m-d H:i:s') === $availableAt;
+        return $strict ? $parsed->getTimestamp() : false;
     }
 }

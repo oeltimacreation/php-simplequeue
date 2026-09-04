@@ -31,8 +31,16 @@ final readonly class WorkerOptions
         if ($pollTimeout < 0 || $stuckJobTtl < 1 || $retryBaseDelay < 0 || $retryMaxDelay < $retryBaseDelay) {
             throw new \InvalidArgumentException('Worker timeout, TTL, and retry delay options are invalid');
         }
-        if ($maxJobs < 0 || $maxTime < 0 || $memoryLimit < 0 || $promoteInterval < 0 || $recoveryInterval < 0) {
-            throw new \InvalidArgumentException('Worker limits and intervals must not be negative');
+        if (
+            $maxJobs < 0
+            || $maxTime < 0
+            || $memoryLimit < 0
+            || !is_finite($promoteInterval)
+            || $promoteInterval < 0
+            || !is_finite($recoveryInterval)
+            || $recoveryInterval < 0
+        ) {
+            throw new \InvalidArgumentException('Worker limits and intervals must be finite and non-negative');
         }
         self::assertPromoteLimit($promoteLimit);
         if ($eventListener !== null && !is_callable($eventListener)) {

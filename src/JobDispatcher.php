@@ -15,7 +15,7 @@ use Oeltima\SimpleQueue\Contract\SupportsIdempotentJobCreation;
 use Oeltima\SimpleQueue\Contract\SupportsJobRemoval;
 use Oeltima\SimpleQueue\Contract\SupportsStorageBackedScheduling;
 use Oeltima\SimpleQueue\Exception\QueueException;
-use Oeltima\SimpleQueue\Internal\PositiveJobId;
+use Oeltima\SimpleQueue\Internal\JobStorageRules;
 
 /**
  * Service for dispatching jobs to the queue.
@@ -240,7 +240,7 @@ final class JobDispatcher
      */
     public function cancelJob(int $jobId): bool
     {
-        $jobId = PositiveJobId::fromInt($jobId)->value;
+        $jobId = JobStorageRules::validatePositiveId($jobId);
         $job = $this->storage->find($jobId);
         $cancelled = $this->storage->cancel($jobId);
         if (($cancelled || $job?->status === JobStatus::Cancelled) && $job !== null) {

@@ -19,10 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Hardened PDO durability: mutations never replay after a statement or commit attempt; connection/commit failures after that boundary raise the dedicated indeterminate exception; claims are rejected inside caller-owned transactions; table names are validated as one or two dot-separated identifiers.
-- Unified job-state and attempt semantics across PDO and in-memory backends: `attempts` counts failed executions, terminal failures consume one attempt, retries reset result/completion/progress, graceful releases preserve attempts and failure metadata, and stale recovery shares one decision rule with the canonical stale error.
+- Unified job-state and attempt semantics across PDO and in-memory backends: `attempts` counts failed executions, terminal failures consume one attempt, retries reset result/completion/progress and require an attempt remaining, graceful releases preserve attempts and failure metadata, and stale recovery shares one decision rule with the canonical stale error.
 - Corrected worker effect ordering to persist first, emit second, and ACK/NACK third; lost ownership never ACKs/NACKs or continues handler work; completion-storage errors escape as infrastructure instead of consuming a handler retry; result-serialization failure is a fenced terminal failure without handler replay.
 - Made worker IDs collision-safe (`hostname:pid:random` within 255 bytes), emit `claimed` on both dequeue paths, throw infrastructure errors from `processOne()`, guard re-entrant execution, restore prior signal handlers and async mode, interpret `memory_limit` as MiB, strictly parse options, and isolate default locks by user, working directory, and exact queue name with `0700`/`0600` protections.
-- Bounded reconciliation and batch scaling: delayed promotion runs before reconciliation, either pending or delayed membership counts as notified, invalid availability increments `invalid` without enqueueing, optimized pages use one queue roundtrip and one bounded storage query, in-memory enqueue/dequeue are amortized `O(1)` with atomic batches and earliest-availability promotion, and Redis stale recovery chunks Lua expansion at 1,000 members.
+- Bounded reconciliation and batch scaling: delayed promotion runs before reconciliation, either pending or delayed membership counts as notified, only canonical UTC availability is accepted, optimized pages use one queue roundtrip and one bounded storage query, in-memory enqueue/dequeue are amortized `O(1)` with atomic batches and earliest-availability promotion, and Redis stale recovery chunks Lua expansion at 1,000 members.
 - Deprecated `SupportsWorkerId` (use worker-aware claimed dequeue) and `SupportsQueueReconciliation` (use lean cursor with batch reconciliation); legacy fallbacks remain functional through v1.x.
 
 ### Fixed
@@ -33,7 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed completion leaving stale error metadata and retry leaving result/completion/progress state.
 - Fixed `memory_limit` compared as bytes instead of MiB and array options coercing `"false"` to `true`.
 - Fixed default lock-name collisions and predictable `/tmp` symlink exposure.
-- Fixed Redis integer normalization coercing malformed script counts to zero.
+- Preserved recovery visibility when duplicate Redis notifications with the same job ID remain in processing after ACK, NACK, or stale recovery.
+- Rejected and cleaned malformed Redis job IDs, and rejected non-canonical, negative, fractional, or overflowing script counts instead of coercing them.
 
 ### Removed
 

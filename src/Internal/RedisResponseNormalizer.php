@@ -56,7 +56,11 @@ final class RedisResponseNormalizer
             return $result;
         }
         if (is_string($result) && preg_match('/^(0|[1-9][0-9]*)$/', $result) === 1) {
-            if (strlen($result) < strlen((string) PHP_INT_MAX) || $result <= (string) PHP_INT_MAX) {
+            $maxLength = strlen((string) PHP_INT_MAX);
+            if (
+                strlen($result) < $maxLength
+                || (strlen($result) === $maxLength && $result <= (string) PHP_INT_MAX)
+            ) {
                 return (int) $result;
             }
         }

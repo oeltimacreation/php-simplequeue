@@ -39,6 +39,31 @@ use Oeltima\SimpleQueue\Exception\SerializationException;
  */
 final class JobDataHydrator
 {
+    /** @var list<string> */
+    private const DURABLE_FIELDS = [
+        'id',
+        'queue',
+        'type',
+        'status',
+        'payload',
+        'attempts',
+        'max_attempts',
+        'available_at',
+        'started_at',
+        'completed_at',
+        'locked_by',
+        'locked_at',
+        'lease_token',
+        'error_message',
+        'error_trace',
+        'progress',
+        'progress_message',
+        'result',
+        'request_id',
+        'created_at',
+        'updated_at',
+    ];
+
     /** @var array<string, mixed> */
     private const ROW_DEFAULTS = [
         'id' => 0,
@@ -169,14 +194,21 @@ final class JobDataHydrator
     public static function hydrateStrict(array $data): JobData
     {
         $id = self::strictId($data);
-        $queue = self::strictNonEmptyString($data, 'queue', $id);
-        $type = self::strictNonEmptyString($data, 'type', $id);
+        self::requireDurableFields($data, $id);
+        $queue = self::strictNonEmptyString($data, 'queue', $id, 255);
+        $type = self::strictNonEmptyString($data, 'type', $id, 255);
         $status = self::strictStatus($data, $id);
         self::requirePayload($data, $id);
         $attempts = self::strictAttempts($data, $id);
         $maxAttempts = self::strictMaxAttempts($data, $id);
+        if ($attempts > $maxAttempts) {
+            self::invalid($id, 'attempts');
+        }
         self::strictTimestamps($data, $id);
-        self::strictProgress($data, $id);
+        self::strictNullableStrings($data, $id);
+        self::strictResult($data, $id);
+        $progress = self::strictProgress($data, $id);
+        self::strictStateNullability($data, $status, $id);
 
         $normalized = $data;
         $normalized['id'] = $id;
@@ -185,8 +217,24 @@ final class JobDataHydrator
         $normalized['status'] = $status->value;
         $normalized['attempts'] = $attempts;
         $normalized['max_attempts'] = $maxAttempts;
+        $normalized['progress'] = $progress;
 
         return self::hydrate($normalized);
+    }
+
+    /**
+     * Require every column persisted by the built-in storage schema.
+     *
+     * @param array<string, mixed> $data Durable row
+     * @param int $id Job ID for errors
+     */
+    private static function requireDurableFields(array $data, int $id): void
+    {
+        foreach (self::DURABLE_FIELDS as $field) {
+            if (!array_key_exists($field, $data)) {
+                self::invalid($id, $field);
+            }
+        }
     }
 
     /**
@@ -198,10 +246,10 @@ final class JobDataHydrator
     private static function strictId(array $data): int
     {
         $raw = $data['id'] ?? null;
-        $id = is_int($raw) ? $raw : (is_numeric($raw) ? (int) $raw : 0);
-        if ($id < 1) {
+        $id = self::canonicalInteger($raw);
+        if ($id === null || $id < 1) {
             $label = is_scalar($raw) ? (string) $raw : 'unknown';
-            throw new QueueException(sprintf('Stored job #%s has invalid field "id"', $label));
+            self::invalid($label, 'id');
         }
         return $id;
     }
@@ -214,11 +262,11 @@ final class JobDataHydrator
      * @param int $id Job ID for errors
      * @return string Validated value
      */
-    private static function strictNonEmptyString(array $data, string $field, int $id): string
+    private static function strictNonEmptyString(array $data, string $field, int $id, int $maxBytes): string
     {
         $value = $data[$field] ?? null;
-        if (!is_string($value) || trim($value) === '') {
-            throw new QueueException(sprintf('Stored job #%d has invalid field "%s"', $id, $field));
+        if (!is_string($value) || trim($value) === '' || strlen($value) > $maxBytes) {
+            self::invalid($id, $field);
         }
         return $value;
     }
@@ -254,8 +302,8 @@ final class JobDataHydrator
      */
     private static function requirePayload(array $data, int $id): void
     {
-        if (!array_key_exists('payload', $data) || $data['payload'] === null) {
-            throw new QueueException(sprintf('Stored job #%d has invalid field "payload"', $id));
+        if (!is_string($data['payload'] ?? null)) {
+            self::invalid($id, 'payload');
         }
     }
 
@@ -269,9 +317,9 @@ final class JobDataHydrator
     private static function strictAttempts(array $data, int $id): int
     {
         $raw = $data['attempts'] ?? null;
-        $attempts = is_int($raw) ? $raw : (is_numeric($raw) ? (int) $raw : -1);
-        if ($attempts < 0) {
-            throw new QueueException(sprintf('Stored job #%d has invalid field "attempts"', $id));
+        $attempts = self::canonicalInteger($raw);
+        if ($attempts === null || $attempts < 0) {
+            self::invalid($id, 'attempts');
         }
         return $attempts;
     }
@@ -286,9 +334,9 @@ final class JobDataHydrator
     private static function strictMaxAttempts(array $data, int $id): int
     {
         $raw = $data['max_attempts'] ?? null;
-        $max = is_int($raw) ? $raw : (is_numeric($raw) ? (int) $raw : 0);
-        if ($max < 1) {
-            throw new QueueException(sprintf('Stored job #%d has invalid field "max_attempts"', $id));
+        $max = self::canonicalInteger($raw);
+        if ($max === null || $max < 1) {
+            self::invalid($id, 'max_attempts');
         }
         return $max;
     }
@@ -302,31 +350,64 @@ final class JobDataHydrator
     private static function strictTimestamps(array $data, int $id): void
     {
         foreach (['available_at', 'created_at', 'updated_at'] as $field) {
-            if (!array_key_exists($field, $data)) {
-                throw new QueueException(sprintf('Stored job #%d has invalid field "%s"', $id, $field));
+            $value = $data[$field];
+            if (!is_string($value) || trim($value) === '') {
+                self::invalid($id, $field);
             }
-            self::strictTimestampValue($data[$field], $field, $id);
         }
-        $optional = ['started_at', 'completed_at', 'locked_by', 'locked_at', 'lease_token'];
-        $optional = array_merge($optional, ['error_message', 'error_trace', 'progress_message', 'request_id']);
-        foreach ($optional as $field) {
-            if (array_key_exists($field, $data)) {
-                self::strictTimestampValue($data[$field], $field, $id);
+        foreach (['started_at', 'completed_at', 'locked_at'] as $field) {
+            $value = $data[$field];
+            if ($value !== null && (!is_string($value) || trim($value) === '')) {
+                self::invalid($id, $field);
             }
         }
     }
 
     /**
-     * Validate one timestamp-like value.
+     * Validate nullable persisted string columns and their schema bounds.
      *
-     * @param mixed $value Raw value
-     * @param string $field Field name
+     * @param array<string, mixed> $data Durable row
      * @param int $id Job ID for errors
      */
-    private static function strictTimestampValue(mixed $value, string $field, int $id): void
+    private static function strictNullableStrings(array $data, int $id): void
     {
-        if ($value !== null && !is_string($value) && !$value instanceof \DateTimeInterface && !is_int($value)) {
-            throw new QueueException(sprintf('Stored job #%d has invalid field "%s"', $id, $field));
+        foreach (['error_message', 'error_trace'] as $field) {
+            if ($data[$field] !== null && !is_string($data[$field])) {
+                self::invalid($id, $field);
+            }
+        }
+        foreach (['locked_by', 'progress_message', 'request_id'] as $field) {
+            $value = $data[$field];
+            if ($value !== null && (!is_string($value) || strlen($value) > 255)) {
+                self::invalid($id, $field);
+            }
+        }
+        foreach (['locked_by', 'request_id'] as $field) {
+            $value = $data[$field];
+            if (is_string($value) && trim($value) === '') {
+                self::invalid($id, $field);
+            }
+        }
+        $lease = $data['lease_token'];
+        if ($lease !== null && (!is_string($lease) || preg_match('/^[a-f0-9]{64}$/D', $lease) !== 1)) {
+            self::invalid($id, 'lease_token');
+        }
+    }
+
+    /**
+     * Require a nullable JSON result representation.
+     *
+     * @param array<string, mixed> $data Durable row
+     * @param int $id Job ID for errors
+     */
+    private static function strictResult(array $data, int $id): void
+    {
+        $result = $data['result'];
+        if ($result !== null && !is_string($result)) {
+            self::invalid($id, 'result');
+        }
+        if ($result === '') {
+            throw new SerializationException('Stored job result contains invalid JSON');
         }
     }
 
@@ -336,14 +417,72 @@ final class JobDataHydrator
      * @param array<string, mixed> $data Durable row
      * @param int $id Job ID for errors
      */
-    private static function strictProgress(array $data, int $id): void
+    private static function strictProgress(array $data, int $id): ?int
     {
-        if (!array_key_exists('progress', $data)) {
-            return;
-        }
         $progress = $data['progress'];
-        if ($progress !== null && !is_int($progress) && !is_numeric($progress)) {
-            throw new QueueException(sprintf('Stored job #%d has invalid field "progress"', $id));
+        if ($progress === null) {
+            return null;
         }
+        $normalized = self::canonicalInteger($progress);
+        if ($normalized === null || $normalized < 0 || $normalized > 100) {
+            self::invalid($id, 'progress');
+        }
+        return $normalized;
+    }
+
+    /**
+     * Validate ownership and terminal timestamp invariants.
+     *
+     * @param array<string, mixed> $data Durable row
+     * @param JobStatus $status Normalized status
+     * @param int $id Job ID for errors
+     */
+    private static function strictStateNullability(array $data, JobStatus $status, int $id): void
+    {
+        $ownershipFields = ['locked_by', 'locked_at', 'lease_token'];
+        if ($status === JobStatus::Running) {
+            foreach ($ownershipFields as $field) {
+                if ($data[$field] === null) {
+                    self::invalid($id, $field);
+                }
+            }
+            if ($data['started_at'] === null) {
+                self::invalid($id, 'started_at');
+            }
+        } else {
+            foreach ($ownershipFields as $field) {
+                if ($data[$field] !== null) {
+                    self::invalid($id, $field);
+                }
+            }
+        }
+        if ($status === JobStatus::Pending && $data['completed_at'] !== null) {
+            self::invalid($id, 'completed_at');
+        }
+        if ($status->isTerminal() && $data['completed_at'] === null) {
+            self::invalid($id, 'completed_at');
+        }
+    }
+
+    private static function canonicalInteger(mixed $value): ?int
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+        if (!is_string($value) || preg_match('/^(0|[1-9][0-9]*)$/D', $value) !== 1) {
+            return null;
+        }
+        if (
+            strlen($value) > strlen((string) PHP_INT_MAX)
+            || (strlen($value) === strlen((string) PHP_INT_MAX) && $value > (string) PHP_INT_MAX)
+        ) {
+            return null;
+        }
+        return (int) $value;
+    }
+
+    private static function invalid(int|string $id, string $field): never
+    {
+        throw new QueueException(sprintf('Stored job #%s has invalid field "%s"', (string) $id, $field));
     }
 }

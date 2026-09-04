@@ -15,8 +15,6 @@ use Oeltima\SimpleQueue\Contract\SupportsStorageBackedScheduling;
 use Oeltima\SimpleQueue\Contract\SupportsWorkerAwareClaimedDequeue;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\SupportsWorkerId;
-use Oeltima\SimpleQueue\Internal\DatabaseJobRemoval;
-use Oeltima\SimpleQueue\Internal\PositiveJobId;
 use Oeltima\SimpleQueue\SystemClock;
 use Oeltima\SimpleQueue\SystemSleeper;
 
@@ -37,8 +35,6 @@ final class DatabaseQueueDriver implements
     SupportsBatchEnqueue,
     SupportsJobRemoval
 {
-    use DatabaseJobRemoval;
-
     private const ERR_INVALID_JOB_ID = 'jobId must be a positive integer';
     private int $pollIntervalMs;
     private string $workerId;
@@ -79,7 +75,7 @@ final class DatabaseQueueDriver implements
     }
     public function enqueue(string $queue, int $jobId): void
     {
-        PositiveJobId::fromInt($jobId, self::ERR_INVALID_JOB_ID);
+        self::validateJobId($jobId);
         // Job is already in the database, nothing to do
     }
 
@@ -92,7 +88,7 @@ final class DatabaseQueueDriver implements
     public function enqueueBatch(string $queue, array $jobIds): void
     {
         foreach ($jobIds as $jobId) {
-            PositiveJobId::fromInt($jobId, self::ERR_INVALID_JOB_ID);
+            self::validateJobId($jobId);
         }
         // Storage holds the jobs; no notification work is required.
     }
@@ -141,13 +137,25 @@ final class DatabaseQueueDriver implements
     }
     public function ack(string $queue, int $jobId): void
     {
-        PositiveJobId::fromInt($jobId, self::ERR_INVALID_JOB_ID);
+        self::validateJobId($jobId);
         // Job status is managed by storage, nothing to do
     }
     public function nack(string $queue, int $jobId, int $delaySeconds = 0): void
     {
-        PositiveJobId::fromInt($jobId, self::ERR_INVALID_JOB_ID);
+        self::validateJobId($jobId);
         // Retry is handled by storage scheduleRetry, nothing to do
         // The delaySeconds is already handled via storage->scheduleRetry()
+    }
+
+    public function remove(string $queue, int $jobId): void
+    {
+        self::validateJobId($jobId);
+    }
+
+    private static function validateJobId(int $jobId): void
+    {
+        if ($jobId < 1) {
+            throw new \InvalidArgumentException(self::ERR_INVALID_JOB_ID);
+        }
     }
 }

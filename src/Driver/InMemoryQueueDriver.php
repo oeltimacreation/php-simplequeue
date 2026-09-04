@@ -15,7 +15,6 @@ use Oeltima\SimpleQueue\Contract\SupportsQueueReconciliation;
 use Oeltima\SimpleQueue\Contract\QueueStatsInterface;
 use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
 use Oeltima\SimpleQueue\Contract\ClockInterface;
-use Oeltima\SimpleQueue\Internal\PositiveJobId;
 use Oeltima\SimpleQueue\SystemClock;
 
 /**
@@ -128,7 +127,9 @@ final class InMemoryQueueDriver implements
     {
         $this->validateJobId($jobId);
         $this->removeFromProcessing($queue, $jobId);
-        unset($this->processingStartedAt[$queue][$jobId]);
+        if (!in_array($jobId, $this->processing[$queue] ?? [], true)) {
+            unset($this->processingStartedAt[$queue][$jobId]);
+        }
     }
 
     public function remove(string $queue, int $jobId): void
@@ -157,15 +158,25 @@ final class InMemoryQueueDriver implements
 
     public function hasPendingJob(string $queue, int $jobId, int $maxElements): bool
     {
+        $this->validateJobId($jobId);
         if ($maxElements < 1) {
             throw new \InvalidArgumentException('Membership scan limit must be positive');
         }
-        // Match Redis LPOS newest-first scan order for bounded parity.
-        return in_array($jobId, array_slice($this->visiblePending($queue), 0, $maxElements), true);
+        $head = $this->pendingHead[$queue] ?? 0;
+        $buffer = $this->pending[$queue] ?? [];
+        $inspected = 0;
+        // Match Redis LPOS newest-first scan order without allocating a copy.
+        for ($index = count($buffer) - 1; $index >= $head && $inspected < $maxElements; $index--, $inspected++) {
+            if ($buffer[$index] === $jobId) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public function hasDelayedJob(string $queue, int $jobId): bool
     {
+        $this->validateJobId($jobId);
         return isset($this->delayed[$queue][$jobId]);
     }
 
@@ -304,7 +315,13 @@ final class InMemoryQueueDriver implements
                 continue;
             }
             $this->removeFromProcessing($queue, $jobId);
-            unset($this->processingStartedAt[$queue][$jobId]);
+            if (in_array($jobId, $this->processing[$queue] ?? [], true)) {
+                // Duplicate processing notifications share an ID-keyed score.
+                // Rebase the remaining duplicate instead of losing recovery data.
+                $this->processingStartedAt[$queue][$jobId] = $this->clock->timestamp();
+            } else {
+                unset($this->processingStartedAt[$queue][$jobId]);
+            }
             $this->enqueue($queue, $jobId);
             $recovered++;
         }
@@ -381,7 +398,9 @@ final class InMemoryQueueDriver implements
 
     private function validateJobId(int $jobId): void
     {
-        PositiveJobId::fromInt($jobId);
+        if ($jobId < 1) {
+            throw new \InvalidArgumentException('Job ID must be a positive integer');
+        }
     }
 
     /**
@@ -417,16 +436,25 @@ final class InMemoryQueueDriver implements
         int $now,
         int $pendingScanLimit
     ): array {
+        if ($now <= 0) {
+            throw new \InvalidArgumentException('Reconciliation current timestamp must be positive');
+        }
         if ($pendingScanLimit < 1) {
             throw new \InvalidArgumentException('Pending scan limit must be positive');
         }
-        $present = [];
+        // Validate the complete page before changing notification state.
         foreach ($availableAtByJobId as $jobId => $availableAt) {
             if (!is_int($jobId) || $jobId < 1 || !is_int($availableAt) || $availableAt <= 0) {
                 throw new \InvalidArgumentException('Reconciliation IDs and timestamps must be positive integers');
             }
-            $inPending = $this->hasPendingJob($queue, $jobId, $pendingScanLimit);
-            $inDelayed = $this->hasDelayedJob($queue, $jobId);
+        }
+
+        $pending = $this->boundedPendingSet($queue, $pendingScanLimit);
+        $delayed = $this->delayed[$queue] ?? [];
+        $present = [];
+        foreach ($availableAtByJobId as $jobId => $availableAt) {
+            $inPending = isset($pending[$jobId]);
+            $inDelayed = isset($delayed[$jobId]);
             if ($inPending || $inDelayed) {
                 $present[] = $jobId;
                 continue;
@@ -441,6 +469,23 @@ final class InMemoryQueueDriver implements
             }
         }
         return $present;
+    }
+
+    /**
+     * Build the bounded newest-first membership set once per reconciliation page.
+     *
+     * @return array<int, true> Job IDs visible within the scan bound
+     */
+    private function boundedPendingSet(string $queue, int $maxElements): array
+    {
+        $head = $this->pendingHead[$queue] ?? 0;
+        $buffer = $this->pending[$queue] ?? [];
+        $set = [];
+        $inspected = 0;
+        for ($index = count($buffer) - 1; $index >= $head && $inspected < $maxElements; $index--, $inspected++) {
+            $set[$buffer[$index]] = true;
+        }
+        return $set;
     }
 
     /**

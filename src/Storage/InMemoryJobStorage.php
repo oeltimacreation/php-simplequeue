@@ -19,7 +19,6 @@ use Oeltima\SimpleQueue\Contract\PendingNotification;
 use Oeltima\SimpleQueue\Contract\SupportsQueueScopedStaleRecovery;
 use Oeltima\SimpleQueue\Internal\JobDataHydrator;
 use Oeltima\SimpleQueue\Internal\JobFilter;
-use Oeltima\SimpleQueue\Internal\InMemoryFailedJobAdministration;
 use Oeltima\SimpleQueue\Internal\JobStorageRules;
 use Oeltima\SimpleQueue\Internal\RetryDecision;
 use Oeltima\SimpleQueue\SystemClock;
@@ -30,7 +29,14 @@ use Oeltima\SimpleQueue\SystemClock;
  * This storage keeps all jobs in memory and is useful for unit testing.
  * All data is lost when the process terminates.
  *
- * @phpstan-import-type StoredJobRow from \Oeltima\SimpleQueue\Internal\InMemoryJobRow
+ * @phpstan-type StoredJobRow array{
+ *     id: int, queue: string, type: string, status: JobStatus, payload: string,
+ *     attempts: int, max_attempts: int, available_at: string, started_at: ?string,
+ *     completed_at: ?string, locked_by: ?string, locked_at: ?string, lease_token: ?string,
+ *     error_message: ?string, error_trace: ?string, progress: ?int,
+ *     progress_message: ?string, result: ?string, request_id: ?string,
+ *     created_at: string, updated_at: string
+ * }
  * @phpstan-import-type JobDefinitionShape from JobStorageInterface
  */
 class InMemoryJobStorage implements
@@ -42,8 +48,6 @@ class InMemoryJobStorage implements
     SupportsPendingNotificationCursor,
     SupportsQueueScopedStaleRecovery
 {
-    use InMemoryFailedJobAdministration;
-
     /** @var array<int, StoredJobRow> */
     private array $jobs = [];
     private int $nextId = 1;
@@ -81,7 +85,7 @@ class InMemoryJobStorage implements
         }
         // Encode before consuming an ID so serialization failure leaves state unchanged.
         $encoded = JobStorageRules::encodeJson($payload, 'job payload');
-        $now = $this->now();
+        $now = $this->clock->now();
         $id = $this->nextId++;
 
         $this->jobs[$id] = $this->newJobRow($id, $type, $encoded, $queue, $maxAttempts, $requestId, $now, $now, $now);
@@ -159,7 +163,7 @@ class InMemoryJobStorage implements
         foreach ($jobs as $job) {
             $validated[] = JobStorageRules::validateJobDefinition($job, $this->clock);
         }
-        $now = $this->now();
+        $now = $this->clock->now();
         $ids = [];
         foreach ($validated as $definition) {
             $id = $this->nextId++;
@@ -234,12 +238,14 @@ class InMemoryJobStorage implements
      */
     public function claimNextAvailable(string $queue, string $workerId): ?ClaimedJob
     {
-        $now = $this->now();
+        JobStorageRules::validateQueueOrType($queue, 'Queue');
+        JobStorageRules::validateWorkerId($workerId);
+        $now = $this->clock->now();
         $candidateId = null;
         $candidateAvailableAt = null;
 
         foreach ($this->jobs as $id => $job) {
-            if (!$this->isClaimableCandidate($job, $queue, $now)) {
+            if ($job['status'] !== JobStatus::Pending || $job['queue'] !== $queue || $job['available_at'] > $now) {
                 continue;
             }
             if ($this->isBetterCandidate($job, $id, $candidateAvailableAt, $candidateId)) {
@@ -258,25 +264,11 @@ class InMemoryJobStorage implements
     /**
      * @param array<string, mixed> $job Storage job row
      */
-    private function isClaimableCandidate(array $job, string $queue, string $now): bool
-    {
-        return $job['status'] === JobStatus::Pending
-            && $job['queue'] === $queue
-            && $job['available_at'] <= $now;
-    }
-
-    /**
-     * @param array<string, mixed> $job Storage job row
-     */
     private function isBetterCandidate(array $job, int $id, ?string $candidateAvailableAt, ?int $candidateId): bool
     {
-        if ($candidateAvailableAt === null) {
-            return true;
-        }
-        if ($job['available_at'] < $candidateAvailableAt) {
-            return true;
-        }
-        return $job['available_at'] === $candidateAvailableAt && $id < (int) $candidateId;
+        return $candidateAvailableAt === null
+            || $job['available_at'] < $candidateAvailableAt
+            || ($job['available_at'] === $candidateAvailableAt && $id < (int) $candidateId);
     }
 
     /**
@@ -288,17 +280,18 @@ class InMemoryJobStorage implements
      */
     public function claimById(int $id, string $workerId): ?ClaimedJob
     {
-        return $this->claimAvailableJob($id, $workerId, $this->now());
+        JobStorageRules::validateWorkerId($workerId);
+        return $this->claimAvailableJob($id, $workerId, $this->clock->now());
     }
 
     public function markCompleted(ClaimedJob $claim, mixed $result = null): bool
     {
+        $encodedResult = $result === null ? null : JobStorageRules::encodeJson($result, 'job result');
         if (!$this->ownsClaim($claim)) {
             return false;
         }
 
-        $encodedResult = $result === null ? null : JobStorageRules::encodeJson($result, 'job result');
-        $now = $this->now();
+        $now = $this->clock->now();
         $job = &$this->jobs[$claim->job->id];
         $job['status'] = JobStatus::Completed;
         $job['result'] = $encodedResult;
@@ -318,7 +311,7 @@ class InMemoryJobStorage implements
             return false;
         }
 
-        $now = $this->now();
+        $now = $this->clock->now();
         $job = &$this->jobs[$claim->job->id];
         $job['status'] = JobStatus::Failed;
         $job['attempts']++;
@@ -333,7 +326,7 @@ class InMemoryJobStorage implements
 
     public function updateProgress(ClaimedJob $claim, ?int $progress = null, ?string $message = null): bool
     {
-        JobStorageRules::validateProgress($progress);
+        JobStorageRules::validateProgressUpdate($progress, $message);
         if (!$this->ownsClaim($claim)) {
             return false;
         }
@@ -341,7 +334,7 @@ class InMemoryJobStorage implements
         $job = &$this->jobs[$claim->job->id];
         $job['progress'] = $progress;
         $job['progress_message'] = $message;
-        $job['locked_at'] = $this->now();
+        $job['locked_at'] = $this->clock->now();
         $job['updated_at'] = $job['locked_at'];
 
         return true;
@@ -353,12 +346,12 @@ class InMemoryJobStorage implements
         int $delaySeconds,
         ?string $errorMessage = null
     ): bool {
-        JobStorageRules::validateRetry($attempts, $delaySeconds);
+        JobStorageRules::validateRetry($attempts, $delaySeconds, $claim->job->maxAttempts);
         if (!$this->ownsClaim($claim)) {
             return false;
         }
 
-        $now = $this->now();
+        $now = $this->clock->now();
         $availableAt = JobStorageRules::timestamp($this->clock, $this->dateFormat, $delaySeconds);
 
         $job = &$this->jobs[$claim->job->id];
@@ -381,7 +374,7 @@ class InMemoryJobStorage implements
             return false;
         }
 
-        $now = $this->now();
+        $now = $this->clock->now();
         $job = &$this->jobs[$claim->job->id];
         $job['locked_at'] = $now;
         $job['updated_at'] = $now;
@@ -392,7 +385,7 @@ class InMemoryJobStorage implements
     public function recoverStaleJobs(int $ttlSeconds): int
     {
         JobStorageRules::validateStaleRecovery($ttlSeconds, 1);
-        $now = $this->now();
+        $now = $this->clock->now();
         $staleThreshold = JobStorageRules::timestamp($this->clock, $this->dateFormat, -$ttlSeconds);
         $staleError = 'Job timed out / worker crashed (stale recovery)';
         $count = 0;
@@ -405,27 +398,7 @@ class InMemoryJobStorage implements
                 continue;
             }
 
-            $attempts = $job['attempts'];
-            $maxAttempts = $job['max_attempts'];
-            $nextAttempts = $attempts + 1;
-            if (!RetryDecision::forAttempt($nextAttempts, $maxAttempts)->shouldRetry()) {
-                $job['status'] = JobStatus::Failed;
-                $job['attempts'] = $nextAttempts;
-                $job['error_message'] = $staleError;
-                $job['completed_at'] = $now;
-                $job['available_at'] = $now;
-            } else {
-                $job['status'] = JobStatus::Pending;
-                $job['attempts'] = $nextAttempts;
-                $job['error_message'] = $staleError;
-                $job['result'] = null;
-                $job['completed_at'] = null;
-                $job['progress'] = null;
-                $job['progress_message'] = null;
-                $job['available_at'] = $now;
-            }
-
-            $this->releaseClaim($job, $now);
+            $this->recoverStaleJob($job, $now, $staleError);
             $count++;
         }
 
@@ -436,7 +409,7 @@ class InMemoryJobStorage implements
     {
         JobStorageRules::validateQueueOrType($queue, 'Queue');
         JobStorageRules::validateStaleRecovery($ttlSeconds, $limit);
-        $now = $this->now();
+        $now = $this->clock->now();
         $threshold = JobStorageRules::timestamp($this->clock, $this->dateFormat, -$ttlSeconds);
         $staleError = 'Job timed out / worker crashed (stale recovery)';
         // Match PDO ordering (locked_at ASC) and null-lock handling.
@@ -450,7 +423,10 @@ class InMemoryJobStorage implements
             }
             $candidates[] = ['id' => $id, 'locked_at' => $job['locked_at']];
         }
-        usort($candidates, static fn (array $a, array $b): int => ($a['locked_at'] ?? '') <=> ($b['locked_at'] ?? ''));
+        usort($candidates, static function (array $a, array $b): int {
+            $lockedOrder = ($a['locked_at'] ?? '') <=> ($b['locked_at'] ?? '');
+            return $lockedOrder !== 0 ? $lockedOrder : $a['id'] <=> $b['id'];
+        });
         $recovered = 0;
         foreach ($candidates as $candidate) {
             if ($recovered >= $limit) {
@@ -458,28 +434,65 @@ class InMemoryJobStorage implements
             }
             $id = $candidate['id'];
             $job = &$this->jobs[$id];
-            $nextAttempts = $job['attempts'] + 1;
-            if (!RetryDecision::forAttempt($nextAttempts, $job['max_attempts'])->shouldRetry()) {
-                $job['status'] = JobStatus::Failed;
-                $job['attempts'] = $nextAttempts;
-                $job['error_message'] = $staleError;
-                $job['completed_at'] = $now;
-                $job['available_at'] = $now;
-            } else {
-                $job['status'] = JobStatus::Pending;
-                $job['attempts'] = $nextAttempts;
-                $job['error_message'] = $staleError;
-                $job['result'] = null;
-                $job['completed_at'] = null;
-                $job['progress'] = null;
-                $job['progress_message'] = null;
-                $job['available_at'] = $now;
-            }
-            $this->releaseClaim($job, $now);
+            $this->recoverStaleJob($job, $now, $staleError);
             $recovered++;
         }
         unset($job);
         return $recovered;
+    }
+
+    /** @param StoredJobRow $job */
+    private function recoverStaleJob(array &$job, string $now, string $staleError): void
+    {
+        $job['attempts']++;
+        $job['error_message'] = $staleError;
+        $job['available_at'] = $now;
+        if (RetryDecision::forAttempt($job['attempts'], $job['max_attempts'])->shouldRetry()) {
+            $job['status'] = JobStatus::Pending;
+            $job['result'] = null;
+            $job['completed_at'] = null;
+            $job['progress'] = null;
+            $job['progress_message'] = null;
+        } else {
+            $job['status'] = JobStatus::Failed;
+            $job['completed_at'] = $now;
+        }
+        $this->releaseClaim($job, $now);
+    }
+
+    public function requeueFailed(int $jobId): ?JobData
+    {
+        JobStorageRules::validatePositiveId($jobId);
+        if (!isset($this->jobs[$jobId]) || $this->jobs[$jobId]['status'] !== JobStatus::Failed) {
+            return null;
+        }
+
+        $now = $this->clock->now();
+        $job = &$this->jobs[$jobId];
+        $job['status'] = JobStatus::Pending;
+        $job['attempts'] = 0;
+        $job['available_at'] = $now;
+        $job['started_at'] = null;
+        $job['completed_at'] = null;
+        $job['error_message'] = null;
+        $job['error_trace'] = null;
+        $job['progress'] = null;
+        $job['progress_message'] = null;
+        $job['result'] = null;
+        $this->releaseClaim($job, $now);
+
+        return JobDataHydrator::hydrateStrict($job);
+    }
+
+    public function purgeFailed(int $jobId): ?JobData
+    {
+        JobStorageRules::validatePositiveId($jobId);
+        if (!isset($this->jobs[$jobId]) || $this->jobs[$jobId]['status'] !== JobStatus::Failed) {
+            return null;
+        }
+        $job = JobDataHydrator::hydrateStrict($this->jobs[$jobId]);
+        unset($this->jobs[$jobId]);
+        return $job;
     }
 
     /**
@@ -522,7 +535,11 @@ class InMemoryJobStorage implements
         }
         $jobs = [];
         foreach ($this->jobs as $id => $job) {
-            if (!$this->isPendingAfter($job, $queue, $id, $afterId)) {
+            if (
+                $job['status'] !== JobStatus::Pending
+                || $job['queue'] !== $queue
+                || ($afterId !== null && $id <= $afterId)
+            ) {
                 continue;
             }
             $jobs[] = JobDataHydrator::hydrateStrict($job);
@@ -634,18 +651,13 @@ class InMemoryJobStorage implements
             return false;
         }
 
-        $now = $this->now();
+        $now = $this->clock->now();
         $job = &$this->jobs[$id];
         $job['status'] = JobStatus::Cancelled;
         $job['completed_at'] = $now;
         $this->releaseClaim($job, $now);
 
         return true;
-    }
-
-    private function now(): string
-    {
-        return $this->clock->now();
     }
 
     private function claimAvailableJob(int $id, string $workerId, string $now): ?ClaimedJob
@@ -663,7 +675,7 @@ class InMemoryJobStorage implements
             return null;
         }
 
-        $leaseToken = $this->generateLeaseToken();
+        $leaseToken = bin2hex(random_bytes(32));
         $job['status'] = JobStatus::Running;
         $job['locked_by'] = $workerId;
         $job['locked_at'] = $now;
@@ -674,11 +686,6 @@ class InMemoryJobStorage implements
         return new ClaimedJob(JobDataHydrator::hydrateStrict($this->jobs[$id]), $workerId, $leaseToken);
     }
 
-    private function generateLeaseToken(): string
-    {
-        return bin2hex(random_bytes(32));
-    }
-
     /** @param StoredJobRow $job */
     private function releaseClaim(array &$job, string $now): void
     {
@@ -686,14 +693,6 @@ class InMemoryJobStorage implements
         $job['locked_at'] = null;
         $job['lease_token'] = null;
         $job['updated_at'] = $now;
-    }
-
-    /** @param StoredJobRow $job */
-    private function isPendingAfter(array $job, string $queue, int $id, ?int $afterId): bool
-    {
-        return $job['status'] === JobStatus::Pending
-            && $job['queue'] === $queue
-            && ($afterId === null || $id > $afterId);
     }
 
     private function ownsClaim(ClaimedJob $claim): bool

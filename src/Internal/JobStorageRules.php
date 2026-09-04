@@ -42,6 +42,20 @@ final class JobStorageRules
     }
 
     /**
+     * Validate the complete progress update before touching storage.
+     *
+     * @param int|null $progress Progress percentage
+     * @param string|null $message Optional progress message
+     */
+    public static function validateProgressUpdate(?int $progress, ?string $message): void
+    {
+        self::validateProgress($progress);
+        if ($message !== null) {
+            self::validateBoundedString($message, 'Progress message');
+        }
+    }
+
+    /**
      * Validate retry transition arguments.
      *
      * Non-negative persisted attempt counts are accepted so a graceful
@@ -50,11 +64,15 @@ final class JobStorageRules
      *
      * @param int $attempts Current attempt count
      * @param int $delaySeconds Retry delay in seconds
+     * @param int $maxAttempts Maximum failed executions allowed
      */
-    public static function validateRetry(int $attempts, int $delaySeconds): void
+    public static function validateRetry(int $attempts, int $delaySeconds, int $maxAttempts): void
     {
         if ($attempts < 0 || $delaySeconds < 0) {
             throw new \InvalidArgumentException('Attempts must not be negative and retry delay must not be negative');
+        }
+        if ($attempts >= $maxAttempts) {
+            throw new \InvalidArgumentException('Retry attempts must be less than maximum attempts');
         }
     }
 
@@ -201,6 +219,20 @@ final class JobStorageRules
         }
 
         return $value;
+    }
+
+    /**
+     * Validate a non-empty worker identifier within the shared schema bound.
+     *
+     * @param string $workerId Worker identifier
+     * @return string Validated worker identifier
+     */
+    public static function validateWorkerId(string $workerId): string
+    {
+        if (trim($workerId) === '') {
+            throw new \InvalidArgumentException('Worker ID must not be empty');
+        }
+        return self::validateBoundedString($workerId, 'Worker ID');
     }
 
     /**

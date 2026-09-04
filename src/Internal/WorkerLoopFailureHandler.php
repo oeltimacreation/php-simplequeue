@@ -38,14 +38,6 @@ final class WorkerLoopFailureHandler
      */
     public function handle(\Throwable $exception, int $consecutiveErrors, callable $emit): int
     {
-        if (!$this->policy->isInfrastructureException($exception)) {
-            $this->logger->error('Worker loop encountered an unexpected error', [
-                'error' => $exception->getMessage(),
-            ]);
-            $this->sleep(1.0);
-            return $consecutiveErrors;
-        }
-
         $consecutiveErrors++;
         $delay = $this->policy->backoffDelay($consecutiveErrors);
         $totalDelaySeconds = $delay + (random_int(0, 1000) / 1000.0);
