@@ -2,7 +2,7 @@
     "name": "oeltimacreation/php-simplequeue",
     "description": "A lightweight, framework-agnostic background job queue system for PHP with Redis and database drivers",
     "type": "library",
-    "version": "1.10.0",
+    "version": "1.11.0",
     "license": "MIT",
     "keywords": [
         "queue",
