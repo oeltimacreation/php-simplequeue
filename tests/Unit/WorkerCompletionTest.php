@@ -19,12 +19,12 @@ final class WorkerCompletionTest extends WorkerTestCase
 
         $this->storage->expects($this->once())
             ->method('markCompleted')
-            ->with($this->callback(fn($claim) => $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 100), ['processed' => true])
+            ->with(self::callback(fn($claim) => $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 100), ['processed' => true])
             ->willReturn(true);
 
         $driver->expects($this->once())->method('ack')->with('default', 100);
 
-        $this->assertTrue($this->createWorkerWithDriver($driver)->processOne());
+        self::assertTrue($this->createWorkerWithDriver($driver)->processOne());
     }
 
     public function testWorkerHandlesAckExceptionAfterCompletedJob(): void
@@ -38,7 +38,7 @@ final class WorkerCompletionTest extends WorkerTestCase
         $this->storage->expects($this->once())
             ->method('markCompleted')
             ->with(
-                $this->callback(fn($claim) => $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 500),
+                self::callback(fn($claim) => $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 500),
                 ['done' => true]
             )
             ->willReturn(true);
@@ -51,7 +51,7 @@ final class WorkerCompletionTest extends WorkerTestCase
             ->method('error')
             ->with(
                 'Failed to ack completed job',
-                $this->callback(fn(array $context): bool => isset($context['job_id']) && $context['job_id'] === 500)
+                self::callback(fn(array $context): bool => isset($context['job_id']) && $context['job_id'] === 500)
             );
 
         // Durable completion is authoritative; ACK failure escapes as infrastructure.
@@ -71,7 +71,7 @@ final class WorkerCompletionTest extends WorkerTestCase
         $this->storage->expects($this->once())
             ->method('updateProgress')
             ->with(
-                $this->callback(
+                self::callback(
                     fn($claim): bool =>
                         $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 123
                 ),

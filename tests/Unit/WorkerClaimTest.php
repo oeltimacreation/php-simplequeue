@@ -5,10 +5,31 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Tests\Unit;
 
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
+use Oeltima\SimpleQueue\Contract\SupportsWorkerAwareClaimedDequeue;
 use Oeltima\SimpleQueue\Tests\Support\WorkerTestCase;
 
 final class WorkerClaimTest extends WorkerTestCase
 {
+    public function testWorkerAwareClaimDoesNotMutateSharedDriverWorkerId(): void
+    {
+        $driver = $this->createMockForIntersectionOfInterfaces([
+            QueueDriverInterface::class,
+            SupportsWorkerAwareClaimedDequeue::class,
+            'Oeltima\\SimpleQueue\\Contract\\SupportsWorkerId',
+        ]);
+        $driver->expects($this->never())->method('setWorkerId');
+        $driver->expects($this->once())
+            ->method('dequeueClaimedForWorker')
+            ->with(
+                'default',
+                0,
+                self::callback(static fn(string $workerId): bool => $workerId !== '')
+            )
+            ->willReturn(null);
+
+        self::assertFalse($this->createWorkerWithDriver($driver)->processOne());
+    }
+
     public function testWorkerContinuesWhenStorageThrowsExceptionDuringClaim(): void
     {
         $driver = $this->createMock(QueueDriverInterface::class);
@@ -23,7 +44,7 @@ final class WorkerClaimTest extends WorkerTestCase
             ->method('error')
             ->with(
                 'Failed to claim job from storage',
-                $this->callback(fn(array $context): bool => isset($context['job_id']) && $context['job_id'] === 123)
+                self::callback(fn(array $context): bool => isset($context['job_id']) && $context['job_id'] === 123)
             );
 
         // Claim/infrastructure errors escape processOne(); only empty claims return false.
@@ -44,10 +65,25 @@ final class WorkerClaimTest extends WorkerTestCase
             ->method('warning')
             ->with(
                 'Failed to claim job, may have been claimed by another process',
-                $this->callback(fn(array $context): bool => isset($context['job_id']) && $context['job_id'] === 456)
+                self::callback(fn(array $context): bool => isset($context['job_id']) && $context['job_id'] === 456)
             );
 
-        $this->assertFalse($this->createWorkerWithDriver($driver)->processOne());
+        self::assertFalse($this->createWorkerWithDriver($driver)->processOne());
+    }
+
+    public function testAckFailureForUnclaimedNotificationEscapesProcessOne(): void
+    {
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $driver->expects($this->once())->method('dequeue')->willReturn(457);
+        $driver->expects($this->once())
+            ->method('ack')
+            ->with('default', 457)
+            ->willThrowException(new \RuntimeException('Redis unavailable'));
+        $this->storage->expects($this->once())->method('claimById')->willReturn(null);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Redis unavailable');
+        $this->createWorkerWithDriver($driver)->processOne();
     }
 
     public function testProcessOneNonBlockingReturnsFalseWhenQueueEmpty(): void
@@ -61,6 +97,6 @@ final class WorkerClaimTest extends WorkerTestCase
         $worker = $this->createWorkerWithDriver($driver);
         $result = $worker->processOne();
 
-        $this->assertFalse($result);
+        self::assertFalse($result);
     }
 }

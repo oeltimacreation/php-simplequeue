@@ -157,6 +157,6 @@ final class ScheduledDispatchTest extends TestCase
 
     private function redisDriver(FrozenClock $clock): RedisQueueDriver
     {
-        return RedisFixture::driver($this, 'sched-' . bin2hex(random_bytes(8)), $clock);
+        return RedisFixture::driver('sched-' . bin2hex(random_bytes(8)), $clock);
     }
 }

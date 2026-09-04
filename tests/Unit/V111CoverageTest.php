@@ -19,6 +19,7 @@ use Oeltima\SimpleQueue\SystemSleeper;
 use Oeltima\SimpleQueue\Tests\Support\FrozenClock;
 use Oeltima\SimpleQueue\Tests\Support\SqliteFixture;
 use Oeltima\SimpleQueue\Worker;
+use Oeltima\SimpleQueue\WorkerOptions;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -68,14 +69,29 @@ final class V111CoverageTest extends TestCase
             'id' => 1, 'queue' => 'default', 'type' => 't', 'status' => 'pending',
             'payload' => '[]', 'attempts' => 0, 'max_attempts' => 3,
             'available_at' => '2023-11-14 22:13:20', 'created_at' => '2023-11-14 22:13:20',
-            'updated_at' => '2023-11-14 22:13:20',
+            'updated_at' => '2023-11-14 22:13:20', 'started_at' => null, 'completed_at' => null,
+            'locked_by' => null, 'locked_at' => null, 'lease_token' => null,
+            'error_message' => null, 'error_trace' => null, 'progress' => null,
+            'progress_message' => null, 'result' => null, 'request_id' => null,
         ];
         self::assertSame(1, JobDataHydrator::hydrateStrict($base)->id);
+        foreach (array_keys($base) as $missingField) {
+            $missing = $base;
+            unset($missing[$missingField]);
+            try {
+                JobDataHydrator::hydrateStrict($missing);
+                self::fail('Missing durable field must fail: ' . $missingField);
+            } catch (\RuntimeException $exception) {
+                self::assertStringContainsString('"' . $missingField . '"', $exception->getMessage());
+            }
+        }
         foreach (
             [
-            ['id' => 0], ['queue' => ''], ['type' => ''], ['status' => 'nope'],
-            ['payload' => null], ['attempts' => -1], ['max_attempts' => 0],
-            ['available_at' => ['bad']], ['progress' => 'bad'],
+            ['id' => 0], ['id' => '1.5'], ['queue' => ''], ['queue' => str_repeat('q', 256)],
+            ['type' => ''], ['status' => 'nope'], ['payload' => null], ['attempts' => -1],
+            ['attempts' => '1.5'], ['attempts' => 4], ['max_attempts' => 0],
+            ['available_at' => ['bad']], ['started_at' => 1], ['progress' => '1.5'],
+            ['progress' => 101], ['result' => []], ['locked_by' => 'unexpected'],
             ] as $override
         ) {
             try {
@@ -242,6 +258,18 @@ final class V111CoverageTest extends TestCase
             $this->addToAssertionCount(1);
         }
         $prop->setValue($worker, false);
+    }
+
+    public function testWorkerTypedOptionsFactoryPreservesPublicConstructionPath(): void
+    {
+        $worker = Worker::withOptions(
+            new InMemoryJobStorage(),
+            new QueueManager(new InMemoryQueueDriver()),
+            new JobRegistry(),
+            new WorkerOptions(lockingEnabled: false)
+        );
+
+        self::assertNotSame('', $worker->getWorkerId());
     }
 
     public function testScheduledPreflightThrowsBeforeMutation(): void

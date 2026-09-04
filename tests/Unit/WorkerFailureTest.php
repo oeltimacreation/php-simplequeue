@@ -20,16 +20,24 @@ final class WorkerFailureTest extends WorkerTestCase
         $this->storage->expects($this->once())
             ->method('markFailed')
             ->with(
-                $this->callback(fn($claim) => $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 200),
-                $this->isString(),
-                $this->anything()
+                self::callback(fn($claim) => $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 200),
+                self::isString(),
+                self::anything()
             )
             ->willReturn(true);
 
         $driver->expects($this->once())->method('ack')->with('default', 200);
         $this->storage->expects($this->never())->method('scheduleRetry');
 
-        $this->assertTrue($this->createWorkerWithDriver($driver)->processOne());
+        $events = [];
+        $worker = $this->createWorkerWithDriver($driver, [
+            'event_listener' => static function (string $name) use (&$events): void {
+                $events[] = $name;
+            },
+        ]);
+
+        self::assertTrue($worker->processOne());
+        self::assertSame(['claimed', 'failed'], $events);
     }
 
     public function testHandleJobFailureCatchesStorageErrors(): void

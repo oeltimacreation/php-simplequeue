@@ -30,7 +30,9 @@ final class V14ConsumerSmokeTest extends TestCase
             'lock_file' => null,
         ]);
 
-        self::assertSame($jobId, $dispatcher->getStatus($jobId)->id);
+        $dispatched = $dispatcher->getStatus($jobId);
+        self::assertNotNull($dispatched);
+        self::assertSame($jobId, $dispatched->id);
         self::assertSame(Worker::EXIT_SUCCESS, $worker->run());
         self::assertSame('completed', $dispatcher->getStatus($jobId)?->status->value);
         self::assertSame($manager->driver(), $dispatcher->getQueueManager()->driver());

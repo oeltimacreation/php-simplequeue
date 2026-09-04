@@ -98,7 +98,7 @@ final class JobMiddlewareContractTest extends TestCase
             return [$storage, new DatabaseQueueDriver($storage, 50)];
         }
 
-        return [new InMemoryJobStorage(), RedisFixture::driver($this, 'middleware-contract')];
+        return [new InMemoryJobStorage(), RedisFixture::driver('middleware-contract')];
     }
 }
 

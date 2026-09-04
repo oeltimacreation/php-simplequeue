@@ -5,20 +5,18 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Tests\Unit;
 
 use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
+use Oeltima\SimpleQueue\Tests\Support\FrozenClock;
 use PHPUnit\Framework\TestCase;
 
 class InMemoryQueueDriverTest extends TestCase
 {
     private InMemoryQueueDriver $driver;
+    private FrozenClock $clock;
 
     protected function setUp(): void
     {
-        $this->driver = new InMemoryQueueDriver();
-    }
-
-    public function testIsAvailableReturnsTrue(): void
-    {
-        $this->assertTrue($this->driver->isAvailable());
+        $this->clock = new FrozenClock();
+        $this->driver = new InMemoryQueueDriver($this->clock);
     }
 
     public function testEnqueueAddsJobToPending(): void
@@ -29,10 +27,10 @@ class InMemoryQueueDriverTest extends TestCase
 
         $pending = $this->driver->getPending('default');
 
-        $this->assertCount(3, $pending);
-        $this->assertContains(1, $pending);
-        $this->assertContains(2, $pending);
-        $this->assertContains(3, $pending);
+        self::assertCount(3, $pending);
+        self::assertContains(1, $pending);
+        self::assertContains(2, $pending);
+        self::assertContains(3, $pending);
     }
 
     public function testQueueViewsAndCountsShareMembershipState(): void
@@ -56,7 +54,7 @@ class InMemoryQueueDriverTest extends TestCase
         $this->driver->enqueue('default', 1);
         $this->driver->enqueueBatch('default', [2, 3, 4]);
 
-        $this->assertSame([1, 2, 3, 4], [
+        self::assertSame([1, 2, 3, 4], [
             $this->driver->dequeue('default', 0),
             $this->driver->dequeue('default', 0),
             $this->driver->dequeue('default', 0),
@@ -72,15 +70,15 @@ class InMemoryQueueDriverTest extends TestCase
         $jobId = $this->driver->dequeue('default', 0);
 
         // Should return first job (FIFO)
-        $this->assertEquals(1, $jobId);
+        self::assertEquals(1, $jobId);
 
         // Should be in processing now
         $processing = $this->driver->getProcessing('default');
-        $this->assertContains(1, $processing);
+        self::assertContains(1, $processing);
 
         // Should not be in pending anymore
         $pending = $this->driver->getPending('default');
-        $this->assertNotContains(1, $pending);
+        self::assertNotContains(1, $pending);
     }
 
     public function testRemoveDeletesAllNotificationStatesIdempotently(): void
@@ -93,32 +91,28 @@ class InMemoryQueueDriverTest extends TestCase
         $this->driver->remove('default', 7);
         $this->driver->remove('default', 7);
 
-        $this->assertNotContains(7, $this->driver->getPending('default'));
-        $this->assertNotContains(7, $this->driver->getProcessing('default'));
-        $this->assertArrayNotHasKey(7, $this->driver->getDelayed('default'));
+        self::assertNotContains(7, $this->driver->getPending('default'));
+        self::assertNotContains(7, $this->driver->getProcessing('default'));
+        self::assertArrayNotHasKey(7, $this->driver->getDelayed('default'));
     }
 
     public function testHeartbeatProcessingRefreshesVisibilityTimestamp(): void
     {
         $this->driver->enqueue('default', 5);
         $this->driver->dequeue('default', 0);
-        $reflection = new \ReflectionClass($this->driver);
-        $property = $reflection->getProperty('processingStartedAt');
-        $timestamps = $property->getValue($this->driver);
-        $timestamps['default'][5] = 1;
-        $property->setValue($this->driver, $timestamps);
-
+        $this->clock->advance(500);
         $this->driver->heartbeatProcessing('default', 5);
+        $this->clock->advance(200);
 
-        $timestamps = $property->getValue($this->driver);
-        $this->assertGreaterThan(1, $timestamps['default'][5]);
+        self::assertSame(0, $this->driver->recoverStaleProcessing('default', 600));
+        self::assertSame([5], $this->driver->getProcessing('default'));
     }
 
     public function testDequeueReturnsNullWhenEmpty(): void
     {
         $jobId = $this->driver->dequeue('default', 0);
 
-        $this->assertNull($jobId);
+        self::assertNull($jobId);
     }
 
     public function testAckRemovesFromProcessing(): void
@@ -129,7 +123,7 @@ class InMemoryQueueDriverTest extends TestCase
         $this->driver->ack('default', 1);
 
         $processing = $this->driver->getProcessing('default');
-        $this->assertNotContains(1, $processing);
+        self::assertNotContains(1, $processing);
     }
 
     public function testNackMovesBackToPending(): void
@@ -141,11 +135,11 @@ class InMemoryQueueDriverTest extends TestCase
 
         // Should not be in processing
         $processing = $this->driver->getProcessing('default');
-        $this->assertNotContains(1, $processing);
+        self::assertNotContains(1, $processing);
 
         // Should be back in pending
         $pending = $this->driver->getPending('default');
-        $this->assertContains(1, $pending);
+        self::assertContains(1, $pending);
     }
 
     public function testClearRemovesAllQueues(): void
@@ -156,9 +150,9 @@ class InMemoryQueueDriverTest extends TestCase
 
         $this->driver->clear();
 
-        $this->assertEmpty($this->driver->getPending('queue1'));
-        $this->assertEmpty($this->driver->getPending('queue2'));
-        $this->assertEmpty($this->driver->getProcessing('queue1'));
+        self::assertEmpty($this->driver->getPending('queue1'));
+        self::assertEmpty($this->driver->getPending('queue2'));
+        self::assertEmpty($this->driver->getProcessing('queue1'));
     }
 
     public function testQueuesAreIsolated(): void
@@ -169,11 +163,11 @@ class InMemoryQueueDriverTest extends TestCase
         $pending1 = $this->driver->getPending('queue1');
         $pending2 = $this->driver->getPending('queue2');
 
-        $this->assertContains(1, $pending1);
-        $this->assertNotContains(2, $pending1);
+        self::assertContains(1, $pending1);
+        self::assertNotContains(2, $pending1);
 
-        $this->assertContains(2, $pending2);
-        $this->assertNotContains(1, $pending2);
+        self::assertContains(2, $pending2);
+        self::assertNotContains(1, $pending2);
     }
 
     public function testNackWithDelayAddsToDelayed(): void
@@ -184,10 +178,10 @@ class InMemoryQueueDriverTest extends TestCase
         $this->driver->nack('default', 1, 60);
 
         $pending = $this->driver->getPending('default');
-        $this->assertNotContains(1, $pending);
+        self::assertNotContains(1, $pending);
 
         $delayed = $this->driver->getDelayed('default');
-        $this->assertArrayHasKey(1, $delayed);
+        self::assertArrayHasKey(1, $delayed);
     }
 
     public function testNackWithoutDelayReenqueuesImmediately(): void
@@ -198,10 +192,10 @@ class InMemoryQueueDriverTest extends TestCase
         $this->driver->nack('default', 1, 0);
 
         $pending = $this->driver->getPending('default');
-        $this->assertContains(1, $pending);
+        self::assertContains(1, $pending);
 
         $delayed = $this->driver->getDelayed('default');
-        $this->assertEmpty($delayed);
+        self::assertEmpty($delayed);
     }
 
     public function testEnqueueDelayedBatchAddsAllDelayedNotifications(): void
@@ -209,29 +203,22 @@ class InMemoryQueueDriverTest extends TestCase
         $this->driver->enqueueDelayedBatch('default', [1, 2, 3], 1_700_000_100);
 
         $delayed = $this->driver->getDelayed('default');
-        $this->assertSame(1_700_000_100, $delayed[1]);
-        $this->assertSame(1_700_000_100, $delayed[2]);
-        $this->assertSame(1_700_000_100, $delayed[3]);
-        $this->assertSame(0, $this->driver->getPendingCount('default'));
+        self::assertSame(1_700_000_100, $delayed[1]);
+        self::assertSame(1_700_000_100, $delayed[2]);
+        self::assertSame(1_700_000_100, $delayed[3]);
+        self::assertSame(0, $this->driver->getPendingCount('default'));
     }
 
     public function testPromoteDelayedJobsMovesToPending(): void
     {
-        $this->driver->enqueue('default', 1);
-        $this->driver->dequeue('default', 0);
-        $this->driver->nack('default', 1, 60);
-
-        $ref = new \ReflectionClass($this->driver);
-        $prop = $ref->getProperty('delayed');
-        $delayed = $prop->getValue($this->driver);
-        $delayed['default'][1] = time() - 10;
-        $prop->setValue($this->driver, $delayed);
+        $this->driver->enqueueDelayed('default', 1, $this->clock->timestamp() + 60);
+        $this->clock->advance(60);
 
         $count = $this->driver->promoteDelayedJobs('default');
 
-        $this->assertEquals(1, $count);
-        $this->assertContains(1, $this->driver->getPending('default'));
-        $this->assertEmpty($this->driver->getDelayed('default'));
+        self::assertEquals(1, $count);
+        self::assertContains(1, $this->driver->getPending('default'));
+        self::assertEmpty($this->driver->getDelayed('default'));
     }
 
     public function testPromoteDelayedJobsIgnoresNotYetDue(): void
@@ -242,27 +229,22 @@ class InMemoryQueueDriverTest extends TestCase
 
         $count = $this->driver->promoteDelayedJobs('default');
 
-        $this->assertEquals(0, $count);
-        $this->assertNotContains(1, $this->driver->getPending('default'));
-        $this->assertArrayHasKey(1, $this->driver->getDelayed('default'));
+        self::assertEquals(0, $count);
+        self::assertNotContains(1, $this->driver->getPending('default'));
+        self::assertArrayHasKey(1, $this->driver->getDelayed('default'));
     }
 
     public function testRecoverStaleProcessingMovesBackToPending(): void
     {
         $this->driver->enqueue('default', 1);
         $this->driver->dequeue('default', 0);
-
-        $ref = new \ReflectionClass($this->driver);
-        $prop = $ref->getProperty('processingStartedAt');
-        $startedAt = $prop->getValue($this->driver);
-        $startedAt['default'][1] = time() - 700;
-        $prop->setValue($this->driver, $startedAt);
+        $this->clock->advance(700);
 
         $count = $this->driver->recoverStaleProcessing('default', 600);
 
-        $this->assertEquals(1, $count);
-        $this->assertContains(1, $this->driver->getPending('default'));
-        $this->assertEmpty($this->driver->getProcessing('default'));
+        self::assertEquals(1, $count);
+        self::assertContains(1, $this->driver->getPending('default'));
+        self::assertEmpty($this->driver->getProcessing('default'));
     }
 
     public function testRecoverStaleProcessingIgnoresRecentJobs(): void
@@ -272,8 +254,8 @@ class InMemoryQueueDriverTest extends TestCase
 
         $count = $this->driver->recoverStaleProcessing('default', 600);
 
-        $this->assertEquals(0, $count);
-        $this->assertContains(1, $this->driver->getProcessing('default'));
+        self::assertEquals(0, $count);
+        self::assertContains(1, $this->driver->getProcessing('default'));
     }
 
     public function testClearResetsDelayedAndProcessingStartedAt(): void
@@ -284,40 +266,23 @@ class InMemoryQueueDriverTest extends TestCase
 
         $this->driver->clear();
 
-        $this->assertEmpty($this->driver->getPending('default'));
-        $this->assertEmpty($this->driver->getProcessing('default'));
-        $this->assertEmpty($this->driver->getDelayed('default'));
+        self::assertEmpty($this->driver->getPending('default'));
+        self::assertEmpty($this->driver->getProcessing('default'));
+        self::assertEmpty($this->driver->getDelayed('default'));
     }
 
     public function testPromoteDelayedJobsRespectsLimit(): void
     {
-        // Add 3 delayed jobs
-        $this->driver->enqueue('default', 1);
-        $this->driver->dequeue('default', 0);
-        $this->driver->nack('default', 1, 60);
-
-        $this->driver->enqueue('default', 2);
-        $this->driver->dequeue('default', 0);
-        $this->driver->nack('default', 2, 60);
-
-        $this->driver->enqueue('default', 3);
-        $this->driver->dequeue('default', 0);
-        $this->driver->nack('default', 3, 60);
-
-        $ref = new \ReflectionClass($this->driver);
-        $prop = $ref->getProperty('delayed');
-        $delayed = $prop->getValue($this->driver);
-        $delayed['default'][1] = time() - 10;
-        $delayed['default'][2] = time() - 10;
-        $delayed['default'][3] = time() - 10;
-        $prop->setValue($this->driver, $delayed);
+        $availableAt = $this->clock->timestamp() + 60;
+        $this->driver->enqueueDelayedBatch('default', [1, 2, 3], $availableAt);
+        $this->clock->advance(60);
 
         // Limit to 2
         $count = $this->driver->promoteDelayedJobs('default', 2);
 
-        $this->assertEquals(2, $count);
-        $this->assertCount(2, $this->driver->getPending('default'));
-        $this->assertCount(1, $this->driver->getDelayed('default'));
+        self::assertEquals(2, $count);
+        self::assertCount(2, $this->driver->getPending('default'));
+        self::assertCount(1, $this->driver->getDelayed('default'));
     }
 
     public function testRecoverStaleProcessingRespectsLimit(): void
@@ -329,20 +294,75 @@ class InMemoryQueueDriverTest extends TestCase
         $this->driver->dequeue('default', 0);
         $this->driver->enqueue('default', 3);
         $this->driver->dequeue('default', 0);
-
-        $ref = new \ReflectionClass($this->driver);
-        $prop = $ref->getProperty('processingStartedAt');
-        $startedAt = $prop->getValue($this->driver);
-        $startedAt['default'][1] = time() - 700;
-        $startedAt['default'][2] = time() - 700;
-        $startedAt['default'][3] = time() - 700;
-        $prop->setValue($this->driver, $startedAt);
+        $this->clock->advance(700);
 
         // Limit to 2
         $count = $this->driver->recoverStaleProcessing('default', 600, 2);
 
-        $this->assertEquals(2, $count);
-        $this->assertCount(2, $this->driver->getPending('default'));
-        $this->assertCount(1, $this->driver->getProcessing('default'));
+        self::assertEquals(2, $count);
+        self::assertCount(2, $this->driver->getPending('default'));
+        self::assertCount(1, $this->driver->getProcessing('default'));
+    }
+
+    public function testAcknowledgingOneDuplicatePreservesRecoveryForTheOther(): void
+    {
+        $this->driver->enqueueBatch('default', [7, 7]);
+        self::assertSame(7, $this->driver->dequeue('default', 0));
+        self::assertSame(7, $this->driver->dequeue('default', 0));
+        $this->clock->advance(601);
+
+        $this->driver->ack('default', 7);
+
+        self::assertSame([7], $this->driver->getProcessing('default'));
+        self::assertSame(1, $this->driver->recoverStaleProcessing('default', 600));
+        self::assertSame([7], $this->driver->getPending('default'));
+    }
+
+    public function testRecoveringOneDuplicateRebasesTheRemainingRecoveryTimestamp(): void
+    {
+        $this->driver->enqueueBatch('default', [8, 8]);
+        $this->driver->dequeue('default', 0);
+        $this->driver->dequeue('default', 0);
+        $this->clock->advance(601);
+
+        self::assertSame(1, $this->driver->recoverStaleProcessing('default', 600));
+        self::assertSame([8], $this->driver->getProcessing('default'));
+        self::assertSame(0, $this->driver->recoverStaleProcessing('default', 600));
+    }
+
+    public function testReconciliationValidatesWholePageBeforeMutation(): void
+    {
+        try {
+            $this->driver->reconcileNotifications(
+                'default',
+                [1 => $this->clock->timestamp(), 2 => 0],
+                $this->clock->timestamp(),
+                250
+            );
+            self::fail('Invalid reconciliation page must fail');
+        } catch (\InvalidArgumentException) {
+            $this->addToAssertionCount(1);
+        }
+
+        self::assertSame([], $this->driver->getPending('default'));
+        self::assertSame([], $this->driver->getDelayed('default'));
+    }
+
+    public function testMembershipAndReconciliationRequirePositiveIdsAndCurrentTime(): void
+    {
+        foreach (
+            [
+                fn () => $this->driver->hasPendingJob('default', 0, 1),
+                fn () => $this->driver->hasDelayedJob('default', 0),
+                fn () => $this->driver->reconcileNotifications('default', [], 0, 1),
+            ] as $operation
+        ) {
+            try {
+                $operation();
+                self::fail('Invalid queue boundary must fail');
+            } catch (\InvalidArgumentException) {
+                $this->addToAssertionCount(1);
+            }
+        }
     }
 }

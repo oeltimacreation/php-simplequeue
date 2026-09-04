@@ -91,6 +91,10 @@ final class WorkerReliabilitySoakTest extends TestCase
 
 final class ReliabilitySoakHandler implements JobHandlerInterface
 {
+    /**
+     * @param array<string, mixed> $payload
+     * @return array{job_id: int, sequence: mixed}
+     */
     public function handle(int $jobId, array $payload, ?callable $progressCallback = null): array
     {
         return ['job_id' => $jobId, 'sequence' => $payload['sequence']];

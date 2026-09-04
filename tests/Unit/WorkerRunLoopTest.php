@@ -5,12 +5,16 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Tests\Unit;
 
 use Oeltima\SimpleQueue\Contract\JobHandlerInterface;
+use Oeltima\SimpleQueue\Contract\JobStorageInterface;
+use Oeltima\SimpleQueue\Contract\PendingNotification;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Contract\SupportsBoundedQueueMembership;
 use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
+use Oeltima\SimpleQueue\Contract\SupportsPendingNotificationCursor;
 use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
 use Oeltima\SimpleQueue\QueueManager;
 use Oeltima\SimpleQueue\Tests\Support\ClaimedJobFactory;
+use Oeltima\SimpleQueue\Tests\Support\FrozenClock;
 use Oeltima\SimpleQueue\Tests\Support\JobDataFactory;
 use Oeltima\SimpleQueue\Tests\Support\WorkerTestCase;
 use Oeltima\SimpleQueue\Worker;
@@ -20,6 +24,10 @@ interface WorkerRunLoopDelayedQueueDriver extends QueueDriverInterface, Supports
 }
 
 interface WorkerRunLoopReconciliationQueueDriver extends QueueDriverInterface, SupportsBoundedQueueMembership
+{
+}
+
+interface WorkerRunLoopReconciliationStorage extends JobStorageInterface, SupportsPendingNotificationCursor
 {
 }
 
@@ -59,7 +67,7 @@ final class WorkerRunLoopTest extends WorkerTestCase
         $worker = $this->createWorkerWithDriver($this->promoteLimitDriver(100, $order));
         $worker->processOne();
 
-        $this->assertSame(['promote', 'dequeue'], $order, 'promote should run before dequeue with the default limit');
+        self::assertSame(['promote', 'dequeue'], $order, 'promote should run before dequeue with the default limit');
     }
 
     public function testWorkerPassesConfiguredPromoteLimitThroughProcessOne(): void
@@ -117,21 +125,20 @@ final class WorkerRunLoopTest extends WorkerTestCase
             }
         };
 
-        // Test that recoverStaleProcessing can be called
-        $this->assertTrue(method_exists($driverWithRecover, 'recoverStaleProcessing'));
-
         $result = $driverWithRecover->recoverStaleProcessing('default', 300);
 
-        $this->assertEquals(2, $result);
-        $this->assertTrue($driverWithRecover->recoverCalled);
-        $this->assertEquals(300, $driverWithRecover->recoverTtl);
-        $this->assertEquals('default', $driverWithRecover->recoverQueue);
+        self::assertEquals(2, $result);
+        self::assertTrue($driverWithRecover->recoverCalled);
+        self::assertEquals(300, $driverWithRecover->recoverTtl);
+        self::assertEquals('default', $driverWithRecover->recoverQueue);
     }
 
     public function testRunReturnsExitLockUnavailableOnLockFailure(): void
     {
         $lockFile = tempnam(sys_get_temp_dir(), 'sq_lock_');
+        self::assertIsString($lockFile);
         $fp = fopen($lockFile, 'c');
+        self::assertIsResource($fp);
         flock($fp, LOCK_EX);
 
         $driver = $this->createMock(QueueDriverInterface::class);
@@ -140,7 +147,7 @@ final class WorkerRunLoopTest extends WorkerTestCase
         ]);
 
         $exitCode = $worker->run();
-        $this->assertEquals(Worker::EXIT_LOCK_UNAVAILABLE, $exitCode);
+        self::assertEquals(Worker::EXIT_LOCK_UNAVAILABLE, $exitCode);
 
         fclose($fp);
         unlink($lockFile);
@@ -159,7 +166,7 @@ final class WorkerRunLoopTest extends WorkerTestCase
             });
 
         $exitCode = $worker->run();
-        $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
+        self::assertEquals(Worker::EXIT_SUCCESS, $exitCode);
     }
 
     public function testRunReturnsErrorWhenInitialRecoveryFails(): void
@@ -170,13 +177,167 @@ final class WorkerRunLoopTest extends WorkerTestCase
             ->willThrowException(new \RuntimeException('Recovery unavailable'));
         $this->logger->expects($this->once())
             ->method('critical')
-            ->with('Worker encountered a fatal error', $this->callback(
+            ->with('Worker encountered a fatal error', self::callback(
                 static fn(array $context): bool => $context === ['error' => 'Recovery unavailable']
             ));
 
         $worker = $this->createWorkerWithDriver($driver);
 
-        $this->assertSame(Worker::EXIT_ERROR, $worker->run());
+        self::assertSame(Worker::EXIT_ERROR, $worker->run());
+    }
+
+    public function testRunReturnsErrorWhenInitialPromotionFails(): void
+    {
+        $driver = $this->createMock(WorkerRunLoopDelayedQueueDriver::class);
+        $driver->expects($this->once())
+            ->method('promoteDelayedJobs')
+            ->willThrowException(new \RuntimeException('Promotion unavailable'));
+        $driver->expects($this->never())->method('dequeue');
+
+        $worker = $this->createWorkerWithDriver($driver);
+
+        self::assertSame(Worker::EXIT_ERROR, $worker->run());
+    }
+
+    public function testRunReturnsErrorWhenInitialReconciliationFails(): void
+    {
+        $clock = new FrozenClock();
+        $storage = $this->createMock(WorkerRunLoopReconciliationStorage::class);
+        $storage->method('recoverStaleJobs')->willReturn(0);
+        $storage->method('scanPendingNotifications')->willReturn([
+            new PendingNotification(1, $clock->now()),
+        ]);
+        $driver = $this->createMock(WorkerRunLoopReconciliationQueueDriver::class);
+        $driver->expects($this->once())
+            ->method('hasPendingJob')
+            ->willThrowException(new \RuntimeException('Reconciliation unavailable'));
+        $driver->expects($this->never())->method('dequeue');
+        $worker = new Worker(
+            $storage,
+            new QueueManager($driver),
+            $this->registry,
+            $this->logger,
+            'default',
+            ['lock_file' => null, 'clock' => $clock]
+        );
+
+        self::assertSame(Worker::EXIT_ERROR, $worker->run());
+    }
+
+    public function testPeriodicMaintenanceFailureUsesBackoffAndThenRecovers(): void
+    {
+        $clock = new FrozenClock();
+        $driver = $this->createMock(WorkerRunLoopDelayedQueueDriver::class);
+        $promotions = 0;
+        $driver->expects($this->exactly(3))
+            ->method('promoteDelayedJobs')
+            ->willReturnCallback(static function () use (&$promotions): int {
+                $promotions++;
+                if ($promotions === 2) {
+                    throw new \RuntimeException('Periodic promotion unavailable');
+                }
+                return 0;
+            });
+
+        $worker = $this->createWorkerWithDriver($driver, [
+            'clock' => $clock,
+            'promote_interval' => 5.0,
+            'recovery_interval' => 1000.0,
+            'retry_base_delay' => 0,
+            'retry_max_delay' => 0,
+        ]);
+        $dequeues = 0;
+        $driver->expects($this->exactly(2))
+            ->method('dequeue')
+            ->willReturnCallback(function () use (&$dequeues, $clock, $worker): ?int {
+                $dequeues++;
+                if ($dequeues === 1) {
+                    $clock->advance(6);
+                } else {
+                    $worker->stop();
+                }
+                return null;
+            });
+
+        self::assertSame(Worker::EXIT_SUCCESS, $worker->run());
+        self::assertSame(3, $promotions);
+    }
+
+    public function testShutdownAfterClaimReleasesJobBeforeStopping(): void
+    {
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $job = JobDataFactory::running(['id' => 91, 'attempts' => 1, 'errorMessage' => 'previous failure']);
+        $worker = $this->createWorkerWithDriver($driver);
+        $driver->expects($this->once())
+            ->method('dequeue')
+            ->willReturnCallback(function () use ($worker): int {
+                $worker->stop();
+                return 91;
+            });
+        $this->storage->expects($this->once())
+            ->method('claimById')
+            ->willReturnCallback(
+                static fn(int $jobId, string $workerId) => ClaimedJobFactory::create($job, $workerId, 'lease')
+            );
+        $this->storage->expects($this->once())
+            ->method('scheduleRetry')
+            ->with(self::anything(), 1, 0, 'previous failure')
+            ->willReturn(true);
+        $driver->expects($this->once())->method('nack')->with('default', 91, 0);
+
+        self::assertSame(Worker::EXIT_SUCCESS, $worker->run());
+    }
+
+    public function testShutdownReleaseOwnershipLossEmitsEventWithoutNack(): void
+    {
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $job = JobDataFactory::running(['id' => 92, 'attempts' => 0]);
+        $events = [];
+        $worker = $this->createWorkerWithDriver($driver, [
+            'event_listener' => static function (string $name, array $payload) use (&$events): void {
+                $events[$name] = $payload;
+            },
+        ]);
+        $driver->expects($this->once())
+            ->method('dequeue')
+            ->willReturnCallback(function () use ($worker): int {
+                $worker->stop();
+                return 92;
+            });
+        $this->storage->expects($this->once())
+            ->method('claimById')
+            ->willReturnCallback(
+                static fn(int $jobId, string $workerId) => ClaimedJobFactory::create($job, $workerId, 'lease')
+            );
+        $this->storage->expects($this->once())->method('scheduleRetry')->willReturn(false);
+        $driver->expects($this->never())->method('nack');
+
+        self::assertSame(Worker::EXIT_SUCCESS, $worker->run());
+        self::assertSame('shutdown_release', $events['lost_ownership']['context']);
+    }
+
+    public function testShutdownReleaseNotifierFailureReturnsError(): void
+    {
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $job = JobDataFactory::running(['id' => 93, 'attempts' => 0]);
+        $worker = $this->createWorkerWithDriver($driver);
+        $driver->expects($this->once())
+            ->method('dequeue')
+            ->willReturnCallback(function () use ($worker): int {
+                $worker->stop();
+                return 93;
+            });
+        $this->storage->expects($this->once())
+            ->method('claimById')
+            ->willReturnCallback(
+                static fn(int $jobId, string $workerId) => ClaimedJobFactory::create($job, $workerId, 'lease')
+            );
+        $this->storage->expects($this->once())->method('scheduleRetry')->willReturn(true);
+        $driver->expects($this->once())
+            ->method('nack')
+            ->willThrowException(new \RuntimeException('Notifier unavailable'));
+
+        self::assertSame(Worker::EXIT_ERROR, $worker->run());
     }
 
     public function testRunRetriesWithBackoffOnInfrastructureError(): void
@@ -193,7 +354,9 @@ final class WorkerRunLoopTest extends WorkerTestCase
             ->willReturnCallback(function () use (&$calls, $worker) {
                 $calls++;
                 if ($calls === 1) {
-                    throw new \PDOException('Connection lost');
+                    // Handler exceptions are consumed before this boundary, so
+                    // every exception escaping an iteration is infrastructure.
+                    throw new \RuntimeException('Connection adapter failed');
                 }
                 $worker->stop();
                 return null;
@@ -203,11 +366,11 @@ final class WorkerRunLoopTest extends WorkerTestCase
             ->method('error')
             ->with(
                 'Infrastructure error encountered. Backing off.',
-                $this->anything()
+                self::anything()
             );
 
         $exitCode = $worker->run();
-        $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
+        self::assertEquals(Worker::EXIT_SUCCESS, $exitCode);
     }
 
     public function testWorkerExitsAfterMaxJobs(): void
@@ -240,7 +403,7 @@ final class WorkerRunLoopTest extends WorkerTestCase
         ]);
 
         $exitCode = $worker->run();
-        $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
+        self::assertEquals(Worker::EXIT_SUCCESS, $exitCode);
     }
 
     public function testWorkerExitsAfterMaxTime(): void
@@ -263,7 +426,7 @@ final class WorkerRunLoopTest extends WorkerTestCase
         ]);
 
         $exitCode = $worker->run();
-        $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
+        self::assertEquals(Worker::EXIT_SUCCESS, $exitCode);
     }
 
     public function testWorkerExitsOnMemoryLimit(): void
@@ -275,7 +438,7 @@ final class WorkerRunLoopTest extends WorkerTestCase
         ]);
 
         $exitCode = $worker->run();
-        $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
+        self::assertEquals(Worker::EXIT_SUCCESS, $exitCode);
     }
 
     public function testWorkerStopsWhenEmpty(): void
@@ -290,7 +453,7 @@ final class WorkerRunLoopTest extends WorkerTestCase
         ]);
 
         $exitCode = $worker->run();
-        $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
+        self::assertEquals(Worker::EXIT_SUCCESS, $exitCode);
     }
 
     public function testThrottledMaintenanceIsCalled(): void
@@ -339,24 +502,24 @@ final class WorkerRunLoopTest extends WorkerTestCase
             });
 
         $exitCode = $worker->run();
-        $this->assertEquals(Worker::EXIT_SUCCESS, $exitCode);
+        self::assertEquals(Worker::EXIT_SUCCESS, $exitCode);
     }
 
     public function testReconcileDbAndRedis(): void
     {
         $driver = $this->createMock(WorkerRunLoopReconciliationQueueDriver::class);
 
-        // 1. Storage has a pending job and a delayed job
-        $storage = new \Oeltima\SimpleQueue\Storage\InMemoryJobStorage();
-        $jobIdPending = $storage->createJob('test.job', [], 'default', 3);
-        $jobIdDelayed = $storage->createJob('test.job', [], 'default', 3);
-
-        // Make the second job delayed
-        $ref = new \ReflectionClass($storage);
-        $prop = $ref->getProperty('jobs');
-        $jobs = $prop->getValue($storage);
-        $jobs[$jobIdDelayed]['available_at'] = date('Y-m-d H:i:s', time() + 3600);
-        $prop->setValue($storage, $jobs);
+        $clock = new FrozenClock();
+        $storage = new \Oeltima\SimpleQueue\Storage\InMemoryJobStorage($clock);
+        [$jobIdPending, $jobIdDelayed] = $storage->createJobs([
+            ['type' => 'test.job', 'payload' => [], 'queue' => 'default'],
+            [
+                'type' => 'test.job',
+                'payload' => [],
+                'queue' => 'default',
+                'availableAt' => $clock->timestamp() + 3600,
+            ],
+        ]);
 
         // 2. Redis currently has NOTHING (missing both jobs)
         $driver->expects($this->any())
@@ -378,7 +541,8 @@ final class WorkerRunLoopTest extends WorkerTestCase
 
         $driver->expects($this->once())
             ->method('nack')
-            ->with('default', $jobIdDelayed, $this->greaterThan(0));
+            ->with('default', $jobIdDelayed, self::greaterThan(0));
+        $driver->expects($this->once())->method('dequeue')->with('default', 0)->willReturn(null);
 
         $queueManager = new QueueManager($driver);
         $worker = new Worker(
@@ -390,11 +554,12 @@ final class WorkerRunLoopTest extends WorkerTestCase
             [
                 'lock_file' => null,
                 'poll_timeout' => 0,
+                'clock' => $clock,
+                'stop_when_empty' => true,
             ]
         );
 
-        $method = new \ReflectionMethod($worker, 'reconcileDbAndRedis');
-        $method->invoke($worker);
+        self::assertSame(Worker::EXIT_SUCCESS, $worker->run());
     }
 
     public function testDefaultLockFileIsQueueScoped(): void
@@ -415,9 +580,9 @@ final class WorkerRunLoopTest extends WorkerTestCase
 
         // Safe defaults isolate by UID + working directory + exact queue name hash.
         self::assertIsString($lockFile);
-        $this->assertStringNotContainsString('customqueue-name', $lockFile);
+        self::assertStringNotContainsString('customqueue-name', $lockFile);
         $other = new Worker($this->storage, $queueManager, $this->registry, $this->logger, 'other-queue');
         $otherLock = $ref->getProperty('lockFile')->getValue($other);
-        $this->assertNotSame($lockFile, $otherLock);
+        self::assertNotSame($lockFile, $otherLock);
     }
 }

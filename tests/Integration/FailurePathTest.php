@@ -120,7 +120,9 @@ final class FailurePathTest extends TestCase
         } catch (\RuntimeException $exception) {
             self::assertSame('Injected ack failure', $exception->getMessage());
         }
-        self::assertSame(JobStatus::Completed, $storage->find($jobId)->status);
+        $completedJob = $storage->find($jobId);
+        self::assertNotNull($completedJob);
+        self::assertSame(JobStatus::Completed, $completedJob->status);
         self::assertSame([$jobId], $inner->getProcessing('default'));
 
         $clock->advance(61);
@@ -201,14 +203,22 @@ final class FailurePathTest extends TestCase
         $registry->register('test.serialize', $handler::class);
         $dispatcher = new JobDispatcher($storage, new QueueManager($driver));
         $jobId = $dispatcher->dispatch('test.serialize', []);
+        $events = [];
+        $worker = new Worker($storage, new QueueManager($driver), $registry, options: [
+            'lock_file' => null,
+            'event_listener' => static function (string $name) use (&$events): void {
+                $events[] = $name;
+            },
+        ]);
 
-        self::assertTrue($this->worker($storage, $driver, $registry)->processOne());
+        self::assertTrue($worker->processOne());
 
         $job = $storage->find($jobId);
         self::assertSame(JobStatus::Failed, $job?->status);
         self::assertSame('Unable to encode job result as JSON', $job->errorMessage);
         self::assertSame([], $driver->getProcessing('default'));
         self::assertSame([], $driver->getPending('default'));
+        self::assertSame(['claimed', 'failed'], $events);
     }
 
     public function testDuplicateDeliveryExecutesHandlerOnlyOnce(): void

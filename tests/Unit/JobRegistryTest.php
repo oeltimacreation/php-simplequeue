@@ -22,12 +22,12 @@ class JobRegistryTest extends TestCase
     {
         $this->registry->register('test.job', TestJobHandler::class);
 
-        $this->assertTrue($this->registry->has('test.job'));
+        self::assertTrue($this->registry->has('test.job'));
     }
 
     public function testHasReturnsFalseForUnregisteredType(): void
     {
-        $this->assertFalse($this->registry->has('unknown.job'));
+        self::assertFalse($this->registry->has('unknown.job'));
     }
 
     public function testGetReturnsHandlerInstance(): void
@@ -36,8 +36,7 @@ class JobRegistryTest extends TestCase
 
         $handler = $this->registry->get('test.job');
 
-        $this->assertInstanceOf(JobHandlerInterface::class, $handler);
-        $this->assertInstanceOf(TestJobHandler::class, $handler);
+        self::assertInstanceOf(TestJobHandler::class, $handler);
     }
 
     public function testGetThrowsExceptionForUnregisteredType(): void
@@ -53,7 +52,12 @@ class JobRegistryTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionMessage('must implement JobHandlerInterface');
 
-        $this->registry->register('invalid.job', \stdClass::class);
+        // Reflection bypasses the class-string PHPDoc to verify the public runtime guard.
+        (new \ReflectionMethod($this->registry, 'register'))->invoke(
+            $this->registry,
+            'invalid.job',
+            \stdClass::class
+        );
     }
 
     public function testGetRegisteredTypesReturnsAllTypes(): void
@@ -64,20 +68,20 @@ class JobRegistryTest extends TestCase
 
         $types = $this->registry->getRegisteredTypes();
 
-        $this->assertCount(3, $types);
-        $this->assertContains('job.one', $types);
-        $this->assertContains('job.two', $types);
-        $this->assertContains('job.three', $types);
+        self::assertCount(3, $types);
+        self::assertContains('job.one', $types);
+        self::assertContains('job.two', $types);
+        self::assertContains('job.three', $types);
     }
 
     public function testUnregisterRemovesHandler(): void
     {
         $this->registry->register('test.job', TestJobHandler::class);
-        $this->assertTrue($this->registry->has('test.job'));
+        self::assertTrue($this->registry->has('test.job'));
 
         $this->registry->unregister('test.job');
 
-        $this->assertFalse($this->registry->has('test.job'));
+        self::assertFalse($this->registry->has('test.job'));
     }
 
     public function testClearRemovesAllHandlers(): void
@@ -87,7 +91,7 @@ class JobRegistryTest extends TestCase
 
         $this->registry->clear();
 
-        $this->assertEmpty($this->registry->getRegisteredTypes());
+        self::assertEmpty($this->registry->getRegisteredTypes());
     }
 }
 

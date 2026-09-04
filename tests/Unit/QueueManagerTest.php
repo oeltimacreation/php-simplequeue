@@ -18,7 +18,11 @@ use PHPUnit\Framework\TestCase;
 
 class UnavailableRedisClient extends MockRedisClient
 {
-    public function __call($commandID, $arguments): void
+    /**
+     * @param string $commandID Command identifier
+     * @param array<array-key, mixed> $arguments Command arguments
+     */
+    public function __call(mixed $commandID, mixed $arguments): mixed
     {
         throw new \RuntimeException('Connection refused');
     }
@@ -34,7 +38,7 @@ class QueueManagerTest extends TestCase
 
         $manager = QueueManager::create('auto', $redis, $storage);
 
-        $this->assertInstanceOf(RedisQueueDriver::class, $manager->driver());
+        self::assertInstanceOf(RedisQueueDriver::class, $manager->driver());
     }
 
     public function testCreateAutoFallsBackToDbWhenRedisUnavailable(): void
@@ -44,7 +48,7 @@ class QueueManagerTest extends TestCase
 
         $manager = QueueManager::create('auto', $redis, $storage);
 
-        $this->assertInstanceOf(DatabaseQueueDriver::class, $manager->driver());
+        self::assertInstanceOf(DatabaseQueueDriver::class, $manager->driver());
     }
 
     public function testCreateRedisExplicitWhenAvailable(): void
@@ -54,7 +58,7 @@ class QueueManagerTest extends TestCase
 
         $manager = QueueManager::create('redis', $redis);
 
-        $this->assertInstanceOf(RedisQueueDriver::class, $manager->driver());
+        self::assertInstanceOf(RedisQueueDriver::class, $manager->driver());
     }
 
     public function testCreateRedisThrowsWhenUnavailable(): void
@@ -72,7 +76,7 @@ class QueueManagerTest extends TestCase
 
         $manager = QueueManager::create('db', storage: $storage);
 
-        $this->assertInstanceOf(DatabaseQueueDriver::class, $manager->driver());
+        self::assertInstanceOf(DatabaseQueueDriver::class, $manager->driver());
     }
 
     public function testCreateThrowsWhenNoDriverProvided(): void
@@ -89,10 +93,10 @@ class QueueManagerTest extends TestCase
         $manager = QueueManager::create('db', storage: $storage, pollIntervalMs: 500);
 
         $driver = $manager->driver();
-        $this->assertInstanceOf(DatabaseQueueDriver::class, $driver);
+        self::assertInstanceOf(DatabaseQueueDriver::class, $driver);
 
         $ref = new \ReflectionProperty(DatabaseQueueDriver::class, 'pollIntervalMs');
-        $this->assertEquals(500, $ref->getValue($driver));
+        self::assertEquals(500, $ref->getValue($driver));
     }
 
     public function testDatabaseFactoryMethodPassesPollInterval(): void
@@ -102,10 +106,26 @@ class QueueManagerTest extends TestCase
         $manager = QueueManager::database($storage, 500);
 
         $driver = $manager->driver();
-        $this->assertInstanceOf(DatabaseQueueDriver::class, $driver);
+        self::assertInstanceOf(DatabaseQueueDriver::class, $driver);
 
         $ref = new \ReflectionProperty(DatabaseQueueDriver::class, 'pollIntervalMs');
-        $this->assertEquals(500, $ref->getValue($driver));
+        self::assertEquals(500, $ref->getValue($driver));
+    }
+
+    public function testManagerAndBuiltInDriversReportAvailability(): void
+    {
+        self::assertTrue((new QueueManager(new InMemoryQueueDriver()))->isAvailable());
+        self::assertTrue(QueueManager::database(new InMemoryJobStorage())->isAvailable());
+    }
+
+    public function testRedisFactoryBuildsDriverWithoutAvailabilityProbe(): void
+    {
+        $redis = new MockRedisClient();
+
+        $manager = QueueManager::redis($redis, 'custom');
+
+        self::assertInstanceOf(RedisQueueDriver::class, $manager->driver());
+        self::assertSame([], $redis->calls);
     }
 
     public function testEnqueueDelayedDelegatesToDelayedSupportingDriver(): void
@@ -116,7 +136,7 @@ class QueueManagerTest extends TestCase
         $manager->enqueueDelayed(7, 'default', 1_700_000_100);
 
         $this->assertDelayedDelegation($driver, 1);
-        $this->assertSame(1_700_000_100, $driver->getDelayed('default')[7]);
+        self::assertSame(1_700_000_100, $driver->getDelayed('default')[7]);
     }
 
     #[DataProvider('invalidDelayedEnqueue')]
@@ -137,8 +157,8 @@ class QueueManagerTest extends TestCase
         $manager->enqueueDelayedBatch(new DelayedBatch([7, 8], 'default', 1_700_000_100));
 
         $this->assertDelayedDelegation($driver, 2);
-        $this->assertSame(1_700_000_100, $driver->getDelayed('default')[7]);
-        $this->assertSame(1_700_000_100, $driver->getDelayed('default')[8]);
+        self::assertSame(1_700_000_100, $driver->getDelayed('default')[7]);
+        self::assertSame(1_700_000_100, $driver->getDelayed('default')[8]);
     }
 
     /**
@@ -154,7 +174,7 @@ class QueueManagerTest extends TestCase
 
     private function assertDelayedDelegation(InMemoryQueueDriver $driver, int $expectedDelayedCount): void
     {
-        $this->assertSame(0, $driver->getPendingCount('default'));
-        $this->assertSame($expectedDelayedCount, $driver->getDelayedCount('default'));
+        self::assertSame(0, $driver->getPendingCount('default'));
+        self::assertSame($expectedDelayedCount, $driver->getDelayedCount('default'));
     }
 }

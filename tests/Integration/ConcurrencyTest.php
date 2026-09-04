@@ -58,29 +58,29 @@ final class ConcurrencyTest extends TestCase
 
             // Worker 1 claims job
             $claim1 = $storage->claimById($id, 'worker-1');
-            $this->assertNotNull($claim1, "$name: worker-1 should claim");
+            self::assertNotNull($claim1, "$name: worker-1 should claim");
 
             // Simulate worker 1 crashing/stale recovery running
             $clock->advance(600);
             $recovered = $storage->recoverStaleJobs(300); // recover jobs locked for more than 300s
-            $this->assertSame(1, $recovered, "$name: recover should find 1 job");
+            self::assertSame(1, $recovered, "$name: recover should find 1 job");
 
             // Worker 2 claims the now-pending job
             $claim2 = $storage->claimById($id, 'worker-2');
-            $this->assertNotNull($claim2, "$name: worker-2 should claim recovered job");
-            $this->assertNotEquals($claim1->leaseToken, $claim2->leaseToken, "$name: lease tokens must differ");
+            self::assertNotNull($claim2, "$name: worker-2 should claim recovered job");
+            self::assertNotEquals($claim1->leaseToken, $claim2->leaseToken, "$name: lease tokens must differ");
 
             // Worker 2 completes job successfully
-            $this->assertTrue($storage->markCompleted($claim2, ['res' => 2]), "$name: worker-2 should complete");
+            self::assertTrue($storage->markCompleted($claim2, ['res' => 2]), "$name: worker-2 should complete");
 
             // Zombie worker 1 tries to complete job -> should fail due to fencing/lost ownership
-            $this->assertFalse($storage->markCompleted($claim1, ['res' => 1]), "$name: zombie worker-1 complete must fail");
+            self::assertFalse($storage->markCompleted($claim1, ['res' => 1]), "$name: zombie worker-1 complete must fail");
 
             // Zombie worker 1 tries to update progress -> should fail
-            $this->assertFalse($storage->updateProgress($claim1, 50, 'Zombied'), "$name: zombie worker-1 update progress must fail");
+            self::assertFalse($storage->updateProgress($claim1, 50, 'Zombied'), "$name: zombie worker-1 update progress must fail");
 
             // Zombie worker 1 tries to heartbeat -> should fail
-            $this->assertFalse($storage->heartbeat($claim1), "$name: zombie worker-1 heartbeat must fail");
+            self::assertFalse($storage->heartbeat($claim1), "$name: zombie worker-1 heartbeat must fail");
         }
     }
 
@@ -97,16 +97,17 @@ final class ConcurrencyTest extends TestCase
             $id = $storage->createJob('poison.job', [], 'default', 3); // Max attempts = 3
 
             $job = $this->recoverCrashedJob($storage, $clock, $id, 'worker-1');
-            $this->assertSame(JobStatus::Pending, $job->status, "$name: job should be pending");
-            $this->assertSame(1, $job->attempts, "$name: attempts should be 1");
+            self::assertSame(JobStatus::Pending, $job->status, "$name: job should be pending");
+            self::assertSame(1, $job->attempts, "$name: attempts should be 1");
 
             $job = $this->recoverCrashedJob($storage, $clock, $id, 'worker-2');
-            $this->assertSame(JobStatus::Pending, $job->status, "$name: job should be pending");
-            $this->assertSame(2, $job->attempts, "$name: attempts should be 2");
+            self::assertSame(JobStatus::Pending, $job->status, "$name: job should be pending");
+            self::assertSame(2, $job->attempts, "$name: attempts should be 2");
 
             $job = $this->recoverCrashedJob($storage, $clock, $id, 'worker-3');
-            $this->assertSame(JobStatus::Failed, $job->status, "$name: job should be failed");
-            $this->assertStringContainsString('stale recovery', $job->errorMessage, "$name: error message should match");
+            self::assertSame(JobStatus::Failed, $job->status, "$name: job should be failed");
+            self::assertNotNull($job->errorMessage);
+            self::assertStringContainsString('stale recovery', $job->errorMessage, "$name: error message should match");
         }
     }
 
@@ -132,12 +133,14 @@ final class ConcurrencyTest extends TestCase
         // Check if there are MySQL or PostgreSQL env variables to test with a real DB.
         // Otherwise, skip this test.
         $dsn = getenv('DB_DSN');
-        if (!$dsn) {
-            $this->markTestSkipped('Real DB_DSN environment variable not set. Skipping SKIP LOCKED distribution test.');
+        if (!is_string($dsn) || $dsn === '') {
+            self::markTestSkipped('Real DB_DSN environment variable not set. Skipping SKIP LOCKED distribution test.');
         }
 
-        $user = getenv('DB_USER') ?: '';
-        $password = getenv('DB_PASSWORD') ?: '';
+        $userValue = getenv('DB_USER');
+        $passwordValue = getenv('DB_PASSWORD');
+        $user = is_string($userValue) ? $userValue : '';
+        $password = is_string($passwordValue) ? $passwordValue : '';
 
         $pdo1 = new PDO($dsn, $user, $password);
         $pdo2 = new PDO($dsn, $user, $password);
@@ -147,7 +150,7 @@ final class ConcurrencyTest extends TestCase
 
         $driver = $pdo1->getAttribute(PDO::ATTR_DRIVER_NAME);
         if ($driver === 'sqlite') {
-            $this->markTestSkipped('SKIP LOCKED concurrency test is not supported on SQLite.');
+            self::markTestSkipped('SKIP LOCKED concurrency test is not supported on SQLite.');
         }
 
         // Re-create table if needed
@@ -166,13 +169,13 @@ final class ConcurrencyTest extends TestCase
         $stmt = $pdo1->prepare('SELECT * FROM test_concurrency_jobs WHERE id = :id FOR UPDATE');
         $stmt->execute(['id' => $jobId1]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        $this->assertNotFalse($row);
+        self::assertNotFalse($row);
 
         // Connection 2 (separate connection/transaction) should claim the next one, SKIPPING the locked one!
         // We do not call beginTransaction() on pdo2 because claimNextAvailable manages its transaction.
         $claim2 = $storage2->claimNextAvailable('default', 'worker-2');
-        $this->assertNotNull($claim2);
-        $this->assertSame($jobId2, $claim2->job->id);
+        self::assertNotNull($claim2);
+        self::assertSame($jobId2, $claim2->job->id);
 
         // Commit transaction to release lock
         $pdo1->commit();

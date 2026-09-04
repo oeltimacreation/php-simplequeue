@@ -7,6 +7,7 @@ namespace Oeltima\SimpleQueue\Tests\Contract;
 use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Contract\JobStorageAdminInterface;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
+use Oeltima\SimpleQueue\Exception\SerializationException;
 use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
 use Oeltima\SimpleQueue\Tests\Support\FrozenClock;
 use Oeltima\SimpleQueue\Tests\Support\SqliteFixture;
@@ -63,6 +64,19 @@ final class JobStorageContractTest extends TestCase
     }
 
     #[DataProvider('backends')]
+    public function testResultSerializationFailsBeforeLostOwnershipOutcome(string $backend): void
+    {
+        $storage = $this->storage($backend, new FrozenClock());
+        $id = $storage->createJob('mail.send', []);
+        $stale = $storage->claimById($id, 'worker-1');
+        self::assertNotNull($stale);
+        self::assertNotNull($storage->claimById($id, 'worker-1'));
+
+        $this->expectException(SerializationException::class);
+        $storage->markCompleted($stale, NAN);
+    }
+
+    #[DataProvider('backends')]
     public function testSchedulesRetryWithMatchingAttemptsTimestampAndOwnership(string $backend): void
     {
         $clock = new FrozenClock();
@@ -84,6 +98,23 @@ final class JobStorageContractTest extends TestCase
         self::assertNull($storage->claimById($id, 'worker-2'));
         $clock->advance(60);
         self::assertNotNull($storage->claimById($id, 'worker-2'));
+    }
+
+    #[DataProvider('backends')]
+    public function testRejectsRetryWithoutRemainingAttempt(string $backend): void
+    {
+        $storage = $this->storage($backend, new FrozenClock());
+        $id = $storage->createJob('mail.send', [], maxAttempts: 1);
+        $claim = $storage->claimById($id, 'worker-1');
+        self::assertNotNull($claim);
+
+        try {
+            $storage->scheduleRetry($claim, 1, 0);
+            self::fail('A retry at max attempts must be rejected');
+        } catch (\InvalidArgumentException $exception) {
+            self::assertSame('Retry attempts must be less than maximum attempts', $exception->getMessage());
+        }
+        self::assertSame(JobStatus::Running, $storage->find($id)?->status);
     }
 
     #[DataProvider('backends')]
@@ -172,7 +203,11 @@ final class JobStorageContractTest extends TestCase
         }
 
         try {
-            $storage->createJobs([['type' => 'mail.send', 'payload' => [], 'availableAt' => 'tomorrow']]);
+            // Reflection deliberately bypasses the documented PHPDoc type to exercise runtime validation.
+            (new \ReflectionMethod($storage, 'createJobs'))->invoke(
+                $storage,
+                [['type' => 'mail.send', 'payload' => [], 'availableAt' => 'tomorrow']]
+            );
             self::fail('Invalid available-at type must be rejected');
         } catch (\InvalidArgumentException $exception) {
             self::assertSame(
