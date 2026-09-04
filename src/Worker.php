@@ -22,6 +22,7 @@ use Oeltima\SimpleQueue\Contract\SupportsWorkerAwareClaimedDequeue;
 use Oeltima\SimpleQueue\Contract\SupportsWorkerId;
 use Oeltima\SimpleQueue\Internal\WorkerEventEmitter;
 use Oeltima\SimpleQueue\Internal\WorkerJobProcessor;
+use Oeltima\SimpleQueue\Internal\WorkerJobProcessorDependencies;
 use Oeltima\SimpleQueue\Internal\WorkerLoopFailureHandler;
 use Oeltima\SimpleQueue\Internal\WorkerPolicy;
 use Oeltima\SimpleQueue\Internal\WorkerProcessControl;
@@ -92,36 +93,40 @@ final class Worker
             $driver->validateTimeout($this->options->pollTimeout);
         }
         $this->eventEmitter = new WorkerEventEmitter($this->logger, $this->options->eventListener);
-        $this->jobProcessor = new WorkerJobProcessor(
-            $this->storage,
-            $this->registry,
-            $this->logger,
-            $this->queue,
-            $this->policy,
-            $this->clock,
-            $this->eventEmitter
-        );
+        $this->jobProcessor = new WorkerJobProcessor(new WorkerJobProcessorDependencies([
+            'storage' => $this->storage,
+            'registry' => $this->registry,
+            'logger' => $this->logger,
+            'queue' => $this->queue,
+            'policy' => $this->policy,
+            'clock' => $this->clock,
+            'eventEmitter' => $this->eventEmitter,
+        ]));
         $this->processControl = new WorkerProcessControl($this->logger, $this->lockFile, $this->workerId);
     }
 
     /** @param array<string, mixed>|WorkerOptions $options */
     private function resolveLockFile(string $queue, array|WorkerOptions $options): ?string
     {
-        $typed = $options instanceof WorkerOptions ? $options : null;
-        if ($typed !== null) {
-            if (!$typed->lockingEnabled) {
-                return null;
-            }
-            return $typed->lockFile ?? self::defaultLockFile($queue);
+        if ($options instanceof WorkerOptions) {
+            return self::typedLockFile($queue, $options);
         }
+        return $this->arrayLockFile($queue, $options);
+    }
+
+    private static function typedLockFile(string $queue, WorkerOptions $options): ?string
+    {
+        if (!$options->lockingEnabled) {
+            return null;
+        }
+        return $options->lockFile ?? self::defaultLockFile($queue);
+    }
+
+    /** @param array<string, mixed> $options */
+    private function arrayLockFile(string $queue, array $options): ?string
+    {
         if (array_key_exists('lock_file', $options)) {
-            $raw = $options['lock_file'];
-            if ($raw === null) {
-                return null;
-            }
-            if (is_string($raw) && trim($raw) !== '') {
-                return $raw;
-            }
+            return $this->explicitLockFile($options['lock_file']);
         }
         if (array_key_exists('locking_enabled', $options) && $options['locking_enabled'] === false) {
             return null;
@@ -130,6 +135,14 @@ final class Worker
             return $this->options->lockFile;
         }
         return $this->options->lockingEnabled ? self::defaultLockFile($queue) : null;
+    }
+
+    private function explicitLockFile(mixed $lockFile): ?string
+    {
+        if ($lockFile === null) {
+            return null;
+        }
+        return is_string($lockFile) && trim($lockFile) !== '' ? $lockFile : $this->options->lockFile;
     }
 
     private static function defaultLockFile(string $queue): string
@@ -249,22 +262,25 @@ final class Worker
     {
         $claim = $this->claimNextJob($this->options->pollTimeout);
         if ($claim === null) {
-            if ($this->options->stopWhenEmpty) {
-                $this->logger->info('Queue is empty and stop_when_empty is enabled. Stopping worker.');
-                return false;
-            }
-            return true;
+            return $this->continueAfterEmptyQueue();
         }
         if (!$this->shouldRun) {
-            if (!$this->releaseClaimForShutdown($claim, $driver)) {
-                $this->shutdownReleaseFailed = true;
-            }
+            $this->shutdownReleaseFailed = !$this->releaseClaimForShutdown($claim, $driver);
             return false;
         }
 
         $this->processedJobsCount++;
         $this->jobProcessor->process($claim, $driver);
         return true;
+    }
+
+    private function continueAfterEmptyQueue(): bool
+    {
+        if (!$this->options->stopWhenEmpty) {
+            return true;
+        }
+        $this->logger->info('Queue is empty and stop_when_empty is enabled. Stopping worker.');
+        return false;
     }
 
     private function releaseClaimForShutdown(ClaimedJob $claim, QueueDriverInterface $driver): bool

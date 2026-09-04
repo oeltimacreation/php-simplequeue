@@ -21,6 +21,10 @@ use Oeltima\SimpleQueue\Internal\ReconciliationJobProcessor;
  * recovery remains a separate Worker/storage responsibility. Duplicates means
  * "already notified or bounded-scan hit"; bounded pending false negatives may
  * still create harmless duplicate delivery under at-least-once.
+ *
+ * @phpstan-type RunContext array{queue: string, options: ReconcileOptions, started: float}
+ * @phpstan-type PageProgress array{cursor: int|null, scanned: int, pageCount: int}
+ * @phpstan-type ResultCounts array{scanned: int, restored: int, duplicates: int, invalid: int}
  */
 final class QueueReconciler
 {
@@ -44,51 +48,64 @@ final class QueueReconciler
         }
 
         $started = $this->clock->monotonic();
+        $context = ['queue' => $queue, 'options' => $options, 'started' => $started];
         // Prefer the lean notification cursor so full payload/result JSON is never decoded.
         if ($this->storage instanceof SupportsPendingNotificationCursor) {
-            return $this->reconcileNotifications($queue, $options, $started);
+            return $this->reconcileNotifications($context);
         }
-        return $this->reconcileJobs($queue, $options, $started);
+        return $this->reconcileJobs($context);
     }
 
     /**
      * Reconcile via lean notifications and batched queue operations.
      *
-     * @param string $queue Queue name
-     * @param ReconcileOptions $options Bounded options
-     * @param float $started Monotonic start time
+     * @param RunContext $context Reconciliation run context
      * @return ReconcileResult Reconciliation outcome
      */
-    private function reconcileNotifications(string $queue, ReconcileOptions $options, float $started): ReconcileResult
+    private function reconcileNotifications(array $context): ReconcileResult
     {
         $storage = $this->storage;
         if (!$storage instanceof SupportsPendingNotificationCursor) {
             throw new \LogicException('Storage does not support lean reconciliation');
         }
-        [$pageCursor, $notifications] = $this->notificationPage($storage, $queue, $options);
+        $options = $context['options'];
+        [$pageCursor, $notifications] = $this->cursorPage(
+            $options,
+            static fn (?int $cursor, int $limit): array => $storage->scanPendingNotifications(
+                $context['queue'],
+                $cursor,
+                $limit
+            )
+        );
         if ($this->driver instanceof SupportsBatchQueueReconciliation && $notifications !== []) {
-            return $this->reconcileNotificationBatch($queue, $notifications, $pageCursor, $options, $started);
+            return $this->reconcileNotificationBatch($context, $notifications, $pageCursor);
         }
 
-        return $this->reconcileNotificationFallback($queue, $notifications, $pageCursor, $options, $started);
+        return $this->reconcileNotificationFallback($context, $notifications, $pageCursor);
     }
 
     /**
      * Legacy full-job cursor path for third-party v1 implementations.
      *
-     * @param string $queue Queue name
-     * @param ReconcileOptions $options Bounded options
-     * @param float $started Monotonic start time
+     * @param RunContext $context Reconciliation run context
      * @return ReconcileResult Reconciliation outcome
      */
-    private function reconcileJobs(string $queue, ReconcileOptions $options, float $started): ReconcileResult
+    private function reconcileJobs(array $context): ReconcileResult
     {
         $storage = $this->storage;
         $driver = $this->driver;
         if (!$storage instanceof SupportsPendingJobCursor || !$driver instanceof SupportsBoundedQueueMembership) {
             throw new \LogicException('Storage and driver do not support bounded reconciliation');
         }
-        [$pageCursor, $jobs] = $this->jobPage($storage, $queue, $options);
+        $options = $context['options'];
+        [$pageCursor, $jobs] = $this->cursorPage(
+            $options,
+            static fn (?int $cursor, int $limit): array => $storage->scanPending(
+                $context['queue'],
+                $cursor,
+                $limit
+            )
+        );
         $restored = 0;
         $duplicates = 0;
         $invalid = 0;
@@ -96,10 +113,10 @@ final class QueueReconciler
         $nextCursor = $pageCursor;
         $processor = new ReconciliationJobProcessor($driver, $this->clock);
         foreach ($jobs as $job) {
-            if ($this->deadlineReached($started, $options)) {
+            if ($this->deadlineReached($context)) {
                 break;
             }
-            match ($processor->process($queue, $job, $options)) {
+            match ($processor->process($context['queue'], $job, $options)) {
                 ReconcileJobOutcome::Restored => $restored++,
                 ReconcileJobOutcome::Duplicate => $duplicates++,
                 ReconcileJobOutcome::Invalid => $invalid++,
@@ -107,64 +124,45 @@ final class QueueReconciler
             $scanned++;
             $nextCursor = $job->id;
         }
-        return $this->result(
-            $this->nextCursor($nextCursor, $scanned, count($jobs), $options),
-            $scanned,
-            $restored,
-            $duplicates,
-            $invalid,
-            $started
-        );
+        $progress = ['cursor' => $nextCursor, 'scanned' => $scanned, 'pageCount' => count($jobs)];
+        $counts = compact('scanned', 'restored', 'duplicates', 'invalid');
+        return $this->result($this->nextCursor($progress, $options), $counts, $context);
     }
 
     /**
-     * @param SupportsPendingNotificationCursor $storage Lean cursor storage
-     * @return array{?int, list<\Oeltima\SimpleQueue\Contract\PendingNotification>}
+     * @template T
+     * @param ReconcileOptions $options Bounded options
+     * @param callable(int|null, int): list<T> $scan Cursor scan
+     * @return array{int|null, list<T>}
      */
-    private function notificationPage(
-        SupportsPendingNotificationCursor $storage,
-        string $queue,
-        ReconcileOptions $options
-    ): array {
-        $cursor = $options->cursor;
-        $notifications = $storage->scanPendingNotifications($queue, $cursor, $options->pageSize);
-        if ($notifications !== [] || $cursor === null) {
-            return [$cursor, $notifications];
-        }
-
-        return [null, $storage->scanPendingNotifications($queue, null, $options->pageSize)];
-    }
-
-    /**
-     * @param SupportsPendingJobCursor $storage Legacy cursor storage
-     * @return array{?int, list<\Oeltima\SimpleQueue\Contract\JobData>}
-     */
-    private function jobPage(SupportsPendingJobCursor $storage, string $queue, ReconcileOptions $options): array
+    private function cursorPage(ReconcileOptions $options, callable $scan): array
     {
         $cursor = $options->cursor;
-        $jobs = $storage->scanPending($queue, $cursor, $options->pageSize);
-        if ($jobs !== [] || $cursor === null) {
-            return [$cursor, $jobs];
+        $items = $scan($cursor, $options->pageSize);
+        if ($items !== [] || $cursor === null) {
+            return [$cursor, $items];
         }
 
-        return [null, $storage->scanPending($queue, null, $options->pageSize)];
+        return [null, $scan(null, $options->pageSize)];
     }
 
-    /** @param list<\Oeltima\SimpleQueue\Contract\PendingNotification> $notifications */
+    /**
+     * @param RunContext $context
+     * @param list<\Oeltima\SimpleQueue\Contract\PendingNotification> $notifications
+     */
     private function reconcileNotificationBatch(
-        string $queue,
+        array $context,
         array $notifications,
-        ?int $pageCursor,
-        ReconcileOptions $options,
-        float $started
+        ?int $pageCursor
     ): ReconcileResult {
+        $options = $context['options'];
         $availableAtByJobId = [];
         $order = [];
         $invalid = 0;
         $scanned = 0;
         $nextCursor = $pageCursor;
         foreach ($notifications as $notification) {
-            if ($this->deadlineReached($started, $options)) {
+            if ($this->deadlineReached($context)) {
                 break;
             }
             $parsed = ReconciliationJobProcessor::parseTimestamp($notification->availableAt);
@@ -178,36 +176,32 @@ final class QueueReconciler
             $order[] = $notification->jobId;
             $nextCursor = $notification->jobId;
         }
-        [$restored, $duplicates] = $this->reconcileBatch($queue, $availableAtByJobId, $order, $options);
+        [$restored, $duplicates] = $this->reconcileBatch($context, $availableAtByJobId, $order);
         $scanned += count($order);
 
-        return $this->result(
-            $this->nextCursor($nextCursor, $scanned, count($notifications), $options),
-            $scanned,
-            $restored,
-            $duplicates,
-            $invalid,
-            $started
-        );
+        $progress = ['cursor' => $nextCursor, 'scanned' => $scanned, 'pageCount' => count($notifications)];
+        $counts = compact('scanned', 'restored', 'duplicates', 'invalid');
+        return $this->result($this->nextCursor($progress, $options), $counts, $context);
     }
 
     /**
+     * @param RunContext $context
      * @param array<int, int> $availableAtByJobId Validated notification timestamps
      * @param list<int> $order Valid job IDs in cursor order
      * @return array{int, int} Restored and duplicate counts
      */
     private function reconcileBatch(
-        string $queue,
+        array $context,
         array $availableAtByJobId,
-        array $order,
-        ReconcileOptions $options
+        array $order
     ): array {
         $driver = $this->driver;
         if (!$driver instanceof SupportsBatchQueueReconciliation || $availableAtByJobId === []) {
             return [0, 0];
         }
+        $options = $context['options'];
         $present = $driver->reconcileNotifications(
-            $queue,
+            $context['queue'],
             $availableAtByJobId,
             $this->clock->timestamp(),
             $options->membershipScanLimit
@@ -218,27 +212,29 @@ final class QueueReconciler
         return [count($order) - $duplicates, $duplicates];
     }
 
-    /** @param list<\Oeltima\SimpleQueue\Contract\PendingNotification> $notifications */
+    /**
+     * @param RunContext $context
+     * @param list<\Oeltima\SimpleQueue\Contract\PendingNotification> $notifications
+     */
     private function reconcileNotificationFallback(
-        string $queue,
+        array $context,
         array $notifications,
-        ?int $pageCursor,
-        ReconcileOptions $options,
-        float $started
+        ?int $pageCursor
     ): ReconcileResult {
         $driver = $this->driver;
         if (!$driver instanceof SupportsBoundedQueueMembership) {
             throw new \LogicException('Driver does not support bounded reconciliation');
         }
+        $options = $context['options'];
         $processor = new ReconciliationJobProcessor($driver, $this->clock);
         $outcomes = [];
         $nextCursor = $pageCursor;
         foreach ($notifications as $notification) {
-            if ($this->deadlineReached($started, $options)) {
+            if ($this->deadlineReached($context)) {
                 break;
             }
             $outcomes[] = $processor->processNotification(
-                $queue,
+                $context['queue'],
                 $notification->jobId,
                 $notification->availableAt,
                 $options
@@ -247,28 +243,28 @@ final class QueueReconciler
         }
         $scanned = count($outcomes);
 
-        return $this->result(
-            $this->nextCursor($nextCursor, $scanned, count($notifications), $options),
-            $scanned,
-            $this->outcomeCount($outcomes, ReconcileJobOutcome::Restored),
-            $this->outcomeCount($outcomes, ReconcileJobOutcome::Duplicate),
-            $this->outcomeCount($outcomes, ReconcileJobOutcome::Invalid),
-            $started
-        );
+        $progress = ['cursor' => $nextCursor, 'scanned' => $scanned, 'pageCount' => count($notifications)];
+        $counts = [
+            'scanned' => $scanned,
+            'restored' => $this->outcomeCount($outcomes, ReconcileJobOutcome::Restored),
+            'duplicates' => $this->outcomeCount($outcomes, ReconcileJobOutcome::Duplicate),
+            'invalid' => $this->outcomeCount($outcomes, ReconcileJobOutcome::Invalid),
+        ];
+        return $this->result($this->nextCursor($progress, $options), $counts, $context);
     }
 
-    private function deadlineReached(float $started, ReconcileOptions $options): bool
+    /** @param RunContext $context */
+    private function deadlineReached(array $context): bool
     {
-        return $this->clock->monotonic() - $started >= $options->maxDurationSeconds;
+        return $this->clock->monotonic() - $context['started'] >= $context['options']->maxDurationSeconds;
     }
 
-    private function nextCursor(
-        ?int $cursor,
-        int $scanned,
-        int $pageCount,
-        ReconcileOptions $options
-    ): ?int {
-        return $scanned === $pageCount && $scanned < $options->pageSize ? null : $cursor;
+    /** @param PageProgress $progress */
+    private function nextCursor(array $progress, ReconcileOptions $options): ?int
+    {
+        $pageComplete = $progress['scanned'] === $progress['pageCount'];
+        $isLastPage = $progress['scanned'] < $options->pageSize;
+        return $pageComplete && $isLastPage ? null : $progress['cursor'];
     }
 
     /**
@@ -279,21 +275,22 @@ final class QueueReconciler
         return count(array_filter($outcomes, static fn (ReconcileJobOutcome $outcome): bool => $outcome === $expected));
     }
 
+    /**
+     * @param ResultCounts $counts
+     * @param RunContext $context
+     */
     private function result(
         ?int $nextCursor,
-        int $scanned,
-        int $restored,
-        int $duplicates,
-        int $invalid,
-        float $started
+        array $counts,
+        array $context
     ): ReconcileResult {
         return new ReconcileResult(
             $nextCursor,
-            $scanned,
-            $restored,
-            $duplicates,
-            $invalid,
-            $this->clock->monotonic() - $started
+            $counts['scanned'],
+            $counts['restored'],
+            $counts['duplicates'],
+            $counts['invalid'],
+            $this->clock->monotonic() - $context['started']
         );
     }
 }

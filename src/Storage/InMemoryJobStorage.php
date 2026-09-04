@@ -18,6 +18,7 @@ use Oeltima\SimpleQueue\Contract\SupportsPendingNotificationCursor;
 use Oeltima\SimpleQueue\Contract\PendingNotification;
 use Oeltima\SimpleQueue\Contract\SupportsQueueScopedStaleRecovery;
 use Oeltima\SimpleQueue\Internal\JobDataHydrator;
+use Oeltima\SimpleQueue\Internal\InMemoryJobSelector;
 use Oeltima\SimpleQueue\Internal\JobFilter;
 use Oeltima\SimpleQueue\Internal\JobStorageRules;
 use Oeltima\SimpleQueue\Internal\RetryDecision;
@@ -245,10 +246,11 @@ class InMemoryJobStorage implements
         $candidateAvailableAt = null;
 
         foreach ($this->jobs as $id => $job) {
-            if ($job['status'] !== JobStatus::Pending || $job['queue'] !== $queue || $job['available_at'] > $now) {
+            if (!InMemoryJobSelector::isAvailable($job, ['queue' => $queue, 'now' => $now])) {
                 continue;
             }
-            if ($this->isBetterCandidate($job, $id, $candidateAvailableAt, $candidateId)) {
+            $candidate = ['id' => $id, 'availableAt' => $candidateAvailableAt, 'candidateId' => $candidateId];
+            if (InMemoryJobSelector::isBetter($job, $candidate)) {
                 $candidateId = $id;
                 $candidateAvailableAt = $job['available_at'];
             }
@@ -259,16 +261,6 @@ class InMemoryJobStorage implements
         }
 
         return $this->claimAvailableJob($candidateId, $workerId, $now);
-    }
-
-    /**
-     * @param array<string, mixed> $job Storage job row
-     */
-    private function isBetterCandidate(array $job, int $id, ?string $candidateAvailableAt, ?int $candidateId): bool
-    {
-        return $candidateAvailableAt === null
-            || $job['available_at'] < $candidateAvailableAt
-            || ($job['available_at'] === $candidateAvailableAt && $id < (int) $candidateId);
     }
 
     /**
@@ -412,17 +404,7 @@ class InMemoryJobStorage implements
         $now = $this->clock->now();
         $threshold = JobStorageRules::timestamp($this->clock, $this->dateFormat, -$ttlSeconds);
         $staleError = 'Job timed out / worker crashed (stale recovery)';
-        // Match PDO ordering (locked_at ASC) and null-lock handling.
-        $candidates = [];
-        foreach ($this->jobs as $id => $job) {
-            if ($job['queue'] !== $queue || $job['status'] !== JobStatus::Running) {
-                continue;
-            }
-            if ($job['locked_at'] !== null && $job['locked_at'] >= $threshold) {
-                continue;
-            }
-            $candidates[] = ['id' => $id, 'locked_at' => $job['locked_at']];
-        }
+        $candidates = $this->staleCandidates($queue, $threshold);
         usort($candidates, static function (array $a, array $b): int {
             $lockedOrder = ($a['locked_at'] ?? '') <=> ($b['locked_at'] ?? '');
             return $lockedOrder !== 0 ? $lockedOrder : $a['id'] <=> $b['id'];
@@ -439,6 +421,18 @@ class InMemoryJobStorage implements
         }
         unset($job);
         return $recovered;
+    }
+
+    /** @return list<array{id: int, locked_at: string|null}> */
+    private function staleCandidates(string $queue, string $threshold): array
+    {
+        $candidates = [];
+        foreach ($this->jobs as $id => $job) {
+            if (InMemoryJobSelector::isStale($job, ['queue' => $queue, 'threshold' => $threshold])) {
+                $candidates[] = ['id' => $id, 'locked_at' => $job['locked_at']];
+            }
+        }
+        return $candidates;
     }
 
     /** @param StoredJobRow $job */
@@ -535,11 +529,8 @@ class InMemoryJobStorage implements
         }
         $jobs = [];
         foreach ($this->jobs as $id => $job) {
-            if (
-                $job['status'] !== JobStatus::Pending
-                || $job['queue'] !== $queue
-                || ($afterId !== null && $id <= $afterId)
-            ) {
+            $cursor = ['id' => $id, 'queue' => $queue, 'afterId' => $afterId];
+            if (!InMemoryJobSelector::isPendingAfter($job, $cursor)) {
                 continue;
             }
             $jobs[] = JobDataHydrator::hydrateStrict($job);

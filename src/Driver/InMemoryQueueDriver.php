@@ -260,6 +260,23 @@ final class InMemoryQueueDriver implements
             return 0;
         }
 
+        $due = $this->dueNotifications($queue);
+        usort($due, static function (array $a, array $b): int {
+            $byTime = $a['at'] <=> $b['at'];
+            return $byTime !== 0 ? $byTime : $a['id'] <=> $b['id'];
+        });
+        $selected = array_slice($due, 0, $limit);
+        foreach ($selected as $item) {
+            $this->enqueue($queue, $item['id']);
+            unset($this->delayed[$queue][$item['id']]);
+        }
+
+        return count($selected);
+    }
+
+    /** @return list<array{id: int, at: int}> */
+    private function dueNotifications(string $queue): array
+    {
         $now = $this->clock->timestamp();
         $due = [];
         foreach ($this->delayed[$queue] as $jobId => $availableAt) {
@@ -267,24 +284,7 @@ final class InMemoryQueueDriver implements
                 $due[] = ['id' => $jobId, 'at' => $availableAt];
             }
         }
-        usort($due, static function (array $a, array $b): int {
-            $byTime = $a['at'] <=> $b['at'];
-            if ($byTime !== 0) {
-                return $byTime;
-            }
-            return $a['id'] <=> $b['id'];
-        });
-        $promoted = 0;
-        foreach ($due as $item) {
-            if ($promoted >= $limit) {
-                break;
-            }
-            $this->enqueue($queue, $item['id']);
-            unset($this->delayed[$queue][$item['id']]);
-            $promoted++;
-        }
-
-        return $promoted;
+        return $due;
     }
 
     /**
@@ -314,19 +314,23 @@ final class InMemoryQueueDriver implements
             if ($startedAt > $staleThreshold) {
                 continue;
             }
-            $this->removeFromProcessing($queue, $jobId);
-            if (in_array($jobId, $this->processing[$queue] ?? [], true)) {
-                // Duplicate processing notifications share an ID-keyed score.
-                // Rebase the remaining duplicate instead of losing recovery data.
-                $this->processingStartedAt[$queue][$jobId] = $this->clock->timestamp();
-            } else {
-                unset($this->processingStartedAt[$queue][$jobId]);
-            }
-            $this->enqueue($queue, $jobId);
+            $this->recoverProcessingNotification($queue, $jobId);
             $recovered++;
         }
 
         return $recovered;
+    }
+
+    private function recoverProcessingNotification(string $queue, int $jobId): void
+    {
+        $this->removeFromProcessing($queue, $jobId);
+        if (in_array($jobId, $this->processing[$queue] ?? [], true)) {
+            // Duplicate notifications share an ID-keyed score, so rebase the remaining copy.
+            $this->processingStartedAt[$queue][$jobId] = $this->clock->timestamp();
+        } else {
+            unset($this->processingStartedAt[$queue][$jobId]);
+        }
+        $this->enqueue($queue, $jobId);
     }
 
     /**
@@ -436,39 +440,57 @@ final class InMemoryQueueDriver implements
         int $now,
         int $pendingScanLimit
     ): array {
+        $this->validateReconciliationInput($availableAtByJobId, $now, $pendingScanLimit);
+
+        $pending = $this->boundedPendingSet($queue, $pendingScanLimit);
+        $delayed = $this->delayed[$queue] ?? [];
+        $present = [];
+        foreach ($availableAtByJobId as $jobId => $availableAt) {
+            if ($this->notificationIsPresent($jobId, $pending, $delayed)) {
+                $present[] = $jobId;
+                continue;
+            }
+            $this->restoreNotification($queue, $jobId, $availableAt, $now);
+        }
+        return $present;
+    }
+
+    /** @param array<int, int> $availableAtByJobId */
+    private function validateReconciliationInput(array $availableAtByJobId, int $now, int $pendingScanLimit): void
+    {
         if ($now <= 0) {
             throw new \InvalidArgumentException('Reconciliation current timestamp must be positive');
         }
         if ($pendingScanLimit < 1) {
             throw new \InvalidArgumentException('Pending scan limit must be positive');
         }
-        // Validate the complete page before changing notification state.
         foreach ($availableAtByJobId as $jobId => $availableAt) {
             if (!is_int($jobId) || $jobId < 1 || !is_int($availableAt) || $availableAt <= 0) {
                 throw new \InvalidArgumentException('Reconciliation IDs and timestamps must be positive integers');
             }
         }
+    }
 
-        $pending = $this->boundedPendingSet($queue, $pendingScanLimit);
-        $delayed = $this->delayed[$queue] ?? [];
-        $present = [];
-        foreach ($availableAtByJobId as $jobId => $availableAt) {
-            $inPending = isset($pending[$jobId]);
-            $inDelayed = isset($delayed[$jobId]);
-            if ($inPending || $inDelayed) {
-                $present[] = $jobId;
-                continue;
-            }
-            if ($availableAt <= $now) {
-                $this->enqueue($queue, $jobId);
-            } else {
-                if (!isset($this->delayed[$queue])) {
-                    $this->delayed[$queue] = [];
-                }
-                $this->delayed[$queue][$jobId] = $availableAt;
-            }
+    /**
+     * @param array<int, true> $pending
+     * @param array<int, int> $delayed
+     */
+    private function notificationIsPresent(int $jobId, array $pending, array $delayed): bool
+    {
+        if (isset($pending[$jobId])) {
+            return true;
         }
-        return $present;
+        return isset($delayed[$jobId]);
+    }
+
+    private function restoreNotification(string $queue, int $jobId, int $availableAt, int $now): void
+    {
+        if ($availableAt <= $now) {
+            $this->enqueue($queue, $jobId);
+            return;
+        }
+        $this->delayed[$queue] ??= [];
+        $this->delayed[$queue][$jobId] = $availableAt;
     }
 
     /**

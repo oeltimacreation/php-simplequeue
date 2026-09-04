@@ -4,18 +4,43 @@ declare(strict_types=1);
 
 final readonly class OperationBudget
 {
-    public function __construct(
-        public string $scenario,
-        public string $metric,
-        public string $comparison,
-        public string $formula,
-        public int $multiplier,
-        public int $offset,
-        public int $chunkSize,
-        public bool $optional,
-        public string $mechanism,
-        public string $rationale
-    ) {
+    public string $scenario;
+    public string $metric;
+    public string $comparison;
+    public string $formula;
+    public int $multiplier;
+    public int $offset;
+    public int $chunkSize;
+    public bool $optional;
+    public string $mechanism;
+    public string $rationale;
+
+    /**
+     * @param array{
+     *     scenario: string,
+     *     metric: string,
+     *     comparison: string,
+     *     formula: string,
+     *     multiplier: int,
+     *     offset: int,
+     *     chunkSize: int,
+     *     optional: bool,
+     *     mechanism: string,
+     *     rationale: string
+     * } $definition
+     */
+    public function __construct(array $definition)
+    {
+        $this->scenario = $definition['scenario'];
+        $this->metric = $definition['metric'];
+        $this->comparison = $definition['comparison'];
+        $this->formula = $definition['formula'];
+        $this->multiplier = $definition['multiplier'];
+        $this->offset = $definition['offset'];
+        $this->chunkSize = $definition['chunkSize'];
+        $this->optional = $definition['optional'];
+        $this->mechanism = $definition['mechanism'];
+        $this->rationale = $definition['rationale'];
     }
 
     public function limit(int $operations): int
@@ -81,32 +106,7 @@ function operationBudgetDefinitions(): array
         array $scale,
         string $evidence
     ) use (&$budgets): void {
-        if (count($scale) !== 3 || !is_int($scale[0]) || !is_int($scale[1]) || !is_int($scale[2])) {
-            throw new LogicException('Operation budget scale must contain three integers');
-        }
-        [$comparison, $formulaName] = explode('-', $relation, 2);
-        $formula = match ($formulaName) {
-            'fixed' => 'fixed',
-            'per' => 'per_operation',
-            'chunk' => 'chunked',
-            default => throw new LogicException('Unknown operation budget relation'),
-        };
-        $descriptions = explode(': ', $evidence, 2);
-        if (count($descriptions) !== 2) {
-            throw new LogicException('Operation budget evidence must contain a mechanism and rationale');
-        }
-        $budgets[] = new OperationBudget(
-            $scenario,
-            $metric,
-            $comparison,
-            $formula,
-            $scale[0],
-            $scale[1],
-            $scale[2],
-            str_starts_with($scenario, 'redis.'),
-            $descriptions[0],
-            $descriptions[1]
-        );
+        $budgets[] = operationBudget($scenario, $metric, $relation, $scale, $evidence);
     };
 
     foreach (['sqlite.dispatch_single', 'sqlite.dispatch_scheduled_single'] as $scenario) {
@@ -201,6 +201,69 @@ function operationBudgetDefinitions(): array
     $add('redis.repair_unscored', 'median_redis_commands', 'maximum-per', [2, 2, 1], 'score repair: linear commands');
 
     return $budgets;
+}
+
+/**
+ * @param array<mixed> $scale
+ */
+function operationBudget(
+    string $scenario,
+    string $metric,
+    string $relation,
+    array $scale,
+    string $evidence
+): OperationBudget {
+    [$comparison, $formulaName] = budgetPair($relation, 'relation');
+    [$mechanism, $rationale] = budgetPair($evidence, 'evidence', ': ');
+    [$multiplier, $offset, $chunkSize] = budgetScale($scale);
+    $formula = match ($formulaName) {
+        'fixed' => 'fixed',
+        'per' => 'per_operation',
+        'chunk' => 'chunked',
+        default => throw new LogicException('Unknown operation budget relation'),
+    };
+    return new OperationBudget([
+        'scenario' => $scenario,
+        'metric' => $metric,
+        'comparison' => $comparison,
+        'formula' => $formula,
+        'multiplier' => $multiplier,
+        'offset' => $offset,
+        'chunkSize' => $chunkSize,
+        'optional' => str_starts_with($scenario, 'redis.'),
+        'mechanism' => $mechanism,
+        'rationale' => $rationale,
+    ]);
+}
+
+/**
+ * @param non-empty-string $separator
+ * @return array{string, string}
+ */
+function budgetPair(string $value, string $field, string $separator = '-'): array
+{
+    $parts = explode($separator, $value, 2);
+    if (count($parts) !== 2) {
+        throw new LogicException("Operation budget {$field} must contain two parts");
+    }
+    return [$parts[0], $parts[1]];
+}
+
+/**
+ * @param array<mixed> $scale
+ * @return array{int, int, int}
+ */
+function budgetScale(array $scale): array
+{
+    if (count($scale) !== 3) {
+        throw new LogicException('Operation budget scale must contain three integers');
+    }
+    foreach ($scale as $value) {
+        if (!is_int($value)) {
+            throw new LogicException('Operation budget scale must contain three integers');
+        }
+    }
+    return [$scale[0], $scale[1], $scale[2]];
 }
 
 /**

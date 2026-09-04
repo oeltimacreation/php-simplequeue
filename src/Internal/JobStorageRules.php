@@ -291,45 +291,107 @@ final class JobStorageRules
      */
     public static function validateJobDefinition(array $job, ClockInterface $clock): array
     {
-        $type = $job['type'] ?? null;
-        if (!is_string($type) || trim($type) === '') {
-            throw new \InvalidArgumentException('Job type must be a non-empty string');
-        }
-        self::validateBoundedString($type, 'Job type');
-        $queue = $job['queue'] ?? 'default';
-        if (!is_string($queue) || trim($queue) === '') {
-            throw new \InvalidArgumentException('Job queue must be a non-empty string');
-        }
-        self::validateBoundedString($queue, 'Queue');
-        $payload = $job['payload'] ?? null;
-        if (!is_array($payload)) {
-            throw new \InvalidArgumentException('Job payload must be an array');
-        }
+        $type = self::jobType($job);
+        $queue = self::jobQueue($job);
+        $payload = self::jobPayload($job);
         // Encode eagerly so serialization failure precedes any mutation/ID consumption.
         $encodedPayload = self::encodeJson($payload, 'job payload');
-        $maxAttempts = $job['maxAttempts'] ?? 3;
-        if (!is_int($maxAttempts)) {
-            throw new \InvalidArgumentException('Maximum attempts must be an integer');
-        }
-        self::validateMaxAttempts($maxAttempts);
-        $requestId = $job['requestId'] ?? null;
-        if ($requestId !== null) {
-            if (!is_string($requestId) || trim($requestId) === '') {
-                throw new \InvalidArgumentException('Request ID must be a non-empty string when provided');
-            }
-            self::validateBoundedString($requestId, 'Request ID');
-        }
-        $availableAtRaw = $job['availableAt'] ?? null;
-        $availableAt = $availableAtRaw === null ? $clock->now() : self::normalizeAvailableAt($availableAtRaw, $clock);
 
         return [
             'type' => $type,
             'payload' => $payload,
             'encodedPayload' => $encodedPayload,
             'queue' => $queue,
-            'maxAttempts' => $maxAttempts,
-            'requestId' => $requestId,
-            'availableAt' => $availableAt,
+            'maxAttempts' => self::jobMaxAttempts($job),
+            'requestId' => self::jobRequestId($job),
+            'availableAt' => self::jobAvailableAt($job, $clock),
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $job
+     * @return non-empty-string
+     */
+    private static function jobType(array $job): string
+    {
+        $type = $job['type'] ?? null;
+        if (!is_string($type)) {
+            throw new \InvalidArgumentException('Job type must be a non-empty string');
+        }
+        if ($type === '' || trim($type) === '') {
+            throw new \InvalidArgumentException('Job type must be a non-empty string');
+        }
+        self::validateBoundedString($type, 'Job type');
+        return $type;
+    }
+
+    /**
+     * @param array<string, mixed> $job
+     * @return non-empty-string
+     */
+    private static function jobQueue(array $job): string
+    {
+        $queue = $job['queue'] ?? 'default';
+        if (!is_string($queue)) {
+            throw new \InvalidArgumentException('Job queue must be a non-empty string');
+        }
+        if ($queue === '' || trim($queue) === '') {
+            throw new \InvalidArgumentException('Job queue must be a non-empty string');
+        }
+        self::validateBoundedString($queue, 'Queue');
+        return $queue;
+    }
+
+    /**
+     * @param array<string, mixed> $job
+     * @return array<mixed, mixed>
+     */
+    private static function jobPayload(array $job): array
+    {
+        $payload = $job['payload'] ?? null;
+        if (!is_array($payload)) {
+            throw new \InvalidArgumentException('Job payload must be an array');
+        }
+        return $payload;
+    }
+
+    /** @param array<string, mixed> $job */
+    private static function jobMaxAttempts(array $job): int
+    {
+        $maxAttempts = $job['maxAttempts'] ?? 3;
+        if (!is_int($maxAttempts)) {
+            throw new \InvalidArgumentException('Maximum attempts must be an integer');
+        }
+        return self::validateMaxAttempts($maxAttempts);
+    }
+
+    /**
+     * @param array<string, mixed> $job
+     * @return non-empty-string|null
+     */
+    private static function jobRequestId(array $job): ?string
+    {
+        $requestId = $job['requestId'] ?? null;
+        if ($requestId === null) {
+            return null;
+        }
+        if (!is_string($requestId)) {
+            throw new \InvalidArgumentException('Request ID must be a non-empty string when provided');
+        }
+        if ($requestId === '' || trim($requestId) === '') {
+            throw new \InvalidArgumentException('Request ID must be a non-empty string when provided');
+        }
+        self::validateBoundedString($requestId, 'Request ID');
+        return $requestId;
+    }
+
+    /** @param array<string, mixed> $job */
+    private static function jobAvailableAt(array $job, ClockInterface $clock): string
+    {
+        $availableAt = $job['availableAt'] ?? null;
+        if ($availableAt === null) {
+            return $clock->now();
+        }
+        return self::normalizeAvailableAt($availableAt, $clock);
     }
 }

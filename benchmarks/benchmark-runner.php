@@ -64,33 +64,7 @@ function benchmark(BenchmarkScenario $scenario, BenchmarkOptions $options, Closu
 {
     $samples = [];
     for ($iteration = -$options->warmup; $iteration < $options->iterations; $iteration++) {
-        $operation = $setup();
-        gc_collect_cycles();
-        memory_reset_peak_usage();
-        $memoryBefore = memory_get_usage(false);
-        $cpuBefore = function_exists('getrusage') ? getrusage() : false;
-        $started = hrtime(true);
-        $metrics = $operation();
-        $seconds = (hrtime(true) - $started) / 1_000_000_000;
-        $cpuAfter = function_exists('getrusage') ? getrusage() : false;
-        $measuredCpuSeconds = is_array($cpuBefore) && is_array($cpuAfter)
-            ? cpuSeconds($cpuBefore, $cpuAfter)
-            : 0.0;
-        $operations = (int) benchmarkNumericMetric($metrics, 'operations');
-        $sample = [
-            'seconds' => $seconds,
-            'throughput_per_second' => $operations / max($seconds, 0.000_000_001),
-            'peak_memory_bytes' => max(0, memory_get_peak_usage(false) - $memoryBefore),
-            'retained_memory_bytes' => memory_get_usage(false) - $memoryBefore,
-            'operations' => $operations,
-        ];
-        foreach (BENCHMARK_COUNTER_METRICS as $metric) {
-            $sample[$metric] = (int) benchmarkNumericMetric($metrics, $metric);
-        }
-        $sample['cpu_seconds'] = (float) benchmarkNumericMetric($metrics, 'cpu_seconds', $measuredCpuSeconds);
-        if (isset($metrics['cleanup']) && $metrics['cleanup'] instanceof Closure) {
-            $metrics['cleanup']();
-        }
+        $sample = benchmarkSample($setup);
         if ($iteration >= 0) {
             $samples[] = $sample;
         }
@@ -100,11 +74,75 @@ function benchmark(BenchmarkScenario $scenario, BenchmarkOptions $options, Closu
         throw new LogicException('Benchmark produced no measured samples');
     }
 
-    $seconds = array_column($samples, 'seconds');
-    $throughput = array_column($samples, 'throughput_per_second');
-    $peakMemory = array_column($samples, 'peak_memory_bytes');
-    $cpuSeconds = array_column($samples, 'cpu_seconds');
+    return benchmarkSummary($scenario, $samples);
+}
 
+/**
+ * @param Closure(): (Closure(): array<string, int|float|Closure>) $setup
+ * @return array<string, int|float>
+ */
+function benchmarkSample(Closure $setup): array
+{
+    $operation = $setup();
+    gc_collect_cycles();
+    memory_reset_peak_usage();
+    $memoryBefore = memory_get_usage(false);
+    $cpuBefore = function_exists('getrusage') ? getrusage() : false;
+    $started = hrtime(true);
+    $metrics = $operation();
+    $seconds = (hrtime(true) - $started) / 1_000_000_000;
+    $cpuAfter = function_exists('getrusage') ? getrusage() : false;
+    $measuredCpuSeconds = cpuSecondsWhenAvailable($cpuBefore, $cpuAfter);
+    $operations = (int) benchmarkNumericMetric($metrics, 'operations');
+    $sample = [
+        'seconds' => $seconds,
+        'throughput_per_second' => $operations / max($seconds, 0.000_000_001),
+        'peak_memory_bytes' => max(0, memory_get_peak_usage(false) - $memoryBefore),
+        'retained_memory_bytes' => memory_get_usage(false) - $memoryBefore,
+        'operations' => $operations,
+    ];
+    foreach (BENCHMARK_COUNTER_METRICS as $metric) {
+        $sample[$metric] = (int) benchmarkNumericMetric($metrics, $metric);
+    }
+    $sample['cpu_seconds'] = (float) benchmarkNumericMetric($metrics, 'cpu_seconds', $measuredCpuSeconds);
+    benchmarkCleanup($metrics);
+    return $sample;
+}
+
+/**
+ * @param array<string, mixed>|false $start
+ * @param array<string, mixed>|false $end
+ */
+function cpuSecondsWhenAvailable(array|false $start, array|false $end): float
+{
+    if (!is_array($start) || !is_array($end)) {
+        return 0.0;
+    }
+    return cpuSeconds($start, $end);
+}
+
+/** @param array<string, int|float|Closure> $metrics */
+function benchmarkCleanup(array $metrics): void
+{
+    $cleanup = $metrics['cleanup'] ?? null;
+    if ($cleanup instanceof Closure) {
+        $cleanup();
+    }
+}
+
+/**
+ * @param non-empty-list<array<string, int|float>> $samples
+ * @return array<string, mixed>
+ */
+function benchmarkSummary(BenchmarkScenario $scenario, array $samples): array
+{
+    $seconds = array_map(static fn (array $sample): int|float => $sample['seconds'], $samples);
+    $throughput = array_map(
+        static fn (array $sample): int|float => $sample['throughput_per_second'],
+        $samples
+    );
+    $peakMemory = array_map(static fn (array $sample): int|float => $sample['peak_memory_bytes'], $samples);
+    $cpu = array_map(static fn (array $sample): int|float => $sample['cpu_seconds'], $samples);
     return [
         'name' => $scenario->value,
         'median_seconds' => median(array_column($samples, 'seconds')),
@@ -124,8 +162,8 @@ function benchmark(BenchmarkScenario $scenario, BenchmarkOptions $options, Closu
         'median_redis_roundtrips' => median(array_column($samples, 'redis_roundtrips')),
         'median_redis_wire_bytes' => median(array_column($samples, 'redis_wire_bytes')),
         'median_event_deliveries' => median(array_column($samples, 'event_deliveries')),
-        'min_cpu_seconds' => min($cpuSeconds),
-        'max_cpu_seconds' => max($cpuSeconds),
+        'min_cpu_seconds' => min($cpu),
+        'max_cpu_seconds' => max($cpu),
         'median_cpu_seconds' => median(array_column($samples, 'cpu_seconds')),
         'samples' => $samples,
     ];

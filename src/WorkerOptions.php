@@ -28,24 +28,56 @@ final readonly class WorkerOptions
         public bool $lockingEnabled = true,
         public ?SleeperInterface $sleeper = null
     ) {
+        self::validateTiming($pollTimeout, $stuckJobTtl, $retryBaseDelay, $retryMaxDelay);
+        self::validateLimits($maxJobs, $maxTime, $memoryLimit);
+        self::validateIntervals($promoteInterval, $recoveryInterval);
+        self::assertPromoteLimit($promoteLimit);
+        self::validateEventListener($eventListener);
+        self::validateLocking($lockingEnabled, $lockFile);
+    }
+
+    private static function validateTiming(
+        int $pollTimeout,
+        int $stuckJobTtl,
+        int $retryBaseDelay,
+        int $retryMaxDelay
+    ): void {
         if ($pollTimeout < 0 || $stuckJobTtl < 1 || $retryBaseDelay < 0 || $retryMaxDelay < $retryBaseDelay) {
             throw new \InvalidArgumentException('Worker timeout, TTL, and retry delay options are invalid');
         }
+    }
+
+    private static function validateLimits(
+        int $maxJobs,
+        int $maxTime,
+        int $memoryLimit
+    ): void {
+        if ($maxJobs < 0 || $maxTime < 0 || $memoryLimit < 0) {
+            throw new \InvalidArgumentException('Worker limits and intervals must be finite and non-negative');
+        }
+    }
+
+    private static function validateIntervals(float $promoteInterval, float $recoveryInterval): void
+    {
         if (
-            $maxJobs < 0
-            || $maxTime < 0
-            || $memoryLimit < 0
-            || !is_finite($promoteInterval)
+            !is_finite($promoteInterval)
             || $promoteInterval < 0
             || !is_finite($recoveryInterval)
             || $recoveryInterval < 0
         ) {
             throw new \InvalidArgumentException('Worker limits and intervals must be finite and non-negative');
         }
-        self::assertPromoteLimit($promoteLimit);
+    }
+
+    private static function validateEventListener(mixed $eventListener): void
+    {
         if ($eventListener !== null && !is_callable($eventListener)) {
             throw new \InvalidArgumentException('Worker event listener must be callable or null');
         }
+    }
+
+    private static function validateLocking(bool $lockingEnabled, ?string $lockFile): void
+    {
         if (!$lockingEnabled && $lockFile !== null) {
             throw new \InvalidArgumentException('Worker locking cannot be both disabled and given a custom lock path');
         }
@@ -57,38 +89,8 @@ final readonly class WorkerOptions
     /** @param array<string, mixed> $options */
     public static function fromArray(array $options): self
     {
-        $lockingEnabled = true;
-        $lockFile = null;
-        if (array_key_exists('lock_file', $options)) {
-            $rawLock = $options['lock_file'];
-            if ($rawLock === null) {
-                // Explicit null disables locking (array form only).
-                $lockingEnabled = false;
-            } elseif (is_string($rawLock) && trim($rawLock) !== '') {
-                $lockFile = $rawLock;
-            } elseif (is_string($rawLock)) {
-                throw new \InvalidArgumentException('Worker custom lock path must not be empty');
-            } else {
-                throw new \InvalidArgumentException('Worker lock_file must be a non-empty string or null');
-            }
-        }
-        if (array_key_exists('locking_enabled', $options)) {
-            $rawEnabled = $options['locking_enabled'];
-            if (!is_bool($rawEnabled)) {
-                throw new \InvalidArgumentException('Worker locking_enabled must be a boolean');
-            }
-            $lockingEnabled = $rawEnabled;
-        }
-        if (!$lockingEnabled && $lockFile !== null) {
-            throw new \InvalidArgumentException('Worker locking cannot be both disabled and given a custom lock path');
-        }
-        $sleeperRaw = $options['sleeper'] ?? null;
-        if ($sleeperRaw !== null && !$sleeperRaw instanceof SleeperInterface) {
-            throw new \InvalidArgumentException('Worker sleeper must be a SleeperInterface instance or null');
-        }
-
-        $clockRaw = $options['clock'] ?? null;
-        $clock = $clockRaw instanceof ClockInterface ? $clockRaw : self::strictClock($options);
+        $lockFile = self::lockFile($options);
+        $lockingEnabled = self::lockingEnabled($options, $lockFile);
 
         return new self(
             lockFile: $lockFile,
@@ -96,7 +98,7 @@ final readonly class WorkerOptions
             stuckJobTtl: self::integerOption($options, 'stuck_job_ttl', 600),
             retryBaseDelay: self::integerOption($options, 'retry_base_delay', 2),
             retryMaxDelay: self::integerOption($options, 'retry_max_delay', 300),
-            clock: $clock,
+            clock: self::clock($options),
             maxJobs: self::integerOption($options, 'max_jobs', 0),
             maxTime: self::integerOption($options, 'max_time', 0),
             memoryLimit: self::integerOption($options, 'memory_limit', 0),
@@ -106,8 +108,63 @@ final readonly class WorkerOptions
             recoveryInterval: self::decimalOption($options, 'recovery_interval', 60.0),
             eventListener: self::strictListener($options),
             lockingEnabled: $lockingEnabled,
-            sleeper: $sleeperRaw
+            sleeper: self::sleeper($options)
         );
+    }
+
+    /** @param array<string, mixed> $options */
+    private static function lockFile(array $options): ?string
+    {
+        if (!array_key_exists('lock_file', $options) || $options['lock_file'] === null) {
+            return null;
+        }
+        $lockFile = $options['lock_file'];
+        if (!is_string($lockFile)) {
+            throw new \InvalidArgumentException('Worker lock_file must be a non-empty string or null');
+        }
+        if (trim($lockFile) === '') {
+            throw new \InvalidArgumentException('Worker custom lock path must not be empty');
+        }
+        return $lockFile;
+    }
+
+    /** @param array<string, mixed> $options */
+    private static function lockingEnabled(array $options, ?string $lockFile): bool
+    {
+        $enabled = !array_key_exists('lock_file', $options) || $options['lock_file'] !== null;
+        if (array_key_exists('locking_enabled', $options)) {
+            $enabled = self::booleanValue($options['locking_enabled'], 'locking_enabled');
+        }
+        self::validateLocking($enabled, $lockFile);
+        return $enabled;
+    }
+
+    private static function booleanValue(mixed $value, string $key): bool
+    {
+        if (!is_bool($value)) {
+            throw new \InvalidArgumentException(sprintf('Worker %s must be a boolean', $key));
+        }
+        return $value;
+    }
+
+    /** @param array<string, mixed> $options */
+    private static function clock(array $options): ?ClockInterface
+    {
+        $clock = $options['clock'] ?? null;
+        if ($clock !== null && !$clock instanceof ClockInterface) {
+            throw new \InvalidArgumentException('Worker clock must be a ClockInterface instance or null');
+        }
+        return $clock;
+    }
+
+    /** @param array<string, mixed> $options */
+    private static function sleeper(array $options): ?SleeperInterface
+    {
+        $sleeper = $options['sleeper'] ?? null;
+        if ($sleeper !== null && !$sleeper instanceof SleeperInterface) {
+            throw new \InvalidArgumentException('Worker sleeper must be a SleeperInterface instance or null');
+        }
+        return $sleeper;
     }
 
     /**
@@ -152,21 +209,36 @@ final readonly class WorkerOptions
             return $default;
         }
         $value = $options[$key];
-        if (is_int($value) || is_float($value)) {
-            if (!is_finite((float) $value)) {
-                throw new \InvalidArgumentException(sprintf('Worker option "%s" must be finite', $key));
-            }
+        if (is_int($value)) {
             return (float) $value;
         }
-        if (is_string($value) && preg_match('/^(0|[1-9][0-9]*)(\.[0-9]+)?$/', $value) === 1) {
-            $parsed = (float) $value;
-            if (is_finite($parsed)) {
-                return $parsed;
-            }
+        if (is_float($value)) {
+            return self::finiteDecimal($value, $key);
+        }
+        if (is_string($value)) {
+            return self::decimalString($value, $key);
         }
         throw new \InvalidArgumentException(
             sprintf('Worker option "%s" must be a finite number or canonical numeric string', $key)
         );
+    }
+
+    private static function finiteDecimal(float $value, string $key): float
+    {
+        if (!is_finite($value)) {
+            throw new \InvalidArgumentException(sprintf('Worker option "%s" must be finite', $key));
+        }
+        return $value;
+    }
+
+    private static function decimalString(string $value, string $key): float
+    {
+        if (preg_match('/^(0|[1-9][0-9]*)(\.[0-9]+)?$/', $value) !== 1) {
+            throw new \InvalidArgumentException(
+                sprintf('Worker option "%s" must be a finite number or canonical numeric string', $key)
+            );
+        }
+        return self::finiteDecimal((float) $value, $key);
     }
 
     /**
@@ -181,25 +253,7 @@ final readonly class WorkerOptions
         if (!array_key_exists($key, $options)) {
             return $default;
         }
-        $value = $options[$key];
-        if (!is_bool($value)) {
-            throw new \InvalidArgumentException(sprintf('Worker option "%s" must be a boolean', $key));
-        }
-        return $value;
-    }
-
-    /**
-     * Validate clock option strictly.
-     *
-     * @param array<string, mixed> $options Raw worker options
-     * @return null Null when absent
-     */
-    private static function strictClock(array $options): null
-    {
-        if (array_key_exists('clock', $options) && $options['clock'] !== null) {
-            throw new \InvalidArgumentException('Worker clock must be a ClockInterface instance or null');
-        }
-        return null;
+        return self::booleanValue($options[$key], sprintf('option "%s"', $key));
     }
 
     /**

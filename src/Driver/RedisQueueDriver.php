@@ -114,35 +114,6 @@ end
 return #staleJobs
 LUA;
 
-    private const RECONCILE_BATCH_LUA = <<<'LUA'
-local pendingKey = KEYS[1]
-local delayedKey = KEYS[2]
-local now = tonumber(ARGV[1])
-local pendingScanLimit = tonumber(ARGV[2])
-local count = tonumber(ARGV[3])
-local present = {}
-for i = 1, count do
-    local jobId = ARGV[3 + i]
-    local availableAt = tonumber(ARGV[3 + count + i])
-    local found = false
-    if redis.call('LPOS', pendingKey, jobId, 'MAXLEN', pendingScanLimit) then
-        found = true
-    elseif redis.call('ZSCORE', delayedKey, jobId) then
-        found = true
-    end
-    if found then
-        present[#present + 1] = jobId
-    else
-        if availableAt <= now then
-            redis.call('LPUSH', pendingKey, jobId)
-        else
-            redis.call('ZADD', delayedKey, availableAt, jobId)
-        end
-    end
-end
-return present
-LUA;
-
     /** @var array<string, int> */
     private array $repairCursors = [];
 
@@ -473,14 +444,26 @@ LUA;
         int $now,
         int $pendingScanLimit
     ): array {
+        [$ids, $timestamps] = $this->reconciliationArguments($availableAtByJobId, $now, $pendingScanLimit);
+        if ($ids === []) {
+            return [];
+        }
+        $result = $this->evaluateReconciliation($queue, [$ids, $timestamps], $now, $pendingScanLimit);
+        $present = $this->reconciliationIds($result);
+        return $this->orderReconciliationIds($present, $availableAtByJobId);
+    }
+
+    /**
+     * @param array<int, int> $availableAtByJobId
+     * @return array{list<string>, list<string>}
+     */
+    private function reconciliationArguments(array $availableAtByJobId, int $now, int $pendingScanLimit): array
+    {
         if ($now <= 0) {
             throw new \InvalidArgumentException('Reconciliation current timestamp must be positive');
         }
         if ($pendingScanLimit < 1) {
             throw new \InvalidArgumentException('Pending scan limit must be positive');
-        }
-        if ($availableAtByJobId === []) {
-            return [];
         }
         $ids = [];
         $timestamps = [];
@@ -494,9 +477,20 @@ LUA;
             $ids[] = (string) $jobId;
             $timestamps[] = (string) $availableAt;
         }
+        return [$ids, $timestamps];
+    }
+
+    /** @param array{list<string>, list<string>} $arguments */
+    private function evaluateReconciliation(
+        string $queue,
+        array $arguments,
+        int $now,
+        int $pendingScanLimit
+    ): mixed {
+        [$ids, $timestamps] = $arguments;
         // Direct EVAL (not EVALSHA) so a cold script cache cannot add a NOSCRIPT retry.
-        $result = $this->redis->eval(
-            self::RECONCILE_BATCH_LUA,
+        return $this->redis->eval(
+            self::reconciliationScript(),
             2,
             $this->pendingKey($queue),
             $this->delayedKey($queue),
@@ -505,6 +499,11 @@ LUA;
             (string) count($ids),
             ...[...$ids, ...$timestamps]
         );
+    }
+
+    /** @return list<int> */
+    private function reconciliationIds(mixed $result): array
+    {
         if ($result === null || $result === false) {
             return [];
         }
@@ -520,14 +519,54 @@ LUA;
             }
             $present[] = (int) $str;
         }
+        return $present;
+    }
+
+    /**
+     * @param list<int> $present
+     * @param array<int, int> $availableAtByJobId
+     * @return list<int>
+     */
+    private function orderReconciliationIds(array $present, array $availableAtByJobId): array
+    {
         // Return unique already-present IDs in input order.
-        $order = array_flip(array_map('strval', array_keys($availableAtByJobId)));
+        $order = array_flip(array_keys($availableAtByJobId));
         usort($present, static function (int $a, int $b) use ($order): int {
-            $rankA = $order[(string) $a] ?? PHP_INT_MAX;
-            $rankB = $order[(string) $b] ?? PHP_INT_MAX;
+            $rankA = $order[$a] ?? PHP_INT_MAX;
+            $rankB = $order[$b] ?? PHP_INT_MAX;
             return $rankA <=> $rankB;
         });
         return array_values(array_unique($present));
+    }
+
+    private static function reconciliationScript(): string
+    {
+        return <<<'LUA'
+local pendingKey = KEYS[1]
+local delayedKey = KEYS[2]
+local now = tonumber(ARGV[1])
+local pendingScanLimit = tonumber(ARGV[2])
+local count = tonumber(ARGV[3])
+local present = {}
+for i = 1, count do
+    local jobId = ARGV[3 + i]
+    local availableAt = tonumber(ARGV[3 + count + i])
+    local found = false
+    if redis.call('LPOS', pendingKey, jobId, 'MAXLEN', pendingScanLimit) then
+        found = true
+    elseif redis.call('ZSCORE', delayedKey, jobId) then
+        found = true
+    end
+    if found then
+        present[#present + 1] = jobId
+    elseif availableAt <= now then
+        redis.call('LPUSH', pendingKey, jobId)
+    else
+        redis.call('ZADD', delayedKey, availableAt, jobId)
+    end
+end
+return present
+LUA;
     }
 
     /**

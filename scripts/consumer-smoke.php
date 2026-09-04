@@ -12,11 +12,19 @@ use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
 use Oeltima\SimpleQueue\Storage\PdoJobStorage;
 use Oeltima\SimpleQueue\Worker;
 
-$autoload = $argv[1] ?? null;
-if (!is_string($autoload) || !is_file($autoload)) {
-    throw new RuntimeException('Usage: consumer-smoke.php <consumer-vendor-autoload.php>');
+function consumerAutoload(mixed $arguments): string
+{
+    if (!is_array($arguments)) {
+        throw new RuntimeException('Usage: consumer-smoke.php <consumer-vendor-autoload.php>');
+    }
+    $autoload = $arguments[1] ?? null;
+    if (!is_string($autoload) || !is_file($autoload)) {
+        throw new RuntimeException('Usage: consumer-smoke.php <consumer-vendor-autoload.php>');
+    }
+    return $autoload;
 }
-require $autoload;
+
+require consumerAutoload($_SERVER['argv'] ?? null);
 
 final class ConsumerSmokeHandler implements JobHandlerInterface
 {
@@ -30,29 +38,27 @@ final class ConsumerSmokeHandler implements JobHandlerInterface
     }
 }
 
-$memoryStorage = new InMemoryJobStorage();
-$memoryDriver = new InMemoryQueueDriver();
-$memoryManager = new QueueManager($memoryDriver);
-$registry = new JobRegistry();
-$registry->register('consumer.smoke', ConsumerSmokeHandler::class);
-$memoryJobId = (new JobDispatcher($memoryStorage, $memoryManager))->dispatch(
-    'consumer.smoke',
-    ['backend' => 'memory']
-);
-$worker = new Worker(
-    $memoryStorage,
-    $memoryManager,
-    $registry,
-    queue: 'default',
-    options: ['lock_file' => null]
-);
-if (!$worker->processOne() || $memoryStorage->find($memoryJobId)?->status !== JobStatus::Completed) {
-    throw new RuntimeException('In-memory consumer lifecycle failed');
+function assertInMemoryConsumerLifecycle(): void
+{
+    $storage = new InMemoryJobStorage();
+    $manager = new QueueManager(new InMemoryQueueDriver());
+    $registry = new JobRegistry();
+    $registry->register('consumer.smoke', ConsumerSmokeHandler::class);
+    $jobId = (new JobDispatcher($storage, $manager))->dispatch('consumer.smoke', ['backend' => 'memory']);
+    $worker = new Worker($storage, $manager, $registry, queue: 'default', options: ['lock_file' => null]);
+    if (!$worker->processOne()) {
+        throw new RuntimeException('In-memory consumer did not process the queued job');
+    }
+    if ($storage->find($jobId)?->status !== JobStatus::Completed) {
+        throw new RuntimeException('In-memory consumer lifecycle failed');
+    }
 }
 
-$pdo = new PDO('sqlite::memory:');
-$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-$pdo->exec(<<<'SQL'
+function consumerPdo(): PDO
+{
+    $pdo = new PDO('sqlite::memory:');
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->exec(<<<'SQL'
 CREATE TABLE background_jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     queue TEXT NOT NULL DEFAULT 'default',
@@ -77,15 +83,26 @@ CREATE TABLE background_jobs (
     updated_at TEXT NOT NULL
 )
 SQL);
-$pdoStorage = new PdoJobStorage($pdo);
-$pdoJobId = $pdoStorage->createJob('consumer.pdo', ['backend' => 'sqlite']);
-$claim = $pdoStorage->claimById($pdoJobId, 'consumer-worker');
-if ($claim === null || !$pdoStorage->markCompleted($claim, ['ok' => true])) {
-    throw new RuntimeException('PDO consumer lifecycle failed');
-}
-$completed = $pdoStorage->find($pdoJobId);
-if ($completed?->status !== JobStatus::Completed || $completed->result !== ['ok' => true]) {
-    throw new RuntimeException('PDO consumer result did not round-trip');
+    return $pdo;
 }
 
+function assertPdoConsumerLifecycle(): void
+{
+    $storage = new PdoJobStorage(consumerPdo());
+    $jobId = $storage->createJob('consumer.pdo', ['backend' => 'sqlite']);
+    $claim = $storage->claimById($jobId, 'consumer-worker');
+    if ($claim === null) {
+        throw new RuntimeException('PDO consumer did not claim the queued job');
+    }
+    if (!$storage->markCompleted($claim, ['ok' => true])) {
+        throw new RuntimeException('PDO consumer lifecycle failed');
+    }
+    $completed = $storage->find($jobId);
+    if ($completed?->status !== JobStatus::Completed || $completed->result !== ['ok' => true]) {
+        throw new RuntimeException('PDO consumer result did not round-trip');
+    }
+}
+
+assertInMemoryConsumerLifecycle();
+assertPdoConsumerLifecycle();
 echo "Isolated no-dev consumer smoke passed\n";

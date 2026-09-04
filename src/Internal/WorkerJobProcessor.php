@@ -5,19 +5,15 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Internal;
 
 use Oeltima\SimpleQueue\Contract\ClaimedJob;
-use Oeltima\SimpleQueue\Contract\ClockInterface;
 use Oeltima\SimpleQueue\Contract\InfrastructureFailureEvent;
 use Oeltima\SimpleQueue\Contract\JobCompletedEvent;
 use Oeltima\SimpleQueue\Contract\JobFailedEvent;
 use Oeltima\SimpleQueue\Contract\JobLostOwnershipEvent;
 use Oeltima\SimpleQueue\Contract\JobRetriedEvent;
-use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Contract\SupportsProcessingHeartbeat;
 use Oeltima\SimpleQueue\Exception\HandlerNotFoundException;
 use Oeltima\SimpleQueue\Exception\SerializationException;
-use Oeltima\SimpleQueue\JobRegistry;
-use Psr\Log\LoggerInterface;
 
 /**
  * Applies the durable outcome flow for one claimed job.
@@ -26,15 +22,23 @@ use Psr\Log\LoggerInterface;
  */
 final readonly class WorkerJobProcessor
 {
-    public function __construct(
-        private JobStorageInterface $storage,
-        private JobRegistry $registry,
-        private LoggerInterface $logger,
-        private string $queue,
-        private WorkerPolicy $policy,
-        private ClockInterface $clock,
-        private WorkerEventEmitter $eventEmitter
-    ) {
+    private \Oeltima\SimpleQueue\Contract\JobStorageInterface $storage;
+    private \Oeltima\SimpleQueue\JobRegistry $registry;
+    private \Psr\Log\LoggerInterface $logger;
+    private string $queue;
+    private WorkerPolicy $policy;
+    private \Oeltima\SimpleQueue\Contract\ClockInterface $clock;
+    private WorkerEventEmitter $eventEmitter;
+
+    public function __construct(WorkerJobProcessorDependencies $dependencies)
+    {
+        $this->storage = $dependencies->storage;
+        $this->registry = $dependencies->registry;
+        $this->logger = $dependencies->logger;
+        $this->queue = $dependencies->queue;
+        $this->policy = $dependencies->policy;
+        $this->clock = $dependencies->clock;
+        $this->eventEmitter = $dependencies->eventEmitter;
     }
 
     /**

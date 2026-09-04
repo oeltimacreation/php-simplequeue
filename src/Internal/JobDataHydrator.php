@@ -12,6 +12,7 @@ use Oeltima\SimpleQueue\Exception\SerializationException;
 /**
  * Converts untrusted storage rows into trusted job data.
  *
+ * @phpstan-type StrictRow array{data: array<string, mixed>, id: int}
  * @internal
  * @phpstan-type StorageRowShape array{
  *     id?: int|string|null,
@@ -194,21 +195,22 @@ final class JobDataHydrator
     public static function hydrateStrict(array $data): JobData
     {
         $id = self::strictId($data);
-        self::requireDurableFields($data, $id);
-        $queue = self::strictNonEmptyString($data, 'queue', $id, 255);
-        $type = self::strictNonEmptyString($data, 'type', $id, 255);
-        $status = self::strictStatus($data, $id);
-        self::requirePayload($data, $id);
-        $attempts = self::strictAttempts($data, $id);
-        $maxAttempts = self::strictMaxAttempts($data, $id);
+        $row = ['data' => $data, 'id' => $id];
+        self::requireDurableFields($row);
+        $queue = self::strictNonEmptyString($row, 'queue', 255);
+        $type = self::strictNonEmptyString($row, 'type', 255);
+        $status = self::strictStatus($row);
+        self::requirePayload($row);
+        $attempts = self::strictAttempts($row);
+        $maxAttempts = self::strictMaxAttempts($row);
         if ($attempts > $maxAttempts) {
             self::invalid($id, 'attempts');
         }
-        self::strictTimestamps($data, $id);
-        self::strictNullableStrings($data, $id);
-        self::strictResult($data, $id);
-        $progress = self::strictProgress($data, $id);
-        self::strictStateNullability($data, $status, $id);
+        self::strictTimestamps($row);
+        self::strictNullableStrings($row);
+        self::strictResult($row);
+        $progress = self::strictProgress($row);
+        self::strictStateNullability($row, $status);
 
         $normalized = $data;
         $normalized['id'] = $id;
@@ -225,14 +227,13 @@ final class JobDataHydrator
     /**
      * Require every column persisted by the built-in storage schema.
      *
-     * @param array<string, mixed> $data Durable row
-     * @param int $id Job ID for errors
+     * @param StrictRow $row Durable row and job ID
      */
-    private static function requireDurableFields(array $data, int $id): void
+    private static function requireDurableFields(array $row): void
     {
         foreach (self::DURABLE_FIELDS as $field) {
-            if (!array_key_exists($field, $data)) {
-                self::invalid($id, $field);
+            if (!array_key_exists($field, $row['data'])) {
+                self::invalid($row['id'], $field);
             }
         }
     }
@@ -257,16 +258,21 @@ final class JobDataHydrator
     /**
      * Require a non-empty string field.
      *
-     * @param array<string, mixed> $data Durable row
+     * @param StrictRow $row Durable row and job ID
      * @param string $field Field name
-     * @param int $id Job ID for errors
      * @return string Validated value
      */
-    private static function strictNonEmptyString(array $data, string $field, int $id, int $maxBytes): string
+    private static function strictNonEmptyString(array $row, string $field, int $maxBytes): string
     {
-        $value = $data[$field] ?? null;
-        if (!is_string($value) || trim($value) === '' || strlen($value) > $maxBytes) {
-            self::invalid($id, $field);
+        $value = $row['data'][$field] ?? null;
+        if (!is_string($value)) {
+            self::invalid($row['id'], $field);
+        }
+        if (trim($value) === '') {
+            self::invalid($row['id'], $field);
+        }
+        if (strlen($value) > $maxBytes) {
+            self::invalid($row['id'], $field);
         }
         return $value;
     }
@@ -274,13 +280,12 @@ final class JobDataHydrator
     /**
      * Require a valid status.
      *
-     * @param array<string, mixed> $data Durable row
-     * @param int $id Job ID for errors
+     * @param StrictRow $row Durable row and job ID
      * @return JobStatus Validated status
      */
-    private static function strictStatus(array $data, int $id): JobStatus
+    private static function strictStatus(array $row): JobStatus
     {
-        $raw = $data['status'] ?? null;
+        $raw = $row['data']['status'] ?? null;
         try {
             if ($raw instanceof JobStatus) {
                 return $raw;
@@ -290,36 +295,34 @@ final class JobDataHydrator
             }
             throw new \ValueError('Invalid status');
         } catch (\ValueError $exception) {
-            throw new QueueException(sprintf('Stored job #%d has invalid field "status"', $id), 0, $exception);
+            throw new QueueException(sprintf('Stored job #%d has invalid field "status"', $row['id']), 0, $exception);
         }
     }
 
     /**
      * Require a payload key.
      *
-     * @param array<string, mixed> $data Durable row
-     * @param int $id Job ID for errors
+     * @param StrictRow $row Durable row and job ID
      */
-    private static function requirePayload(array $data, int $id): void
+    private static function requirePayload(array $row): void
     {
-        if (!is_string($data['payload'] ?? null)) {
-            self::invalid($id, 'payload');
+        if (!is_string($row['data']['payload'] ?? null)) {
+            self::invalid($row['id'], 'payload');
         }
     }
 
     /**
      * Require non-negative attempts.
      *
-     * @param array<string, mixed> $data Durable row
-     * @param int $id Job ID for errors
+     * @param StrictRow $row Durable row and job ID
      * @return int Validated attempts
      */
-    private static function strictAttempts(array $data, int $id): int
+    private static function strictAttempts(array $row): int
     {
-        $raw = $data['attempts'] ?? null;
+        $raw = $row['data']['attempts'] ?? null;
         $attempts = self::canonicalInteger($raw);
         if ($attempts === null || $attempts < 0) {
-            self::invalid($id, 'attempts');
+            self::invalid($row['id'], 'attempts');
         }
         return $attempts;
     }
@@ -327,16 +330,15 @@ final class JobDataHydrator
     /**
      * Require positive max attempts.
      *
-     * @param array<string, mixed> $data Durable row
-     * @param int $id Job ID for errors
+     * @param StrictRow $row Durable row and job ID
      * @return int Validated max attempts
      */
-    private static function strictMaxAttempts(array $data, int $id): int
+    private static function strictMaxAttempts(array $row): int
     {
-        $raw = $data['max_attempts'] ?? null;
+        $raw = $row['data']['max_attempts'] ?? null;
         $max = self::canonicalInteger($raw);
         if ($max === null || $max < 1) {
-            self::invalid($id, 'max_attempts');
+            self::invalid($row['id'], 'max_attempts');
         }
         return $max;
     }
@@ -344,67 +346,107 @@ final class JobDataHydrator
     /**
      * Validate timestamp nullability invariants.
      *
-     * @param array<string, mixed> $data Durable row
-     * @param int $id Job ID for errors
+     * @param StrictRow $row Durable row and job ID
      */
-    private static function strictTimestamps(array $data, int $id): void
+    private static function strictTimestamps(array $row): void
     {
         foreach (['available_at', 'created_at', 'updated_at'] as $field) {
-            $value = $data[$field];
-            if (!is_string($value) || trim($value) === '') {
-                self::invalid($id, $field);
-            }
+            self::requireNonEmptyString($row, $field);
         }
         foreach (['started_at', 'completed_at', 'locked_at'] as $field) {
-            $value = $data[$field];
-            if ($value !== null && (!is_string($value) || trim($value) === '')) {
-                self::invalid($id, $field);
-            }
+            self::requireNullableNonEmptyString($row, $field);
+        }
+    }
+
+    /** @param StrictRow $row */
+    private static function requireNonEmptyString(array $row, string $field): void
+    {
+        $value = $row['data'][$field];
+        if (!is_string($value)) {
+            self::invalid($row['id'], $field);
+        }
+        if (trim($value) === '') {
+            self::invalid($row['id'], $field);
+        }
+    }
+
+    /** @param StrictRow $row */
+    private static function requireNullableNonEmptyString(array $row, string $field): void
+    {
+        $value = $row['data'][$field];
+        if ($value === null) {
+            return;
+        }
+        if (!is_string($value) || trim($value) === '') {
+            self::invalid($row['id'], $field);
         }
     }
 
     /**
      * Validate nullable persisted string columns and their schema bounds.
      *
-     * @param array<string, mixed> $data Durable row
-     * @param int $id Job ID for errors
+     * @param StrictRow $row Durable row and job ID
      */
-    private static function strictNullableStrings(array $data, int $id): void
+    private static function strictNullableStrings(array $row): void
     {
         foreach (['error_message', 'error_trace'] as $field) {
-            if ($data[$field] !== null && !is_string($data[$field])) {
-                self::invalid($id, $field);
-            }
+            self::requireNullableString($row, $field);
         }
         foreach (['locked_by', 'progress_message', 'request_id'] as $field) {
-            $value = $data[$field];
-            if ($value !== null && (!is_string($value) || strlen($value) > 255)) {
-                self::invalid($id, $field);
-            }
+            self::requireNullableBoundedString($row, $field);
         }
         foreach (['locked_by', 'request_id'] as $field) {
-            $value = $data[$field];
-            if (is_string($value) && trim($value) === '') {
-                self::invalid($id, $field);
-            }
+            self::requireNullableNonEmptyString($row, $field);
         }
-        $lease = $data['lease_token'];
-        if ($lease !== null && (!is_string($lease) || preg_match('/^[a-f0-9]{64}$/D', $lease) !== 1)) {
-            self::invalid($id, 'lease_token');
+        self::requireLeaseToken($row);
+    }
+
+    /** @param StrictRow $row */
+    private static function requireNullableString(array $row, string $field): void
+    {
+        $value = $row['data'][$field];
+        if ($value !== null && !is_string($value)) {
+            self::invalid($row['id'], $field);
+        }
+    }
+
+    /** @param StrictRow $row */
+    private static function requireNullableBoundedString(array $row, string $field): void
+    {
+        $value = $row['data'][$field];
+        if ($value === null) {
+            return;
+        }
+        if (!is_string($value)) {
+            self::invalid($row['id'], $field);
+        }
+        if (strlen($value) > 255) {
+            self::invalid($row['id'], $field);
+        }
+    }
+
+    /** @param StrictRow $row */
+    private static function requireLeaseToken(array $row): void
+    {
+        $lease = $row['data']['lease_token'];
+        if ($lease === null) {
+            return;
+        }
+        if (!is_string($lease) || preg_match('/^[a-f0-9]{64}$/D', $lease) !== 1) {
+            self::invalid($row['id'], 'lease_token');
         }
     }
 
     /**
      * Require a nullable JSON result representation.
      *
-     * @param array<string, mixed> $data Durable row
-     * @param int $id Job ID for errors
+     * @param StrictRow $row Durable row and job ID
      */
-    private static function strictResult(array $data, int $id): void
+    private static function strictResult(array $row): void
     {
-        $result = $data['result'];
+        $result = $row['data']['result'];
         if ($result !== null && !is_string($result)) {
-            self::invalid($id, 'result');
+            self::invalid($row['id'], 'result');
         }
         if ($result === '') {
             throw new SerializationException('Stored job result contains invalid JSON');
@@ -414,18 +456,20 @@ final class JobDataHydrator
     /**
      * Validate progress nullability.
      *
-     * @param array<string, mixed> $data Durable row
-     * @param int $id Job ID for errors
+     * @param StrictRow $row Durable row and job ID
      */
-    private static function strictProgress(array $data, int $id): ?int
+    private static function strictProgress(array $row): ?int
     {
-        $progress = $data['progress'];
+        $progress = $row['data']['progress'];
         if ($progress === null) {
             return null;
         }
         $normalized = self::canonicalInteger($progress);
-        if ($normalized === null || $normalized < 0 || $normalized > 100) {
-            self::invalid($id, 'progress');
+        if ($normalized === null) {
+            self::invalid($row['id'], 'progress');
+        }
+        if ($normalized < 0 || $normalized > 100) {
+            self::invalid($row['id'], 'progress');
         }
         return $normalized;
     }
@@ -433,34 +477,48 @@ final class JobDataHydrator
     /**
      * Validate ownership and terminal timestamp invariants.
      *
-     * @param array<string, mixed> $data Durable row
+     * @param StrictRow $row Durable row and job ID
      * @param JobStatus $status Normalized status
-     * @param int $id Job ID for errors
      */
-    private static function strictStateNullability(array $data, JobStatus $status, int $id): void
+    private static function strictStateNullability(array $row, JobStatus $status): void
     {
-        $ownershipFields = ['locked_by', 'locked_at', 'lease_token'];
         if ($status === JobStatus::Running) {
-            foreach ($ownershipFields as $field) {
-                if ($data[$field] === null) {
-                    self::invalid($id, $field);
-                }
-            }
-            if ($data['started_at'] === null) {
-                self::invalid($id, 'started_at');
-            }
+            self::requireRunningState($row);
         } else {
-            foreach ($ownershipFields as $field) {
-                if ($data[$field] !== null) {
-                    self::invalid($id, $field);
-                }
+            self::requireUnlockedState($row);
+        }
+        self::requireCompletionState($row, $status);
+    }
+
+    /** @param StrictRow $row */
+    private static function requireRunningState(array $row): void
+    {
+        foreach (['locked_by', 'locked_at', 'lease_token', 'started_at'] as $field) {
+            if ($row['data'][$field] === null) {
+                self::invalid($row['id'], $field);
             }
         }
-        if ($status === JobStatus::Pending && $data['completed_at'] !== null) {
-            self::invalid($id, 'completed_at');
+    }
+
+    /** @param StrictRow $row */
+    private static function requireUnlockedState(array $row): void
+    {
+        foreach (['locked_by', 'locked_at', 'lease_token'] as $field) {
+            if ($row['data'][$field] !== null) {
+                self::invalid($row['id'], $field);
+            }
         }
-        if ($status->isTerminal() && $data['completed_at'] === null) {
-            self::invalid($id, 'completed_at');
+    }
+
+    /** @param StrictRow $row */
+    private static function requireCompletionState(array $row, JobStatus $status): void
+    {
+        $completedAt = $row['data']['completed_at'];
+        if ($status === JobStatus::Pending && $completedAt !== null) {
+            self::invalid($row['id'], 'completed_at');
+        }
+        if ($status->isTerminal() && $completedAt === null) {
+            self::invalid($row['id'], 'completed_at');
         }
     }
 
@@ -469,16 +527,25 @@ final class JobDataHydrator
         if (is_int($value)) {
             return $value;
         }
-        if (!is_string($value) || preg_match('/^(0|[1-9][0-9]*)$/D', $value) !== 1) {
+        if (!is_string($value)) {
             return null;
         }
-        if (
-            strlen($value) > strlen((string) PHP_INT_MAX)
-            || (strlen($value) === strlen((string) PHP_INT_MAX) && $value > (string) PHP_INT_MAX)
-        ) {
+        if (preg_match('/^(0|[1-9][0-9]*)$/D', $value) !== 1) {
+            return null;
+        }
+        if (self::integerStringOverflows($value)) {
             return null;
         }
         return (int) $value;
+    }
+
+    private static function integerStringOverflows(string $value): bool
+    {
+        $maximum = (string) PHP_INT_MAX;
+        if (strlen($value) !== strlen($maximum)) {
+            return strlen($value) > strlen($maximum);
+        }
+        return $value > $maximum;
     }
 
     private static function invalid(int|string $id, string $field): never
