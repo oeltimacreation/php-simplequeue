@@ -15,6 +15,7 @@ use Oeltima\SimpleQueue\Contract\SupportsQueueReconciliation;
 use Oeltima\SimpleQueue\Contract\QueueStatsInterface;
 use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
 use Oeltima\SimpleQueue\Contract\ClockInterface;
+use Oeltima\SimpleQueue\Internal\ReconciliationInputValidator;
 use Oeltima\SimpleQueue\SystemClock;
 
 /**
@@ -465,23 +466,7 @@ final class InMemoryQueueDriver implements
             throw new \InvalidArgumentException('Pending scan limit must be positive');
         }
         foreach ($availableAtByJobId as $jobId => $availableAt) {
-            $this->validateReconciliationPair($jobId, $availableAt);
-        }
-    }
-
-    private function validateReconciliationPair(mixed $jobId, mixed $availableAt): void
-    {
-        if (!is_int($jobId)) {
-            throw new \InvalidArgumentException('Reconciliation IDs must be positive integers');
-        }
-        if ($jobId < 1) {
-            throw new \InvalidArgumentException('Reconciliation IDs must be positive integers');
-        }
-        if (!is_int($availableAt)) {
-            throw new \InvalidArgumentException('Reconciliation timestamps must be positive integers');
-        }
-        if ($availableAt <= 0) {
-            throw new \InvalidArgumentException('Reconciliation timestamps must be positive integers');
+            ReconciliationInputValidator::validatePair($jobId, $availableAt);
         }
     }
 
