@@ -19,14 +19,21 @@ function redisBenchmarks(BenchmarkOptions $options): array
     ];
 }
 
-/** @return array{inner: Client, client: BenchmarkRedisClient, driver: RedisQueueDriver, prefix: string} */
+/**
+ * @return array{inner: Client, client: BenchmarkRedisClient, driver: RedisQueueDriver, prefix: string}
+ */
 function redisSetup(BenchmarkOptions $options, BenchmarkScenario $scenario): array
 {
     $inner = new Client(['scheme' => 'tcp', 'host' => $options->redisHost, 'port' => $options->redisPort]);
     $inner->connect();
     $client = new BenchmarkRedisClient($inner);
     $prefix = sprintf('sq-benchmark:%s:%s', $scenario->key(), bin2hex(random_bytes(6)));
-    return ['inner' => $inner, 'client' => $client, 'driver' => new RedisQueueDriver($client, $prefix), 'prefix' => $prefix];
+    return [
+        'inner' => $inner,
+        'client' => $client,
+        'driver' => new RedisQueueDriver($client, $prefix),
+        'prefix' => $prefix,
+    ];
 }
 
 /** @param array{inner: Client, client: BenchmarkRedisClient, driver: RedisQueueDriver, prefix: string} $fixture */

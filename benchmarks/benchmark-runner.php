@@ -15,6 +15,9 @@ const BENCHMARK_COUNTER_METRICS = [
 /** @param list<float|int> $values */
 function median(array $values): float
 {
+    if ($values === []) {
+        throw new InvalidArgumentException('Cannot calculate the median of an empty sample');
+    }
     sort($values, SORT_NUMERIC);
     $middle = intdiv(count($values), 2);
     return count($values) % 2 === 0
@@ -31,9 +34,26 @@ function median(array $values): float
  */
 function cpuSeconds(array $start, array $end): float
 {
-    $user = static fn (array $usage): float => (float) $usage['ru_utime.tv_sec'] + ((float) $usage['ru_utime.tv_usec'] / 1_000_000);
-    $system = static fn (array $usage): float => (float) $usage['ru_stime.tv_sec'] + ((float) $usage['ru_stime.tv_usec'] / 1_000_000);
+    $user = static fn (array $usage): float => (float) $usage['ru_utime.tv_sec']
+        + ((float) $usage['ru_utime.tv_usec'] / 1_000_000);
+    $system = static fn (array $usage): float => (float) $usage['ru_stime.tv_sec']
+        + ((float) $usage['ru_stime.tv_usec'] / 1_000_000);
     return ($user($end) - $user($start)) + ($system($end) - $system($start));
+}
+
+/**
+ * Read a numeric operation metric or fail with a useful benchmark error.
+ *
+ * @param array<string, int|float|Closure> $metrics Operation metrics
+ */
+function benchmarkNumericMetric(array $metrics, string $name, int|float $default = 0): int|float
+{
+    $value = $metrics[$name] ?? $default;
+    if (!is_int($value) && !is_float($value)) {
+        throw new UnexpectedValueException("Benchmark metric {$name} must be numeric");
+    }
+
+    return $value;
 }
 
 /**
@@ -48,15 +68,15 @@ function benchmark(BenchmarkScenario $scenario, BenchmarkOptions $options, Closu
         gc_collect_cycles();
         memory_reset_peak_usage();
         $memoryBefore = memory_get_usage(false);
-        $cpuBefore = function_exists('getrusage') ? getrusage() : null;
+        $cpuBefore = function_exists('getrusage') ? getrusage() : false;
         $started = hrtime(true);
         $metrics = $operation();
         $seconds = (hrtime(true) - $started) / 1_000_000_000;
-        $cpuAfter = function_exists('getrusage') ? getrusage() : null;
-        $measuredCpuSeconds = $cpuBefore !== null && $cpuAfter !== null
+        $cpuAfter = function_exists('getrusage') ? getrusage() : false;
+        $measuredCpuSeconds = is_array($cpuBefore) && is_array($cpuAfter)
             ? cpuSeconds($cpuBefore, $cpuAfter)
             : 0.0;
-        $operations = (int) $metrics['operations'];
+        $operations = (int) benchmarkNumericMetric($metrics, 'operations');
         $sample = [
             'seconds' => $seconds,
             'throughput_per_second' => $operations / max($seconds, 0.000_000_001),
@@ -65,15 +85,19 @@ function benchmark(BenchmarkScenario $scenario, BenchmarkOptions $options, Closu
             'operations' => $operations,
         ];
         foreach (BENCHMARK_COUNTER_METRICS as $metric) {
-            $sample[$metric] = (int) ($metrics[$metric] ?? 0);
+            $sample[$metric] = (int) benchmarkNumericMetric($metrics, $metric);
         }
-        $sample['cpu_seconds'] = (float) ($metrics['cpu_seconds'] ?? $measuredCpuSeconds);
+        $sample['cpu_seconds'] = (float) benchmarkNumericMetric($metrics, 'cpu_seconds', $measuredCpuSeconds);
         if (isset($metrics['cleanup']) && $metrics['cleanup'] instanceof Closure) {
             $metrics['cleanup']();
         }
         if ($iteration >= 0) {
             $samples[] = $sample;
         }
+    }
+
+    if ($samples === []) {
+        throw new LogicException('Benchmark produced no measured samples');
     }
 
     $seconds = array_column($samples, 'seconds');

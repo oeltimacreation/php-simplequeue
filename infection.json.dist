@@ -6,12 +6,15 @@
     },
     "logs": {
         "text": "infection.log",
-        "summary": "infection-summary.log"
+        "summary": "infection-summary.log",
+        "summaryJson": "infection-summary.json"
     },
     "mutators": {
         "@default": true
     },
     "testFramework": "phpunit",
     "testFrameworkOptions": "--no-coverage",
+    "minMsi": 64.79,
+    "minCoveredMsi": 64.79,
     "timeout": 10
 }

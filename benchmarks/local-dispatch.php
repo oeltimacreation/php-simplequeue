@@ -11,22 +11,74 @@ use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
 function localBenchmarks(BenchmarkOptions $options): array
 {
     return [
+        memoryQueueBenchmark($options),
+        memoryQueueBenchmark($options, true),
         memoryBatchBenchmark($options),
         memoryBatchBenchmark($options, true),
         sqliteSingleBenchmark($options),
         sqliteSingleBenchmark($options, true),
         sqliteBatchBenchmark($options),
         sqliteBatchBenchmark($options, true),
+        sqliteBatchBoundaryBenchmark($options),
         sqliteClaimBenchmark($options),
+        sqliteClaimedDequeueBenchmark($options),
         workerExecutionBenchmark($options),
+        workerResultSerializationBenchmark($options),
         listenerWorkerBenchmark($options),
         middlewareWorkerBenchmark($options),
         workerRetryBenchmark($options),
         failedJobRequeueBenchmark($options),
-        sqliteReconcileBenchmark($options),
+        reconciliationBenchmark($options, 'all_miss', true),
+        reconciliationBenchmark($options, 'all_hit', true),
+        reconciliationBenchmark($options, 'mixed', true),
+        reconciliationBenchmark($options, 'all_miss', false),
+        reconciliationBenchmark($options, 'all_hit', false),
+        reconciliationBenchmark($options, 'mixed', false),
         idleMaintenanceBenchmark($options),
         idleCpuMemoryBenchmark($options),
     ];
+}
+
+/** @return array<string, mixed> */
+function memoryQueueBenchmark(BenchmarkOptions $options, bool $batch = false): array
+{
+    $name = $batch ? 'memory.queue_batch' : 'memory.queue_repeated_single';
+    return benchmark(
+        BenchmarkScenario::named(['value' => $name]),
+        $options,
+        static function () use ($options, $batch): Closure {
+            $driver = new InMemoryQueueDriver();
+            $jobIds = range(1, $options->jobs);
+            return static function () use ($driver, $jobIds, $batch): array {
+                enqueueMemoryJobs($driver, $jobIds, $batch);
+                drainMemoryJobs($driver, $jobIds);
+                return ['operations' => count($jobIds)];
+            };
+        }
+    );
+}
+
+/** @param list<int> $jobIds */
+function enqueueMemoryJobs(InMemoryQueueDriver $driver, array $jobIds, bool $batch): void
+{
+    if ($batch) {
+        $driver->enqueueBatch('default', $jobIds);
+        return;
+    }
+    foreach ($jobIds as $jobId) {
+        $driver->enqueue('default', $jobId);
+    }
+}
+
+/** @param list<int> $jobIds */
+function drainMemoryJobs(InMemoryQueueDriver $driver, array $jobIds): void
+{
+    foreach ($jobIds as $expected) {
+        if ($driver->dequeue('default', 0) !== $expected) {
+            throw new RuntimeException('In-memory queue benchmark lost FIFO order');
+        }
+        $driver->ack('default', $expected);
+    }
 }
 
 /** @return array<string, mixed> */
@@ -40,7 +92,8 @@ function memoryBatchBenchmark(BenchmarkOptions $options, bool $scheduled = false
         $dispatcher = new JobDispatcher(new InMemoryJobStorage(), new QueueManager(new InMemoryQueueDriver()));
         $availableAt = $scheduled ? time() + 3600 : null;
         return static function () use ($dispatcher, $payloads, $availableAt): array {
-            return ['operations' => count($dispatcher->dispatchBatch('benchmark.noop', $payloads, availableAt: $availableAt))];
+            $jobIds = $dispatcher->dispatchBatch('benchmark.noop', $payloads, availableAt: $availableAt);
+            return ['operations' => count($jobIds)];
         };
     });
 }
@@ -78,6 +131,24 @@ function sqliteBatchBenchmark(BenchmarkOptions $options, bool $scheduled = false
         return static function () use ($dispatcher, $pdo, $payloads, $options, $availableAt): array {
             $dispatcher->dispatchBatch('benchmark.noop', $payloads, availableAt: $availableAt);
             return databaseCounts($pdo, ['operations' => $options->jobs]);
+        };
+    });
+}
+
+/** @return array<string, mixed> */
+function sqliteBatchBoundaryBenchmark(BenchmarkOptions $options): array
+{
+    $scenario = BenchmarkScenario::named(['value' => 'sqlite.dispatch_batch_chunk_boundary']);
+    return benchmark($scenario, $options, static function (): Closure {
+        [$pdo, $storage] = sqliteStorage();
+        $definitions = array_map(
+            static fn (int $index): array => ['type' => 'benchmark.noop', 'payload' => ['index' => $index]],
+            range(1, 201)
+        );
+        $pdo->resetCounts();
+        return static function () use ($storage, $pdo, $definitions): array {
+            $ids = $storage->createJobs($definitions);
+            return databaseCounts($pdo, ['operations' => count($ids)]);
         };
     });
 }

@@ -14,13 +14,15 @@ use Oeltima\SimpleQueue\Worker;
 
 final class PrintMessage implements JobHandlerInterface
 {
+    /** @param array<string, mixed> $payload Job payload */
     public function handle(int $jobId, array $payload, ?callable $progress = null): mixed
     {
         if ($progress !== null) {
             $progress(50, 'Printing message');
         }
 
-        $message = (string) ($payload['message'] ?? 'No message');
+        $message = $payload['message'] ?? 'No message';
+        $message = is_string($message) ? $message : 'No message';
         echo "Job #{$jobId}: {$message}\n";
 
         if ($progress !== null) {

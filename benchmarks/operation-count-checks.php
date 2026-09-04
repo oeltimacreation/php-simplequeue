@@ -2,150 +2,208 @@
 
 declare(strict_types=1);
 
+final readonly class OperationBudget
+{
+    public function __construct(
+        public string $scenario,
+        public string $metric,
+        public string $comparison,
+        public string $formula,
+        public int $multiplier,
+        public int $offset,
+        public int $chunkSize,
+        public bool $optional,
+        public string $mechanism,
+        public string $rationale
+    ) {
+    }
+
+    public function limit(int $operations): int
+    {
+        return match ($this->formula) {
+            'fixed' => $this->offset,
+            'per_operation' => ($this->multiplier * $operations) + $this->offset,
+            'chunked' => ($this->multiplier * (int) ceil($operations / $this->chunkSize)) + $this->offset,
+            default => throw new LogicException('Unknown operation budget formula'),
+        };
+    }
+}
+
 /**
- * Assert the hot-loop operation counters.
+ * Assert deterministic hot-path operation budgets.
  *
- * These checks turn the "no hot-loop amplification" invariants into hard
- * failures instead of observations:
- *
- * - scheduled single dispatch is one driver roundtrip per job;
- * - scheduled batch dispatch is a single delayed-notification roundtrip;
- * - delayed promotion stays one bounded Lua roundtrip;
- * - dequeue/ACK stays two roundtrips per job plus the empty probe;
- * - the database claim path keeps one transaction and bounded statements per
- *   claim;
- * - worker execution keeps two queue operations per job, and the normal path
- *   does not deliver lifecycle events.
- *
- * Redis checks run only when Redis scenarios are present, so a local-only run
- * still validates the SQLite claim path.
+ * Each row declares the measured mechanism, why it is bounded, whether the
+ * bound is exact or a maximum, and how the expected count scales. Redis rows
+ * are optional only because the service-free benchmark intentionally omits
+ * Redis scenarios; a configured Redis/Valkey lane executes every one.
  *
  * @param list<array<string, mixed>> $results Benchmark scenario results
  */
 function assertHotLoopCounters(array $results): void
 {
     $byName = indexScenarios($results);
-    assertDatabaseDispatchPaths($byName);
-    assertDatabaseClaimPath($byName);
-    assertDatabaseWorkerPaths($byName);
-    assertReconciliationPath($byName);
-    assertWorkerPaths($byName);
-    assertFailedJobRequeuePath($byName);
-    if (!isset($byName['redis.dispatch_scheduled_single'])) {
-        return;
-    }
-    assertScheduledSingleDispatch($byName);
-    assertScheduledBatchDispatch($byName);
-    assertDelayedPromotion($byName);
-    assertDequeueAck($byName);
-    assertRedisBatchDispatch($byName);
-    assertRedisRetry($byName);
-    assertRedisRepair($byName);
-}
-
-/**
- * Database dispatch keeps one statement per single job; batches are atomic.
- *
- * Single inserts remain one statement. Batched inserts hold one
- * transaction/savepoint across all chunks (SQLite 100 rows, others 1000
- * rows / 1MiB) so a later failure rolls back the whole logical batch.
- * A 100-job benchmark batch is one chunk: one transaction + bounded
- * statements (INSERT plus transaction control).
- *
- * @param array<string, array<string, mixed>> $byName Indexed benchmark results
- */
-function assertDatabaseDispatchPaths(array $byName): void
-{
-    foreach (['sqlite.dispatch_single', 'sqlite.dispatch_scheduled_single'] as $name) {
-        $single = requireScenario($byName, $name);
-        assertMetricEquals(
-            $single,
-            'median_db_queries',
-            operationCount($single),
-            "{$name} statement count changed"
-        );
-    }
-
-    foreach (['sqlite.dispatch_batch', 'sqlite.dispatch_scheduled_batch'] as $name) {
-        $batch = requireScenario($byName, $name);
-        $operations = operationCount($batch);
-        assertMetricAtMost(
-            $batch,
-            'median_db_transactions',
-            1,
-            "{$name} exceeds one transaction per atomic batch"
-        );
-        // One INSERT per 100-row SQLite chunk plus transaction control.
-        $maxQueries = (int) ceil($operations / 100) + 2;
-        assertMetricAtMost(
-            $batch,
-            'median_db_queries',
-            $maxQueries,
-            "{$name} exceeds bounded statements per atomic batch chunk"
-        );
+    foreach (operationBudgetDefinitions() as $budget) {
+        if (!isset($byName[$budget->scenario])) {
+            if ($budget->optional) {
+                continue;
+            }
+            throw new RuntimeException("Missing benchmark scenario {$budget->scenario}");
+        }
+        $result = $byName[$budget->scenario];
+        $actual = integerMetric($result, $budget->metric);
+        $expected = $budget->limit(operationCount($result));
+        $passes = $budget->comparison === 'exact' ? $actual === $expected : $actual <= $expected;
+        if (!$passes) {
+            throw new RuntimeException(sprintf(
+                '%s %s is %d; expected %s %d (%s; %s)',
+                $budget->scenario,
+                $budget->metric,
+                $actual,
+                $budget->comparison,
+                $expected,
+                $budget->mechanism,
+                $budget->rationale
+            ));
+        }
     }
 }
 
 /**
- * Worker paths keep queue operations bounded and only deliver configured events.
- *
- * @param array<string, array<string, mixed>> $byName Indexed benchmark results
+ * @return list<OperationBudget>
  */
-function assertWorkerPaths(array $byName): void
+function operationBudgetDefinitions(): array
 {
-    assertWorkerPath($byName, 'worker.execute_ack', 0, true);
-    assertWorkerPath($byName, 'worker.middleware_execute_ack', 0, false);
-    assertWorkerPath($byName, 'worker.event_listener_execute_ack', 2, true);
-    assertWorkerPath($byName, 'worker.retry', 0, true);
-}
+    $budgets = [];
+    $add = static function (
+        string $scenario,
+        string $metric,
+        string $relation,
+        array $scale,
+        string $evidence
+    ) use (&$budgets): void {
+        if (count($scale) !== 3 || !is_int($scale[0]) || !is_int($scale[1]) || !is_int($scale[2])) {
+            throw new LogicException('Operation budget scale must contain three integers');
+        }
+        [$comparison, $formulaName] = explode('-', $relation, 2);
+        $formula = match ($formulaName) {
+            'fixed' => 'fixed',
+            'per' => 'per_operation',
+            'chunk' => 'chunked',
+            default => throw new LogicException('Unknown operation budget relation'),
+        };
+        $descriptions = explode(': ', $evidence, 2);
+        if (count($descriptions) !== 2) {
+            throw new LogicException('Operation budget evidence must contain a mechanism and rationale');
+        }
+        $budgets[] = new OperationBudget(
+            $scenario,
+            $metric,
+            $comparison,
+            $formula,
+            $scale[0],
+            $scale[1],
+            $scale[2],
+            str_starts_with($scenario, 'redis.'),
+            $descriptions[0],
+            $descriptions[1]
+        );
+    };
 
-/**
- * Assert queue and event metrics for one worker scenario.
- *
- * @param array<string, array<string, mixed>> $byName Indexed benchmark results
- * @param string $name Worker scenario name
- * @param int $eventMultiplier Expected event deliveries per operation
- * @param bool $exactQueueOperations Whether queue operations must equal the bound
- */
-function assertWorkerPath(array $byName, string $name, int $eventMultiplier, bool $exactQueueOperations): void
-{
-    $worker = requireScenario($byName, $name);
-    $operations = operationCount($worker);
-    $queueBound = 2 * $operations;
+    foreach (['sqlite.dispatch_single', 'sqlite.dispatch_scheduled_single'] as $scenario) {
+        $add($scenario, 'median_db_queries', 'exact-per', [1, 0, 1], 'INSERT: one row per dispatch');
+    }
+    foreach (['sqlite.dispatch_batch', 'sqlite.dispatch_scheduled_batch'] as $scenario) {
+        $add($scenario, 'median_db_transactions', 'maximum-fixed', [0, 1, 1], 'transaction: one atomic batch');
+        $add($scenario, 'median_db_queries', 'maximum-chunk', [1, 2, 100], 'INSERT: 100-row chunks');
+    }
+    $boundary = 'sqlite.dispatch_batch_chunk_boundary';
+    $add($boundary, 'median_db_transactions', 'maximum-fixed', [0, 1, 1], 'transaction: 201 rows stay atomic');
+    $add($boundary, 'median_db_queries', 'maximum-chunk', [1, 2, 100], 'INSERT: crosses two boundaries');
 
-    if ($exactQueueOperations) {
-        assertMetricEquals($worker, 'median_driver_roundtrips', $queueBound, "{$name} queue operations changed");
-    } else {
-        assertMetricAtMost($worker, 'median_driver_roundtrips', $queueBound, "{$name} adds driver roundtrips");
+    foreach (['sqlite.claim', 'sqlite.claimed_dequeue'] as $scenario) {
+        $add($scenario, 'median_db_transactions', 'maximum-per', [1, 0, 1], 'transaction: at most one per claim');
+        $add($scenario, 'median_db_queries', 'maximum-per', [4, 0, 1], 'statements: bounded claim path');
     }
 
-    assertMetricEquals(
-        $worker,
+    $durableWorkerScenarios = [
+        'worker.execute_ack',
+        'worker.event_listener_execute_ack',
+        'worker.result_serialization',
+        'worker.retry',
+    ];
+    foreach ($durableWorkerScenarios as $scenario) {
+        $add($scenario, 'median_driver_roundtrips', 'exact-per', [2, 0, 1], 'dequeue + outcome: no amplification');
+        $add($scenario, 'median_db_transactions', 'exact-per', [1, 0, 1], 'transaction: one claim per job');
+        $add($scenario, 'median_db_queries', 'exact-per', [4, 0, 1], 'statements: claim and fenced outcome');
+    }
+    foreach (['worker.execute_ack', 'worker.result_serialization', 'worker.retry'] as $scenario) {
+        $add($scenario, 'median_event_deliveries', 'exact-fixed', [0, 0, 1], 'listener: disabled');
+    }
+    $add(
+        'worker.event_listener_execute_ack',
         'median_event_deliveries',
-        $eventMultiplier * $operations,
-        "{$name} event delivery count changed"
+        'exact-per',
+        [2, 0, 1],
+        'events: claimed + completed'
     );
-}
-
-/**
- * Administrative failed-job re-queue emits at most one notification per job.
- *
- * @param array<string, array<string, mixed>> $byName Indexed benchmark results
- */
-function assertFailedJobRequeuePath(array $byName): void
-{
-    $requeue = requireScenario($byName, 'admin.requeue_failed');
-    assertMetricAtMost(
-        $requeue,
+    $add(
+        'worker.middleware_execute_ack',
         'median_driver_roundtrips',
-        operationCount($requeue),
-        'admin.requeue_failed exceeds one notification per job'
+        'maximum-per',
+        [2, 0, 1],
+        'dequeue + ACK: middleware adds none'
     );
+    $add('worker.middleware_execute_ack', 'median_event_deliveries', 'exact-fixed', [0, 0, 1], 'listener: disabled');
+
+    foreach (['all_miss', 'all_hit', 'mixed'] as $distribution) {
+        $optimized = 'sqlite.reconcile.optimized.' . $distribution;
+        $fallback = 'sqlite.reconcile.fallback.' . $distribution;
+        foreach ([$optimized, $fallback] as $scenario) {
+            $add($scenario, 'median_db_queries', 'maximum-fixed', [0, 1, 1], 'cursor query: one bounded page');
+            $add($scenario, 'median_db_transactions', 'exact-fixed', [0, 0, 1], 'read scan: no transaction');
+        }
+        $add($optimized, 'median_driver_roundtrips', 'exact-fixed', [0, 1, 1], 'batch reconcile: one per page');
+        $add($fallback, 'median_driver_roundtrips', 'maximum-per', [3, 0, 1], 'legacy path: three per item');
+    }
+
+    $add('admin.requeue_failed', 'median_driver_roundtrips', 'maximum-per', [1, 0, 1], 'enqueue: one per job');
+    $add(
+        'worker.idle_maintenance',
+        'median_db_queries',
+        'maximum-per',
+        [1, 0, 1],
+        'reads: at most one per clock cycle'
+    );
+    $add(
+        'worker.idle_maintenance',
+        'median_db_transactions',
+        'exact-fixed',
+        [0, 0, 1],
+        'read maintenance: no transaction'
+    );
+
+    $add('redis.dispatch_scheduled_single', 'median_redis_roundtrips', 'maximum-per', [1, 0, 1], 'ZADD: one per job');
+    $add('redis.dispatch_scheduled_batch', 'median_redis_roundtrips', 'exact-fixed', [0, 1, 1], 'ZADD: one per batch');
+    $add('redis.promote_delayed', 'median_redis_roundtrips', 'maximum-fixed', [0, 1, 1], 'Lua: one promotion');
+    $add('redis.dispatch_batch', 'median_redis_commands', 'exact-fixed', [0, 1, 1], 'LPUSH: one batch command');
+    $add('redis.dispatch_batch', 'median_redis_roundtrips', 'exact-fixed', [0, 1, 1], 'LPUSH: one batch roundtrip');
+    $add('redis.dequeue_ack', 'median_redis_roundtrips', 'maximum-per', [2, 1, 1], 'pop + ACK Lua: plus empty probe');
+    $add('redis.dequeue_ack', 'median_redis_commands', 'maximum-per', [2, 1, 1], 'pop + ACK Lua: plus empty probe');
+    $add('redis.retry', 'median_redis_roundtrips', 'exact-per', [2, 0, 1], 'pop + NACK Lua: two per retry');
+    $add('redis.retry', 'median_redis_commands', 'exact-per', [2, 0, 1], 'pop + NACK Lua: two per retry');
+    $add(
+        'redis.repair_unscored',
+        'median_redis_roundtrips',
+        'maximum-fixed',
+        [0, 4, 1],
+        'pipeline + Lua: bounded phases'
+    );
+    $add('redis.repair_unscored', 'median_redis_commands', 'maximum-per', [2, 2, 1], 'score repair: linear commands');
+
+    return $budgets;
 }
 
 /**
- * Index benchmark results by scenario name.
- *
  * @param list<array<string, mixed>> $results Benchmark scenario results
  * @return array<string, array<string, mixed>>
  */
@@ -153,224 +211,27 @@ function indexScenarios(array $results): array
 {
     $byName = [];
     foreach ($results as $result) {
-        $byName[$result['name']] = $result;
+        $name = $result['name'] ?? null;
+        if (!is_string($name) || $name === '') {
+            throw new UnexpectedValueException('Benchmark scenario name must be a non-empty string');
+        }
+        $byName[$name] = $result;
     }
     return $byName;
 }
 
-/**
- * Return a scenario result by name or fail the run.
- *
- * @param array<string, array<string, mixed>> $byName Indexed scenario results
- * @param string $name Scenario name
- * @return array<string, mixed>
- */
-function requireScenario(array $byName, string $name): array
-{
-    if (!isset($byName[$name])) {
-        throw new RuntimeException("Missing benchmark scenario {$name} for operation-counter assertion");
-    }
-    return $byName[$name];
-}
-
-/**
- * @param array<string, mixed> $result Scenario result
- */
+/** @param array<string, mixed> $result Scenario result */
 function operationCount(array $result): int
 {
-    return max(1, (int) $result['median_operations']);
+    return max(1, integerMetric($result, 'median_operations'));
 }
 
-/**
- * Assert that a measured metric has the expected value.
- *
- * @param array<string, mixed> $result Scenario result
- * @param string $metric Metric name
- * @param int $expected Expected integer value
- * @param string $message Failure message
- */
-function assertMetricEquals(array $result, string $metric, int $expected, string $message): void
+/** @param array<string, mixed> $result Scenario result */
+function integerMetric(array $result, string $metric): int
 {
-    if ((int) $result[$metric] !== $expected) {
-        throw new RuntimeException($message);
+    $value = $result[$metric] ?? null;
+    if (!is_int($value) && !is_float($value)) {
+        throw new UnexpectedValueException("Benchmark metric {$metric} must be numeric");
     }
-}
-
-/**
- * Assert that a measured metric does not exceed its bound.
- *
- * @param array<string, mixed> $result Scenario result
- * @param string $metric Metric name
- * @param int $maximum Maximum allowed integer value
- * @param string $message Failure message
- */
-function assertMetricAtMost(array $result, string $metric, int $maximum, string $message): void
-{
-    if ((int) $result[$metric] > $maximum) {
-        throw new RuntimeException($message);
-    }
-}
-
-/**
- * Database claim path is unchanged: one transaction per claim, bounded statements.
- *
- * @param array<string, array<string, mixed>> $byName Indexed scenario results
- */
-function assertDatabaseClaimPath(array $byName): void
-{
-    $claim = requireScenario($byName, 'sqlite.claim');
-    $operations = operationCount($claim);
-    assertMetricAtMost(
-        $claim,
-        'median_db_transactions',
-        $operations,
-        'sqlite.claim transaction count exceeds one per claim'
-    );
-    assertMetricAtMost(
-        $claim,
-        'median_db_queries',
-        4 * $operations,
-        'sqlite.claim statement count exceeds four per claim'
-    );
-}
-
-/**
- * Worker completion and retry paths retain one transaction and four statements per job.
- *
- * @param array<string, array<string, mixed>> $byName Indexed benchmark results
- */
-function assertDatabaseWorkerPaths(array $byName): void
-{
-    foreach (['worker.execute_ack', 'worker.event_listener_execute_ack', 'worker.retry'] as $name) {
-        $worker = requireScenario($byName, $name);
-        $operations = operationCount($worker);
-        assertMetricEquals($worker, 'median_db_transactions', $operations, "{$name} transaction count changed");
-        assertMetricEquals($worker, 'median_db_queries', 4 * $operations, "{$name} statement count changed");
-    }
-}
-
-/**
- * The benchmark reconciliation uses one bounded page and therefore one query.
- *
- * @param array<string, array<string, mixed>> $byName Indexed benchmark results
- */
-function assertReconciliationPath(array $byName): void
-{
-    $reconcile = requireScenario($byName, 'sqlite.reconcile');
-    assertMetricAtMost($reconcile, 'median_db_queries', 1, 'sqlite.reconcile query count exceeded one page');
-    assertMetricEquals($reconcile, 'median_db_transactions', 0, 'sqlite.reconcile unexpectedly opened a transaction');
-}
-
-/**
- * Scheduled single dispatch is one enqueueDelayed roundtrip per job.
- *
- * @param array<string, array<string, mixed>> $byName Indexed scenario results
- */
-function assertScheduledSingleDispatch(array $byName): void
-{
-    $single = requireScenario($byName, 'redis.dispatch_scheduled_single');
-    assertMetricAtMost(
-        $single,
-        'median_redis_roundtrips',
-        operationCount($single),
-        'redis.dispatch_scheduled_single exceeds one roundtrip per job'
-    );
-}
-
-/**
- * Scheduled batch dispatch sends one delayed-notification roundtrip.
- *
- * @param array<string, array<string, mixed>> $byName Indexed scenario results
- */
-function assertScheduledBatchDispatch(array $byName): void
-{
-    $batch = requireScenario($byName, 'redis.dispatch_scheduled_batch');
-    assertMetricAtMost($batch, 'median_redis_roundtrips', 1, 'redis.dispatch_scheduled_batch exceeds one roundtrip');
-}
-
-/**
- * Delayed promotion stays one bounded Lua roundtrip.
- *
- * @param array<string, array<string, mixed>> $byName Indexed scenario results
- */
-function assertDelayedPromotion(array $byName): void
-{
-    $promote = requireScenario($byName, 'redis.promote_delayed');
-    assertMetricAtMost(
-        $promote,
-        'median_redis_roundtrips',
-        1,
-        'redis.promote_delayed exceeds one bounded Lua roundtrip'
-    );
-}
-
-/**
- * Dequeue/ACK stays bounded: dequeue, pipelined ACK, and the empty probe.
- *
- * @param array<string, array<string, mixed>> $byName Indexed scenario results
- */
-function assertDequeueAck(array $byName): void
-{
-    $dequeueAck = requireScenario($byName, 'redis.dequeue_ack');
-    $operations = operationCount($dequeueAck);
-    assertMetricAtMost(
-        $dequeueAck,
-        'median_redis_roundtrips',
-        2 * $operations + 1,
-        'redis.dequeue_ack roundtrips amplified per job'
-    );
-    assertMetricAtMost(
-        $dequeueAck,
-        'median_redis_commands',
-        3 * $operations + 1,
-        'redis.dequeue_ack command count amplified per job'
-    );
-}
-
-/**
- * Redis batch enqueue is one command and one roundtrip.
- *
- * @param array<string, array<string, mixed>> $byName Indexed benchmark results
- */
-function assertRedisBatchDispatch(array $byName): void
-{
-    $batch = requireScenario($byName, 'redis.dispatch_batch');
-    assertMetricEquals($batch, 'median_redis_commands', 1, 'redis.dispatch_batch is no longer a single command');
-    assertMetricEquals($batch, 'median_redis_roundtrips', 1, 'redis.dispatch_batch is no longer one roundtrip');
-}
-
-/**
- * Redis retry keeps one dequeue and one pipelined NACK roundtrip per job.
- *
- * @param array<string, array<string, mixed>> $byName Indexed benchmark results
- */
-function assertRedisRetry(array $byName): void
-{
-    $retry = requireScenario($byName, 'redis.retry');
-    $operations = operationCount($retry);
-    assertMetricEquals($retry, 'median_redis_roundtrips', 2 * $operations, 'redis.retry roundtrip count changed');
-    assertMetricEquals($retry, 'median_redis_commands', 4 * $operations, 'redis.retry command count changed');
-}
-
-/**
- * Redis processing-score repair remains bounded even though it scans one job at a time.
- *
- * @param array<string, array<string, mixed>> $byName Indexed benchmark results
- */
-function assertRedisRepair(array $byName): void
-{
-    $repair = requireScenario($byName, 'redis.repair_unscored');
-    $operations = operationCount($repair);
-    assertMetricAtMost(
-        $repair,
-        'median_redis_roundtrips',
-        4,
-        'redis.repair_unscored roundtrips exceeded its bound'
-    );
-    assertMetricAtMost(
-        $repair,
-        'median_redis_commands',
-        2 * $operations + 2,
-        'redis.repair_unscored command count amplified'
-    );
+    return (int) $value;
 }

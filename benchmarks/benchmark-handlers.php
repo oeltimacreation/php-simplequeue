@@ -8,6 +8,10 @@ use Oeltima\SimpleQueue\Contract\JobMiddlewareInterface;
 
 final class NoopBenchmarkHandler implements JobHandlerInterface
 {
+    /**
+     * @param array<string, mixed> $payload Benchmark payload
+     * @return array{job_id: int} Minimal benchmark result
+     */
     public function handle(int $jobId, array $payload, ?callable $progressCallback = null): array
     {
         return ['job_id' => $jobId];
@@ -16,6 +20,7 @@ final class NoopBenchmarkHandler implements JobHandlerInterface
 
 final class FailingBenchmarkHandler implements JobHandlerInterface
 {
+    /** @param array<string, mixed> $payload Benchmark payload */
     public function handle(int $jobId, array $payload, ?callable $progressCallback = null): never
     {
         throw new RuntimeException('benchmark retry');

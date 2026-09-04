@@ -4,6 +4,9 @@ parameters:
     paths:
         - src
         - tests
+        - benchmarks
+        - scripts
+        - examples
     reportUnmatchedIgnoredErrors: true
     ignoreErrors:
         # Intentional BC: built-in drivers retain deprecated capability interfaces.
@@ -29,57 +32,3 @@ parameters:
         -
             identifier: function.alreadyNarrowedType
             path: src/Driver/RedisQueueDriver.php
-        # Predis magic methods (lpos) via __call.
-        -
-            message: '#Call to an undefined method Predis\\ClientInterface::lpos\(\)#'
-            path: src/Driver/RedisQueueDriver.php
-        # Ignore dynamic calls to static PHPUnit assertions in tests
-        -
-            message: '#Dynamic call to static method PHPUnit\\Framework\\Assert::#'
-            path: tests
-        # Ignore strict level 9 type-hint and mock object warnings in test files
-        -
-            identifier: missingType.parameter
-            path: tests
-        -
-            identifier: missingType.return
-            path: tests
-        -
-            identifier: missingType.iterableValue
-            path: tests
-        -
-            identifier: assign.propertyType
-            path: tests
-        -
-            identifier: property.nonObject
-            path: tests
-        -
-            identifier: offsetAccess.nonOffsetAccessible
-            path: tests
-        -
-            identifier: argument.type
-            path: tests
-        -
-            identifier: method.alreadyNarrowedType
-            path: tests
-        -
-            identifier: function.alreadyNarrowedType
-            path: tests
-        -
-            identifier: closure.unusedUse
-            path: tests
-        -
-            identifier: return.type
-            path: tests
-        -
-            identifier: missingType.property
-            path: tests
-        -
-            identifier: cast.string
-            path: tests
-        -
-            identifier: booleanNot.exprNotBoolean
-            path: tests
-        -
-            identifier: ternary.shortNotAllowed
-            path: tests

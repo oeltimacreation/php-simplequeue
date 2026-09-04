@@ -1,0 +1,46 @@
+{
+    "schema_version": 1,
+    "baseline": {
+        "version": "v1.10.0",
+        "commit": "37464d0",
+        "captured_at_utc": "2026-09-04T03:16:46Z",
+        "php": "8.4.24",
+        "infection": "0.31.9"
+    },
+    "scope": [
+        "src/Worker.php",
+        "src/Storage/InMemoryJobStorage.php",
+        "src/Storage/PdoJobStorage.php",
+        "src/Driver/RedisQueueDriver.php",
+        "src/QueueReconciler.php"
+    ],
+    "configuration": {
+        "mutators": "@default",
+        "only_covering_test_cases": true,
+        "timeout_seconds": 10,
+        "threads": 4
+    },
+    "result": {
+        "total": 815,
+        "killed_by_tests": 490,
+        "killed_by_static_analysis": 0,
+        "errored": 5,
+        "syntax_errors": 0,
+        "escaped": 287,
+        "timed_out": 33,
+        "skipped": 0,
+        "ignored": 0,
+        "not_covered": 0,
+        "covered_code_msi_percent": 64.79
+    },
+    "survivor_report": {
+        "format": "Infection text log",
+        "sha256": "10b02521a47009bea92038d96a95db2b07f8a903550bc53bff80f649de42d37e",
+        "regenerate_with": "At v1.10.0, run Infection 0.31.9 with the recorded scope/configuration and a text logger"
+    },
+    "ratchet": {
+        "minimum_msi_percent": 64.79,
+        "minimum_covered_msi_percent": 64.79,
+        "note": "The extracted WorkerJobProcessor is included with Worker in the v1.11 candidate scope."
+    }
+}

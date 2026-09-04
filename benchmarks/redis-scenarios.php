@@ -2,19 +2,22 @@
 
 declare(strict_types=1);
 
-use Oeltima\SimpleQueue\Driver\RedisQueueDriver;
 use Oeltima\SimpleQueue\JobDispatcher;
 use Oeltima\SimpleQueue\QueueManager;
 use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
-use Predis\Client;
 
-/** Number of due delayed jobs seeded for the large-backlog promotion scenario. */
+// Number of due delayed jobs seeded for the large-backlog promotion scenario.
 const PROMOTION_BACKLOG_JOBS = 10_000;
 
 /**
  * Run a Redis benchmark scenario through the shared fixture lifecycle.
  *
- * @param callable(array{inner: Client, client: BenchmarkRedisClient, driver: RedisQueueDriver, prefix: string}): Closure $setup
+ * @param callable(array{
+ *     inner: \Predis\Client,
+ *     client: BenchmarkRedisClient,
+ *     driver: \Oeltima\SimpleQueue\Driver\RedisQueueDriver,
+ *     prefix: string
+ * }): Closure $setup
  * @return array<string, mixed>
  */
 function redisBenchmark(BenchmarkOptions $options, string $name, callable $setup): array
@@ -43,27 +46,31 @@ function redisBatchBenchmark(BenchmarkOptions $options): array
 /** @return array<string, mixed> */
 function redisScheduledBenchmark(BenchmarkOptions $options, string $mode): array
 {
-    return redisBenchmark($options, 'redis.dispatch_scheduled_' . $mode, static function (array $fixture) use ($options, $mode): Closure {
-        $dispatcher = new JobDispatcher(new InMemoryJobStorage(), new QueueManager($fixture['driver']));
-        $jobs = min($options->jobs, 100);
-        $availableAt = time() + 3600;
-        return static function () use ($fixture, $dispatcher, $jobs, $availableAt, $mode, $options): array {
-            if ($mode === 'batch') {
-                $jobIds = $dispatcher->dispatchBatch(
-                    'benchmark.noop',
-                    array_slice(payloads($options), 0, $jobs),
-                    availableAt: $availableAt
-                );
-                return redisMetrics($fixture, ['operations' => count($jobIds)]);
-            }
-            $dispatched = 0;
-            for ($index = 0; $index < $jobs; $index++) {
-                $dispatcher->dispatch('benchmark.noop', ['index' => $index], availableAt: $availableAt);
-                $dispatched++;
-            }
-            return redisMetrics($fixture, ['operations' => $dispatched]);
-        };
-    });
+    return redisBenchmark(
+        $options,
+        'redis.dispatch_scheduled_' . $mode,
+        static function (array $fixture) use ($options, $mode): Closure {
+            $dispatcher = new JobDispatcher(new InMemoryJobStorage(), new QueueManager($fixture['driver']));
+            $jobs = min($options->jobs, 100);
+            $availableAt = time() + 3600;
+            return static function () use ($fixture, $dispatcher, $jobs, $availableAt, $mode, $options): array {
+                if ($mode === 'batch') {
+                    $jobIds = $dispatcher->dispatchBatch(
+                        'benchmark.noop',
+                        array_slice(payloads($options), 0, $jobs),
+                        availableAt: $availableAt
+                    );
+                    return redisMetrics($fixture, ['operations' => count($jobIds)]);
+                }
+                $dispatched = 0;
+                for ($index = 0; $index < $jobs; $index++) {
+                    $dispatcher->dispatch('benchmark.noop', ['index' => $index], availableAt: $availableAt);
+                    $dispatched++;
+                }
+                return redisMetrics($fixture, ['operations' => $dispatched]);
+            };
+        }
+    );
 }
 
 /** @return array<string, mixed> */
@@ -107,17 +114,33 @@ function redisRetryBenchmark(BenchmarkOptions $options): array
         $jobs = min($options->jobs, 100);
         $fixture['driver']->enqueueBatch('default', range(1, $jobs));
         return static function () use ($fixture, $jobs): array {
-            $processed = 0;
-            for ($index = 0; $index < $jobs; $index++) {
-                $jobId = $fixture['driver']->dequeue('default', 0);
-                if ($jobId !== null) {
-                    $fixture['driver']->nack('default', $jobId, 60);
-                    $processed++;
-                }
-            }
+            $processed = runRedisRetries($fixture, $jobs);
             return redisMetrics($fixture, ['operations' => $processed]);
         };
     });
+}
+
+/**
+ * @param array{
+ *     inner: \Predis\Client,
+ *     client: BenchmarkRedisClient,
+ *     driver: \Oeltima\SimpleQueue\Driver\RedisQueueDriver,
+ *     prefix: string
+ * } $fixture
+ */
+function runRedisRetries(array $fixture, int $jobs): int
+{
+    $processed = 0;
+    for ($index = 0; $index < $jobs; $index++) {
+        $jobId = $fixture['driver']->dequeue('default', 0);
+        if ($jobId === null) {
+            continue;
+        }
+        $fixture['driver']->nack('default', $jobId, 60);
+        $processed++;
+    }
+
+    return $processed;
 }
 
 /** @return array<string, mixed> */

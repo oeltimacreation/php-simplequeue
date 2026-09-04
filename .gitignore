@@ -16,6 +16,9 @@ Thumbs.db
 /coverage/
 .phpunit.result.cache
 .phpunit.cache/
+/infection.log
+/infection-summary.log
+/infection-summary.json
 
 # Build
 /build/

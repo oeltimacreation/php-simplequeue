@@ -60,14 +60,16 @@
     },
     "scripts": {
         "test": "phpunit --no-coverage",
+        "test-random": "phpunit --no-coverage --order-by=random --random-order-seed=1110",
         "test-coverage": "phpunit --coverage-clover coverage/clover.xml --coverage-html coverage",
-        "coverage-check": "@php scripts/check-coverage.php coverage/clover.xml 83.9",
+        "coverage-check": "@php scripts/check-coverage.php coverage/clover.xml 83.9 71.2",
         "phpstan": "phpstan analyse",
         "cs-check": "phpcs",
         "cs-fix": "phpcbf",
         "benchmark": "@php benchmarks/run.php",
-        "budgets": "@php benchmarks/operation-count-checks.php",
-        "mutation": "infection --threads=4",
+        "benchmark-profile": "@php benchmarks/run.php --profile --iterations=1 --warmup=0",
+        "budgets": "@php benchmarks/run.php --jobs=100 --iterations=1 --warmup=0",
+        "mutation": "infection --threads=4 --filter=src/Worker.php,src/Internal/WorkerJobProcessor.php,src/Storage/InMemoryJobStorage.php,src/Storage/PdoJobStorage.php,src/Driver/RedisQueueDriver.php,src/QueueReconciler.php --only-covering-test-cases --min-msi=64.79 --min-covered-msi=64.79 --no-interaction --no-progress",
         "check-fast": [
             "@test",
             "@phpstan",
@@ -92,6 +94,7 @@
         "optimize-autoloader": true,
         "allow-plugins": {
             "dealerdirect/phpcodesniffer-composer-installer": true,
+            "infection/extension-installer": true,
             "phpstan/extension-installer": true
         }
     },

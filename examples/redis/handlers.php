@@ -6,11 +6,15 @@ use Oeltima\SimpleQueue\Contract\JobHandlerInterface;
 
 final class ExampleEmailHandler implements JobHandlerInterface
 {
+    /** @param array<string, mixed> $payload Job payload */
     public function handle(int $jobId, array $payload, ?callable $progress = null): mixed
     {
-        $recipient = (string) ($payload['to'] ?? 'unknown');
+        $recipient = $payload['to'] ?? 'unknown';
+        $recipient = is_string($recipient) ? $recipient : 'unknown';
         echo "Sending example email for job #{$jobId} to {$recipient}\n";
-        $progress?->__invoke(100, 'Email sent');
+        if ($progress !== null) {
+            $progress(100, 'Email sent');
+        }
 
         return ['recipient' => $recipient, 'sent_at' => gmdate(DATE_ATOM)];
     }
@@ -18,11 +22,15 @@ final class ExampleEmailHandler implements JobHandlerInterface
 
 final class ExampleReportHandler implements JobHandlerInterface
 {
+    /** @param array<string, mixed> $payload Job payload */
     public function handle(int $jobId, array $payload, ?callable $progress = null): mixed
     {
-        $format = (string) ($payload['format'] ?? 'pdf');
+        $format = $payload['format'] ?? 'pdf';
+        $format = is_string($format) ? $format : 'pdf';
         echo "Generating {$format} report for job #{$jobId}\n";
-        $progress?->__invoke(100, 'Report generated');
+        if ($progress !== null) {
+            $progress(100, 'Report generated');
+        }
 
         return ['format' => $format, 'generated_at' => gmdate(DATE_ATOM)];
     }
