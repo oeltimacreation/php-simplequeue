@@ -31,13 +31,13 @@ class JobDispatcherTest extends TestCase
     {
         $jobId = $this->dispatcher->dispatch('email.send', ['to' => 'test@example.com']);
 
-        $this->assertGreaterThan(0, $jobId);
+        self::assertGreaterThan(0, $jobId);
 
         $job = $this->storage->find($jobId);
-        $this->assertNotNull($job);
-        $this->assertEquals('email.send', $job->type);
-        $this->assertSame(JobStatus::Pending, $job->status);
-        $this->assertEquals(['to' => 'test@example.com'], $job->payload);
+        self::assertNotNull($job);
+        self::assertEquals('email.send', $job->type);
+        self::assertSame(JobStatus::Pending, $job->status);
+        self::assertEquals(['to' => 'test@example.com'], $job->payload);
     }
 
     public function testDispatchEnqueuesJobInDriver(): void
@@ -45,7 +45,7 @@ class JobDispatcherTest extends TestCase
         $jobId = $this->dispatcher->dispatch('email.send', ['to' => 'test@example.com']);
 
         $pending = $this->driver->getPending('default');
-        $this->assertContains($jobId, $pending);
+        self::assertContains($jobId, $pending);
     }
 
     public function testDispatchWithCustomQueue(): void
@@ -57,10 +57,11 @@ class JobDispatcherTest extends TestCase
         );
 
         $job = $this->storage->find($jobId);
-        $this->assertEquals('emails', $job->queue);
+        self::assertNotNull($job);
+        self::assertEquals('emails', $job->queue);
 
         $pending = $this->driver->getPending('emails');
-        $this->assertContains($jobId, $pending);
+        self::assertContains($jobId, $pending);
     }
 
     public function testDispatchWithMaxAttempts(): void
@@ -72,7 +73,8 @@ class JobDispatcherTest extends TestCase
         );
 
         $job = $this->storage->find($jobId);
-        $this->assertEquals(5, $job->maxAttempts);
+        self::assertNotNull($job);
+        self::assertEquals(5, $job->maxAttempts);
     }
 
     public function testDispatchWithRequestId(): void
@@ -84,7 +86,8 @@ class JobDispatcherTest extends TestCase
         );
 
         $job = $this->storage->find($jobId);
-        $this->assertEquals('req-12345', $job->requestId);
+        self::assertNotNull($job);
+        self::assertEquals('req-12345', $job->requestId);
     }
 
     public function testDispatchBatchCreatesMultipleJobs(): void
@@ -97,13 +100,13 @@ class JobDispatcherTest extends TestCase
 
         $jobIds = $this->dispatcher->dispatchBatch('email.send', $payloads);
 
-        $this->assertCount(3, $jobIds);
+        self::assertCount(3, $jobIds);
 
         foreach ($jobIds as $index => $jobId) {
             $job = $this->storage->find($jobId);
-            $this->assertNotNull($job);
-            $this->assertEquals('email.send', $job->type);
-            $this->assertEquals($payloads[$index], $job->payload);
+            self::assertNotNull($job);
+            self::assertEquals('email.send', $job->type);
+            self::assertEquals($payloads[$index], $job->payload);
         }
     }
 
@@ -113,16 +116,18 @@ class JobDispatcherTest extends TestCase
 
         $job = $this->dispatcher->getStatus($jobId);
 
-        $this->assertNotNull($job);
-        $this->assertEquals($jobId, $job->id);
-        $this->assertEquals('test.job', $job->type);
+        self::assertNotNull($job);
+        self::assertEquals($jobId, $job->id);
+        self::assertEquals('test.job', $job->type);
+        self::assertSame($this->storage, $this->dispatcher->getStorage());
+        self::assertSame($this->queueManager, $this->dispatcher->getQueueManager());
     }
 
     public function testGetStatusReturnsNullForNonExistentJob(): void
     {
         $job = $this->dispatcher->getStatus(99999);
 
-        $this->assertNull($job);
+        self::assertNull($job);
     }
 
     public function testDispatchIdempotentCreatesNewJob(): void
@@ -133,13 +138,13 @@ class JobDispatcherTest extends TestCase
             'req-unique-1'
         );
 
-        $this->assertTrue($result['created']);
-        $this->assertGreaterThan(0, $result['job_id']);
+        self::assertTrue($result['created']);
+        self::assertGreaterThan(0, $result['job_id']);
 
         $job = $this->storage->find($result['job_id']);
-        $this->assertNotNull($job);
-        $this->assertEquals('email.send', $job->type);
-        $this->assertEquals('req-unique-1', $job->requestId);
+        self::assertNotNull($job);
+        self::assertEquals('email.send', $job->type);
+        self::assertEquals('req-unique-1', $job->requestId);
     }
 
     public function testDispatchIdempotentReturnsExistingJobWhenDuplicate(): void
@@ -156,9 +161,9 @@ class JobDispatcherTest extends TestCase
             'req-dup-1'
         );
 
-        $this->assertTrue($first['created']);
-        $this->assertFalse($second['created']);
-        $this->assertEquals($first['job_id'], $second['job_id']);
+        self::assertTrue($first['created']);
+        self::assertFalse($second['created']);
+        self::assertEquals($first['job_id'], $second['job_id']);
     }
 
     public function testDispatchIdempotentCreatesNewAfterCompletion(): void
@@ -171,7 +176,7 @@ class JobDispatcherTest extends TestCase
 
         // Complete the first job
         $claim = $this->storage->claimById($first['job_id'], 'worker-1');
-        $this->assertNotNull($claim);
+        self::assertNotNull($claim);
         $this->storage->markCompleted($claim);
 
         $second = $this->dispatcher->dispatchIdempotent(
@@ -180,8 +185,8 @@ class JobDispatcherTest extends TestCase
             'req-complete-1'
         );
 
-        $this->assertTrue($second['created']);
-        $this->assertNotEquals($first['job_id'], $second['job_id']);
+        self::assertTrue($second['created']);
+        self::assertNotEquals($first['job_id'], $second['job_id']);
     }
 
     public function testDispatchIdempotentWithCustomQueue(): void
@@ -194,8 +199,9 @@ class JobDispatcherTest extends TestCase
         );
 
         $job = $this->storage->find($result['job_id']);
-        $this->assertEquals('emails', $job->queue);
-        $this->assertTrue($result['created']);
+        self::assertNotNull($job);
+        self::assertEquals('emails', $job->queue);
+        self::assertTrue($result['created']);
     }
 
     public function testDispatchIdempotentEnqueuesInDriver(): void
@@ -206,9 +212,9 @@ class JobDispatcherTest extends TestCase
             'req-driver-1'
         );
 
-        $this->assertTrue($result['created']);
+        self::assertTrue($result['created']);
         $pending = $this->driver->getPending('default');
-        $this->assertContains($result['job_id'], $pending);
+        self::assertContains($result['job_id'], $pending);
     }
 
     public function testDispatchIdempotentDoesNotEnqueueDuplicate(): void
@@ -219,7 +225,7 @@ class JobDispatcherTest extends TestCase
         $this->dispatcher->dispatchIdempotent('email.send', [], 'req-no-dup');
         $pendingAfter = count($this->driver->getPending('default'));
 
-        $this->assertEquals($pendingBefore, $pendingAfter);
+        self::assertEquals($pendingBefore, $pendingAfter);
     }
 
     public function testCancelJobDelegatesToStorage(): void
@@ -228,20 +234,21 @@ class JobDispatcherTest extends TestCase
 
         $result = $this->dispatcher->cancelJob($jobId);
 
-        $this->assertTrue($result);
+        self::assertTrue($result);
         $status = $this->dispatcher->getStatus($jobId);
-        $this->assertSame(JobStatus::Cancelled, $status->status);
-        $this->assertNotContains($jobId, $this->driver->getPending('default'));
+        self::assertNotNull($status);
+        self::assertSame(JobStatus::Cancelled, $status->status);
+        self::assertNotContains($jobId, $this->driver->getPending('default'));
     }
 
     public function testRepeatedCancellationRetriesNotificationCleanup(): void
     {
         $jobId = $this->dispatcher->dispatch('email.send', []);
-        $this->assertTrue($this->dispatcher->cancelJob($jobId));
+        self::assertTrue($this->dispatcher->cancelJob($jobId));
         $this->driver->enqueue('default', $jobId);
 
-        $this->assertFalse($this->dispatcher->cancelJob($jobId));
-        $this->assertNotContains($jobId, $this->driver->getPending('default'));
+        self::assertFalse($this->dispatcher->cancelJob($jobId));
+        self::assertNotContains($jobId, $this->driver->getPending('default'));
     }
 
     public function testDispatchRejectsInvalidPublicArguments(): void
@@ -264,16 +271,16 @@ class JobDispatcherTest extends TestCase
         );
 
         $job = $storage->find($jobId);
-        $this->assertNotNull($job);
-        $this->assertSame('2023-11-14 22:14:20', $job->availableAt);
-        $this->assertSame(0, $driver->getPendingCount('default'));
-        $this->assertSame(1, $driver->getDelayedCount('default'));
-        $this->assertNull($driver->dequeue('default', 0));
-        $this->assertSame(0, $driver->promoteDelayedJobs('default'));
+        self::assertNotNull($job);
+        self::assertSame('2023-11-14 22:14:20', $job->availableAt);
+        self::assertSame(0, $driver->getPendingCount('default'));
+        self::assertSame(1, $driver->getDelayedCount('default'));
+        self::assertNull($driver->dequeue('default', 0));
+        self::assertSame(0, $driver->promoteDelayedJobs('default'));
 
         $clock->advance(60);
-        $this->assertSame(1, $driver->promoteDelayedJobs('default'));
-        $this->assertSame($jobId, $driver->dequeue('default', 0));
+        self::assertSame(1, $driver->promoteDelayedJobs('default'));
+        self::assertSame($jobId, $driver->dequeue('default', 0));
     }
 
     public function testDispatchWithFutureAvailableAtKeepsRequestId(): void
@@ -290,8 +297,8 @@ class JobDispatcherTest extends TestCase
             $clock->timestamp() + 60
         );
 
-        $this->assertSame('req-scheduled', $storage->find($jobId)?->requestId);
-        $this->assertSame(1, $driver->getDelayedCount('default'));
+        self::assertSame('req-scheduled', $storage->find($jobId)?->requestId);
+        self::assertSame(1, $driver->getDelayedCount('default'));
     }
 
     public function testDispatchAtSchedulesJobAtAbsoluteTimestamp(): void
@@ -301,8 +308,8 @@ class JobDispatcherTest extends TestCase
 
         $jobId = $dispatcher->dispatchAt($clock->timestamp() + 30, 'email.send', []);
 
-        $this->assertSame('2023-11-14 22:13:50', $storage->find($jobId)?->availableAt);
-        $this->assertSame(1, $driver->getDelayedCount('default'));
+        self::assertSame('2023-11-14 22:13:50', $storage->find($jobId)?->availableAt);
+        self::assertSame(1, $driver->getDelayedCount('default'));
     }
 
     public function testDispatchAtAcceptsDateTimeInterface(): void
@@ -312,8 +319,8 @@ class JobDispatcherTest extends TestCase
 
         $jobId = $dispatcher->dispatchAt(new \DateTimeImmutable('@' . ($clock->timestamp() + 90)), 'email.send', []);
 
-        $this->assertSame('2023-11-14 22:14:50', $storage->find($jobId)?->availableAt);
-        $this->assertSame(1, $driver->getDelayedCount('default'));
+        self::assertSame('2023-11-14 22:14:50', $storage->find($jobId)?->availableAt);
+        self::assertSame(1, $driver->getDelayedCount('default'));
     }
 
     public function testDispatchAtClampsPastTimestampToImmediatePath(): void
@@ -323,9 +330,9 @@ class JobDispatcherTest extends TestCase
 
         $jobId = $dispatcher->dispatchAt($clock->timestamp() - 10, 'email.send', []);
 
-        $this->assertSame(1, $driver->getPendingCount('default'));
-        $this->assertSame(0, $driver->getDelayedCount('default'));
-        $this->assertSame($clock->now(), $storage->find($jobId)?->availableAt);
+        self::assertSame(1, $driver->getPendingCount('default'));
+        self::assertSame(0, $driver->getDelayedCount('default'));
+        self::assertSame($clock->now(), $storage->find($jobId)?->availableAt);
     }
 
     public function testDispatchAtClampsNowToImmediatePath(): void
@@ -335,8 +342,8 @@ class JobDispatcherTest extends TestCase
 
         $dispatcher->dispatchAt($clock->timestamp(), 'email.send', []);
 
-        $this->assertSame(1, $driver->getPendingCount('default'));
-        $this->assertSame(0, $driver->getDelayedCount('default'));
+        self::assertSame(1, $driver->getPendingCount('default'));
+        self::assertSame(0, $driver->getDelayedCount('default'));
     }
 
     public function testDispatchAtRejectsNonPositiveTimestamp(): void
@@ -355,8 +362,8 @@ class JobDispatcherTest extends TestCase
 
         $jobId = $dispatcher->dispatchAfter(60, 'email.send', []);
 
-        $this->assertSame('2023-11-14 22:14:20', $storage->find($jobId)?->availableAt);
-        $this->assertSame(1, $driver->getDelayedCount('default'));
+        self::assertSame('2023-11-14 22:14:20', $storage->find($jobId)?->availableAt);
+        self::assertSame(1, $driver->getDelayedCount('default'));
     }
 
 
@@ -367,8 +374,8 @@ class JobDispatcherTest extends TestCase
 
         $dispatcher->dispatchAfter(0, 'email.send', []);
 
-        $this->assertSame(1, $driver->getPendingCount('default'));
-        $this->assertSame(0, $driver->getDelayedCount('default'));
+        self::assertSame(1, $driver->getPendingCount('default'));
+        self::assertSame(0, $driver->getDelayedCount('default'));
     }
 
     public function testDispatchAfterRejectsNegativeDelay(): void
@@ -402,11 +409,11 @@ class JobDispatcherTest extends TestCase
             $clock->timestamp() + 60
         );
 
-        $this->assertCount(2, $jobIds);
-        $this->assertSame(2, $driver->getDelayedCount('default'));
-        $this->assertSame(0, $driver->getPendingCount('default'));
+        self::assertCount(2, $jobIds);
+        self::assertSame(2, $driver->getDelayedCount('default'));
+        self::assertSame(0, $driver->getPendingCount('default'));
         foreach ($jobIds as $jobId) {
-            $this->assertSame('2023-11-14 22:14:20', $storage->find($jobId)?->availableAt);
+            self::assertSame('2023-11-14 22:14:20', $storage->find($jobId)?->availableAt);
         }
     }
 
@@ -423,9 +430,9 @@ class JobDispatcherTest extends TestCase
             $clock->timestamp() - 5
         );
 
-        $this->assertCount(2, $jobIds);
-        $this->assertSame(2, $driver->getPendingCount('default'));
-        $this->assertSame(0, $driver->getDelayedCount('default'));
+        self::assertCount(2, $jobIds);
+        self::assertSame(2, $driver->getPendingCount('default'));
+        self::assertSame(0, $driver->getDelayedCount('default'));
     }
 
     public function testCancelScheduledJobRemovesDelayedNotification(): void
@@ -434,12 +441,12 @@ class JobDispatcherTest extends TestCase
         [$storage, $driver, $dispatcher] = $this->scheduledServices($clock);
 
         $jobId = $dispatcher->dispatch('email.send', [], 'default', 3, null, $clock->timestamp() + 60);
-        $this->assertSame(1, $driver->getDelayedCount('default'));
+        self::assertSame(1, $driver->getDelayedCount('default'));
 
-        $this->assertTrue($dispatcher->cancelJob($jobId));
+        self::assertTrue($dispatcher->cancelJob($jobId));
 
-        $this->assertSame(0, $driver->getDelayedCount('default'));
-        $this->assertSame(JobStatus::Cancelled, $storage->find($jobId)?->status);
+        self::assertSame(0, $driver->getDelayedCount('default'));
+        self::assertSame(JobStatus::Cancelled, $storage->find($jobId)?->status);
     }
 
     /**

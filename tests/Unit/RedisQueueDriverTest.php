@@ -8,8 +8,12 @@ use Oeltima\SimpleQueue\Driver\RedisQueueDriver;
 use Oeltima\SimpleQueue\Exception\QueueException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Predis\Client;
 use Predis\ClientInterface;
 use Predis\Command\CommandInterface;
+use Predis\Command\FactoryInterface;
+use Predis\Configuration\OptionsInterface;
+use Predis\Connection\ConnectionInterface;
 use Predis\Response\ServerException;
 
 /**
@@ -19,7 +23,7 @@ use Predis\Response\ServerException;
  */
 class MockRedisClient implements ClientInterface
 {
-    /** @var array<string, mixed> */
+    /** @var list<array{method: string, args: list<mixed>}> */
     public array $calls = [];
 
     /** @var array<string, mixed> */
@@ -36,14 +40,23 @@ class MockRedisClient implements ClientInterface
     /** @var list<list<mixed>> */
     public array $pipelineReturns = [];
 
-    public function getCommandFactory()
+    public ConnectionInterface $connection;
+    private Client $delegate;
+
+    public function __construct()
     {
-        return null;
+        $this->delegate = new Client();
+        $this->connection = $this->delegate->getConnection();
     }
 
-    public function getOptions()
+    public function getCommandFactory(): FactoryInterface
     {
-        return null;
+        return $this->delegate->getCommandFactory();
+    }
+
+    public function getOptions(): OptionsInterface
+    {
+        return $this->delegate->getOptions();
     }
 
     public function connect(): void
@@ -54,25 +67,32 @@ class MockRedisClient implements ClientInterface
     {
     }
 
-    public $connection = null;
-
-    public function getConnection()
+    public function getConnection(): ConnectionInterface
     {
         return $this->connection;
     }
 
-    public function createCommand($commandID, $arguments = [])
+    /**
+     * @param string $commandID Command identifier
+     * @param array<array-key, mixed> $arguments Command arguments
+     */
+    public function createCommand(mixed $commandID, mixed $arguments = []): CommandInterface
+    {
+        return $this->delegate->createCommand($commandID, $arguments);
+    }
+
+    public function executeCommand(CommandInterface $command): mixed
     {
         return null;
     }
 
-    public function executeCommand(CommandInterface $command)
+    /**
+     * @param string $commandID Command identifier
+     * @param array<array-key, mixed> $arguments Command arguments
+     */
+    public function __call(mixed $commandID, mixed $arguments): mixed
     {
-        return null;
-    }
-
-    public function __call($commandID, $arguments)
-    {
+        $arguments = array_values($arguments);
         $this->calls[] = ['method' => $commandID, 'args' => $arguments];
         if (isset($this->throws[$commandID])) {
             throw $this->throws[$commandID];
@@ -80,7 +100,7 @@ class MockRedisClient implements ClientInterface
         return $this->returns[$commandID] ?? null;
     }
 
-    public function pipeline()
+    public function pipeline(): MockRedisPipeline
     {
         $this->pipelines[] = $this->pipeline = MockRedisPipeline::fromReturns(array_shift($this->pipelineReturns));
         return $this->pipeline;
@@ -89,7 +109,7 @@ class MockRedisClient implements ClientInterface
 
 class MockRedisPipeline
 {
-    /** @var array<string, mixed> */
+    /** @var list<array{method: string, args: list<mixed>}> */
     public array $calls = [];
     public bool $executed = false;
 
@@ -104,12 +124,17 @@ class MockRedisPipeline
         return new self($returns ?? []);
     }
 
-    public function __call($method, $arguments)
+    public function __call(mixed $method, mixed $arguments): self
     {
+        if (!is_string($method) || !is_array($arguments)) {
+            throw new \LogicException('Invalid mock pipeline invocation');
+        }
+        $arguments = array_values($arguments);
         $this->calls[] = ['method' => $method, 'args' => $arguments];
         return $this;
     }
 
+    /** @return list<mixed> */
     public function execute(): array
     {
         $this->executed = true;
@@ -162,17 +187,17 @@ class RedisQueueDriverTest extends TestCase
 
         $jobId = $this->driver->dequeue('default', 0);
 
-        $this->assertEquals(123, $jobId);
+        self::assertEquals(123, $jobId);
 
         $methods = $this->callMethods();
-        $this->assertContains('evalsha', $methods, 'Should attempt cached atomic Lua dequeue');
+        self::assertContains('evalsha', $methods, 'Should attempt cached atomic Lua dequeue');
         if ($coldCache) {
-            $this->assertContains('eval', $methods, 'NOSCRIPT should fall back to EVAL');
+            self::assertContains('eval', $methods, 'NOSCRIPT should fall back to EVAL');
         } else {
-            $this->assertNotContains('eval', $methods);
+            self::assertNotContains('eval', $methods);
         }
-        $this->assertNotContains('lmove', $methods, 'Lua owns the non-blocking move');
-        $this->assertNotContains('blmove', $methods, 'Should not use blocking blmove');
+        self::assertNotContains('lmove', $methods, 'Lua owns the non-blocking move');
+        self::assertNotContains('blmove', $methods, 'Should not use blocking blmove');
     }
 
     /**
@@ -196,8 +221,8 @@ class RedisQueueDriverTest extends TestCase
         $this->driver->dequeue('default', 0);
 
         $methods = $this->callMethods();
-        $this->assertContains('evalsha', $methods);
-        $this->assertNotContains('eval', $methods, 'Non-NOSCRIPT errors must not trigger the EVAL fallback');
+        self::assertContains('evalsha', $methods);
+        self::assertNotContains('eval', $methods, 'Non-NOSCRIPT errors must not trigger the EVAL fallback');
     }
 
     public function testDequeueBlockingWhenTimeoutPositive(): void
@@ -206,11 +231,11 @@ class RedisQueueDriverTest extends TestCase
 
         $jobId = $this->driver->dequeue('default', 5);
 
-        $this->assertEquals(456, $jobId);
+        self::assertEquals(456, $jobId);
 
         $methods = $this->callMethods();
-        $this->assertContains('blmove', $methods, 'Should use blocking blmove');
-        $this->assertNotContains('lmove', $methods, 'Should not use non-blocking lmove');
+        self::assertContains('blmove', $methods, 'Should use blocking blmove');
+        self::assertNotContains('lmove', $methods, 'Should not use non-blocking lmove');
     }
 
     public function testDequeueReturnsNullWhenEmpty(): void
@@ -219,7 +244,7 @@ class RedisQueueDriverTest extends TestCase
 
         $jobId = $this->driver->dequeue('default', 0);
 
-        $this->assertNull($jobId);
+        self::assertNull($jobId);
     }
 
     public function testDequeueRejectsMalformedRedisJobIdWithoutCastingIt(): void
@@ -231,8 +256,8 @@ class RedisQueueDriverTest extends TestCase
             $this->driver->dequeue('default', 0);
         } finally {
             $methods = $this->callMethods();
-            $this->assertContains('lrem', $methods);
-            $this->assertContains('zrem', $methods);
+            self::assertContains('lrem', $methods);
+            self::assertContains('zrem', $methods);
         }
     }
 
@@ -248,9 +273,9 @@ class RedisQueueDriverTest extends TestCase
                 $this->redis->calls,
                 static fn(array $call): bool => in_array($call['method'], ['lrem', 'zrem'], true)
             ));
-            $this->assertCount(2, $cleanupCalls);
-            $this->assertSame('', $cleanupCalls[0]['args'][2]);
-            $this->assertSame('', $cleanupCalls[1]['args'][1]);
+            self::assertCount(2, $cleanupCalls);
+            self::assertSame('', $cleanupCalls[0]['args'][2]);
+            self::assertSame('', $cleanupCalls[1]['args'][1]);
         }
     }
 
@@ -260,12 +285,12 @@ class RedisQueueDriverTest extends TestCase
         $this->redis->pipelineReturns = [[null]];
         $this->redis->returns['evalsha'] = 0;
 
-        $this->assertSame(0, $this->driver->recoverStaleProcessing('default', 60, 1));
+        self::assertSame(0, $this->driver->recoverStaleProcessing('default', 60, 1));
 
         $methods = $this->callMethods();
-        $this->assertContains('lrange', $methods);
-        $this->assertSame(['zscore'], array_column($this->redis->pipelines[0]->calls, 'method'));
-        $this->assertSame(['zadd'], array_column($this->redis->pipelines[1]->calls, 'method'));
+        self::assertContains('lrange', $methods);
+        self::assertSame(['zscore'], array_column($this->redis->pipelines[0]->calls, 'method'));
+        self::assertSame(['zadd'], array_column($this->redis->pipelines[1]->calls, 'method'));
     }
 
     public function testStaleRecoveryPipelinesScoreChecksWithoutUnneededWrites(): void
@@ -274,53 +299,90 @@ class RedisQueueDriverTest extends TestCase
         $this->redis->pipelineReturns = [['1700000000', '1700000001']];
         $this->redis->returns['evalsha'] = 0;
 
-        $this->assertSame(0, $this->driver->recoverStaleProcessing('default', 60, 2));
+        self::assertSame(0, $this->driver->recoverStaleProcessing('default', 60, 2));
 
-        $this->assertCount(1, $this->redis->pipelines);
-        $this->assertSame(['zscore', 'zscore'], array_column($this->redis->pipelines[0]->calls, 'method'));
+        self::assertCount(1, $this->redis->pipelines);
+        self::assertSame(['zscore', 'zscore'], array_column($this->redis->pipelines[0]->calls, 'method'));
     }
 
-    public function testAckRemovesFromProcessingListAndZset(): void
+    public function testAckAtomicallyPreservesDuplicateProcessingVisibility(): void
     {
         $this->driver->ack('default', 123);
 
-        $this->assertNotNull($this->redis->pipeline);
-        $this->assertTrue($this->redis->pipeline->executed);
+        $calls = $this->callsFor('eval');
+        self::assertCount(1, $calls);
+        self::assertSame(2, $calls[0]['args'][1]);
+        self::assertSame('test:queue:default:processing', $calls[0]['args'][2]);
+        self::assertSame('test:queue:default:processing_z', $calls[0]['args'][3]);
+        self::assertSame('123', $calls[0]['args'][4]);
+        self::assertIsString($calls[0]['args'][0]);
+        self::assertStringContainsString("redis.call('LPOS'", $calls[0]['args'][0]);
+    }
 
-        $pipelineMethods = array_column($this->redis->pipeline->calls, 'method');
-        $this->assertContains('lrem', $pipelineMethods, 'Should remove from processing list');
-        $this->assertContains('zrem', $pipelineMethods, 'Should remove from processing ZSET');
+    public function testRemoveCleansEveryNotificationStructure(): void
+    {
+        $this->driver->remove('default', 123);
+
+        $calls = $this->callsFor('eval');
+        self::assertCount(1, $calls);
+        self::assertSame(4, $calls[0]['args'][1]);
+        self::assertSame('test:queue:default:pending', $calls[0]['args'][2]);
+        self::assertSame('test:queue:default:delayed', $calls[0]['args'][3]);
+        self::assertSame('test:queue:default:processing', $calls[0]['args'][4]);
+        self::assertSame('test:queue:default:processing_z', $calls[0]['args'][5]);
+        self::assertSame('123', $calls[0]['args'][6]);
+    }
+
+    public function testHeartbeatRefreshesProcessingVisibility(): void
+    {
+        $this->driver->heartbeatProcessing('default', 123);
+
+        $calls = $this->callsFor('zadd');
+        self::assertCount(1, $calls);
+        self::assertSame('test:queue:default:processing_z', $calls[0]['args'][0]);
+        $members = $calls[0]['args'][1];
+        self::assertIsArray($members);
+        self::assertArrayHasKey(123, $members);
+    }
+
+    public function testBoundedMembershipChecksPendingAndDelayedStructures(): void
+    {
+        $this->redis->returns['lpos'] = 0;
+        $this->redis->returns['zscore'] = '1700000000';
+
+        self::assertTrue($this->driver->hasPendingJob('default', 123, 25));
+        self::assertTrue($this->driver->hasDelayedJob('default', 123));
+        self::assertSame(
+            ['test:queue:default:pending', '123', 'MAXLEN', 25],
+            $this->callsFor('lpos')[0]['args']
+        );
+        self::assertSame(['test:queue:default:delayed', '123'], $this->callsFor('zscore')[0]['args']);
     }
 
     public function testNackWithDelayAddsToDelayedZset(): void
     {
         $this->driver->nack('default', 123, 60);
 
-        $this->assertNotNull($this->redis->pipeline);
-        $this->assertTrue($this->redis->pipeline->executed);
-
-        $pipelineMethods = array_column($this->redis->pipeline->calls, 'method');
-        $this->assertContains('lrem', $pipelineMethods);
-        $this->assertContains('zrem', $pipelineMethods);
-        $this->assertContains('zadd', $pipelineMethods, 'Should add to delayed ZSET');
-        $this->assertNotContains('lpush', $pipelineMethods, 'Should not immediately re-enqueue');
-
-        $zaddCall = array_filter($this->redis->pipeline->calls, fn($c) => $c['method'] === 'zadd');
-        $zaddCall = reset($zaddCall);
-        $this->assertStringContainsString('delayed', $zaddCall['args'][0]);
+        $calls = $this->callsFor('eval');
+        self::assertCount(1, $calls);
+        self::assertSame(4, $calls[0]['args'][1]);
+        self::assertSame('test:queue:default:delayed', $calls[0]['args'][4]);
+        self::assertSame('123', $calls[0]['args'][6]);
+        self::assertSame('60', $calls[0]['args'][7]);
+        self::assertIsString($calls[0]['args'][0]);
+        self::assertStringContainsString("redis.call('ZADD', KEYS[3]", $calls[0]['args'][0]);
     }
 
     public function testNackWithoutDelayReenqueuesImmediately(): void
     {
         $this->driver->nack('default', 123, 0);
 
-        $this->assertNotNull($this->redis->pipeline);
-        $this->assertTrue($this->redis->pipeline->executed);
-
-        $pipelineMethods = array_column($this->redis->pipeline->calls, 'method');
-        $this->assertContains('lrem', $pipelineMethods);
-        $this->assertContains('zrem', $pipelineMethods);
-        $this->assertContains('lpush', $pipelineMethods, 'Should immediately re-enqueue');
+        $calls = $this->callsFor('eval');
+        self::assertCount(1, $calls);
+        self::assertSame('test:queue:default:pending', $calls[0]['args'][5]);
+        self::assertSame('0', $calls[0]['args'][7]);
+        self::assertIsString($calls[0]['args'][0]);
+        self::assertStringContainsString("redis.call('LPUSH', KEYS[4]", $calls[0]['args'][0]);
     }
 
     #[DataProvider('delayedPromotionTransport')]
@@ -333,7 +395,7 @@ class RedisQueueDriverTest extends TestCase
             $this->redis->returns['evalsha'] = 3;
         }
 
-        $this->assertSame(3, $this->driver->promoteDelayedJobs('default', 50));
+        self::assertSame(3, $this->driver->promoteDelayedJobs('default', 50));
 
         $this->assertScriptInvocation(
             $coldCache ? 'eval' : 'evalsha',
@@ -354,23 +416,66 @@ class RedisQueueDriverTest extends TestCase
         ];
     }
 
+    /**
+     * @return iterable<string, array{mixed}>
+     */
+    public static function malformedScriptCounts(): iterable
+    {
+        yield 'negative integer' => [-1];
+        yield 'negative string' => ['-1'];
+        yield 'leading zero' => ['01'];
+        yield 'fractional number' => [1.5];
+        yield 'fractional string' => ['1.5'];
+        yield 'overflow' => [str_repeat('9', strlen((string) PHP_INT_MAX) + 1)];
+        yield 'null' => [null];
+    }
+
+    #[DataProvider('malformedScriptCounts')]
+    public function testPromotionRejectsMalformedScriptCount(mixed $response): void
+    {
+        $this->redis->returns['evalsha'] = $response;
+
+        $this->expectException(QueueException::class);
+        $this->expectExceptionMessage('Redis returned a malformed integer response');
+        $this->driver->promoteDelayedJobs('default', 50);
+    }
+
+    public function testStaleRecoveryRejectsMalformedScriptCount(): void
+    {
+        $this->redis->returns['lrange'] = [];
+        $this->redis->returns['evalsha'] = '-1';
+
+        $this->expectException(QueueException::class);
+        $this->driver->recoverStaleProcessing('default', 60, 50);
+    }
+
     public function testEnqueueDelayedBatchSendsSingleZadd(): void
     {
         $this->driver->enqueueDelayedBatch('default', [1, 2, 3], 1_700_000_100);
 
         $zaddCalls = $this->callsFor('zadd');
-        $this->assertCount(1, $zaddCalls);
+        self::assertCount(1, $zaddCalls);
 
         $call = $zaddCalls[0];
-        $this->assertEquals('test:queue:default:delayed', $call['args'][0]);
-        $this->assertEquals([1 => 1_700_000_100, 2 => 1_700_000_100, 3 => 1_700_000_100], $call['args'][1]);
+        self::assertEquals('test:queue:default:delayed', $call['args'][0]);
+        self::assertEquals([1 => 1_700_000_100, 2 => 1_700_000_100, 3 => 1_700_000_100], $call['args'][1]);
+    }
+
+    public function testEnqueueDelayedAddsOneAbsoluteTimestamp(): void
+    {
+        $this->driver->enqueueDelayed('default', 7, 1_700_000_100);
+
+        $calls = $this->callsFor('zadd');
+        self::assertCount(1, $calls);
+        self::assertSame('test:queue:default:delayed', $calls[0]['args'][0]);
+        self::assertSame([7 => 1_700_000_100], $calls[0]['args'][1]);
     }
 
     public function testEnqueueDelayedBatchEmptyDoesNothing(): void
     {
         $this->driver->enqueueDelayedBatch('default', [], 1_700_000_100);
 
-        $this->assertCount(0, $this->callsFor('zadd'));
+        self::assertCount(0, $this->callsFor('zadd'));
     }
 
     public function testRecoverStaleProcessingUsesCachedLuaScript(): void
@@ -378,7 +483,7 @@ class RedisQueueDriverTest extends TestCase
         $this->redis->returns['evalsha'] = 2;
         $this->redis->returns['lrange'] = [];
 
-        $this->assertSame(2, $this->driver->recoverStaleProcessing('default', 600, 75));
+        self::assertSame(2, $this->driver->recoverStaleProcessing('default', 600, 75));
 
         $this->assertScriptInvocation(
             'evalsha',
@@ -403,19 +508,21 @@ class RedisQueueDriverTest extends TestCase
         string $lastArgument
     ): void {
         $transportCalls = $this->callsFor($transportMethod);
-        $this->assertCount(1, $transportCalls);
+        self::assertCount(1, $transportCalls);
         $call = $transportCalls[0];
+        $script = $call['args'][0];
+        self::assertIsString($script);
         if ($expectSha) {
-            $this->assertSame(40, strlen($call['args'][0])); // SHA1 digest
+            self::assertSame(40, strlen($script)); // SHA1 digest
         } else {
-            $this->assertStringContainsString('ZRANGEBYSCORE', $call['args'][0]);
+            self::assertStringContainsString('ZRANGEBYSCORE', $script);
         }
         $numKeys = count($keys);
-        $this->assertSame($numKeys, $call['args'][1]);
+        self::assertSame($numKeys, $call['args'][1]);
         foreach ($keys as $index => $key) {
-            $this->assertSame($key, $call['args'][$index + 2]);
+            self::assertSame($key, $call['args'][$index + 2]);
         }
-        $this->assertSame($lastArgument, $call['args'][$numKeys + 3]);
+        self::assertSame($lastArgument, $call['args'][$numKeys + 3]);
     }
 
     public function testClearRemovesAllKeys(): void
@@ -423,14 +530,15 @@ class RedisQueueDriverTest extends TestCase
         $this->driver->clear('default');
 
         $delCalls = $this->callsFor('del');
-        $this->assertCount(1, $delCalls);
+        self::assertCount(1, $delCalls);
 
         $keys = $delCalls[0]['args'][0];
-        $this->assertCount(4, $keys);
-        $this->assertContains('test:queue:default:pending', $keys);
-        $this->assertContains('test:queue:default:processing', $keys);
-        $this->assertContains('test:queue:default:processing_z', $keys);
-        $this->assertContains('test:queue:default:delayed', $keys);
+        self::assertIsArray($keys);
+        self::assertCount(4, $keys);
+        self::assertContains('test:queue:default:pending', $keys);
+        self::assertContains('test:queue:default:processing', $keys);
+        self::assertContains('test:queue:default:processing_z', $keys);
+        self::assertContains('test:queue:default:delayed', $keys);
     }
 
     public function testGetDelayedCount(): void
@@ -439,7 +547,7 @@ class RedisQueueDriverTest extends TestCase
 
         $count = $this->driver->getDelayedCount('default');
 
-        $this->assertEquals(5, $count);
+        self::assertEquals(5, $count);
     }
 
     public function testEnqueueBatchUsesSingleLpush(): void
@@ -447,18 +555,18 @@ class RedisQueueDriverTest extends TestCase
         $this->driver->enqueueBatch('default', [1, 2, 3]);
 
         $lpushCalls = $this->callsFor('lpush');
-        $this->assertCount(1, $lpushCalls);
+        self::assertCount(1, $lpushCalls);
 
         $call = $lpushCalls[0];
-        $this->assertEquals('test:queue:default:pending', $call['args'][0]);
-        $this->assertEquals(['1', '2', '3'], $call['args'][1]);
+        self::assertEquals('test:queue:default:pending', $call['args'][0]);
+        self::assertEquals(['1', '2', '3'], $call['args'][1]);
     }
 
     public function testEnqueueBatchEmptyArrayDoesNothing(): void
     {
         $this->driver->enqueueBatch('default', []);
 
-        $this->assertCount(0, $this->callsFor('lpush'));
+        self::assertCount(0, $this->callsFor('lpush'));
     }
 
     public function testGetPendingCount(): void
@@ -467,7 +575,7 @@ class RedisQueueDriverTest extends TestCase
 
         $count = $this->driver->getPendingCount('default');
 
-        $this->assertEquals(10, $count);
+        self::assertEquals(10, $count);
     }
 
     public function testGetProcessingCount(): void
@@ -476,14 +584,73 @@ class RedisQueueDriverTest extends TestCase
 
         $count = $this->driver->getProcessingCount('default');
 
-        $this->assertEquals(3, $count);
+        self::assertEquals(3, $count);
+    }
+
+    public function testQueueIdSnapshotsNormalizeRedisStrings(): void
+    {
+        $this->redis->returns['lrange'] = ['10', '20'];
+        $this->redis->returns['zrange'] = ['30', '40'];
+
+        self::assertSame([10, 20], $this->driver->getPendingIds('default'));
+        self::assertSame([30, 40], $this->driver->getDelayedIds('default'));
+    }
+
+    public function testBatchReconciliationReturnsUniquePresentIdsInInputOrder(): void
+    {
+        $this->redis->returns['eval'] = ['3', '1', '3'];
+
+        $present = $this->driver->reconcileNotifications(
+            'default',
+            [1 => 1_700_000_000, 2 => 1_700_000_100, 3 => 1_700_000_200],
+            1_700_000_050,
+            250
+        );
+
+        self::assertSame([1, 3], $present);
+        $calls = $this->callsFor('eval');
+        self::assertCount(1, $calls);
+        self::assertSame(2, $calls[0]['args'][1]);
+        self::assertSame('test:queue:default:pending', $calls[0]['args'][2]);
+        self::assertSame('test:queue:default:delayed', $calls[0]['args'][3]);
+        self::assertSame('1700000050', $calls[0]['args'][4]);
+        self::assertSame('250', $calls[0]['args'][5]);
+        self::assertSame('3', $calls[0]['args'][6]);
+    }
+
+    public function testReconciliationRejectsMalformedPositiveIdResponse(): void
+    {
+        $this->redis->returns['eval'] = ['0'];
+
+        $this->expectException(QueueException::class);
+        $this->driver->reconcileNotifications('default', [1 => 1_700_000_000], 1_700_000_001, 250);
+    }
+
+    public function testMembershipAndReconciliationValidateBeforeRedisCommand(): void
+    {
+        foreach (
+            [
+                fn () => $this->driver->hasPendingJob('default', 0, 1),
+                fn () => $this->driver->hasDelayedJob('default', 0),
+                fn () => $this->driver->reconcileNotifications('default', [], 0, 1),
+            ] as $operation
+        ) {
+            try {
+                $operation();
+                self::fail('Invalid Redis boundary must fail');
+            } catch (\InvalidArgumentException) {
+                $this->addToAssertionCount(1);
+            }
+        }
+
+        self::assertSame([], $this->redis->calls);
     }
 
     public function testIsAvailableReturnsTrueOnSuccessfulPing(): void
     {
         $this->redis->returns['ping'] = 'PONG';
 
-        $this->assertTrue($this->driver->isAvailable());
+        self::assertTrue($this->driver->isAvailable());
     }
 
     public function testEnqueueAddsToCorrectKey(): void
@@ -492,14 +659,12 @@ class RedisQueueDriverTest extends TestCase
 
         $lpushCalls = $this->callsFor('lpush');
 
-        $this->assertEquals('test:queue:myqueue:pending', $lpushCalls[0]['args'][0]);
+        self::assertEquals('test:queue:myqueue:pending', $lpushCalls[0]['args'][0]);
     }
 
     public function testValidateTimeoutThrowsExceptionWhenUnsafe(): void
     {
-        $parameters = new MockRedisParameters(5);
-        $connection = new MockRedisConnection($parameters);
-        $this->redis->connection = $connection;
+        $this->redis->connection = (new Client(['read_write_timeout' => 5]))->getConnection();
 
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionMessage('Unsafe timeout configuration');
@@ -509,13 +674,10 @@ class RedisQueueDriverTest extends TestCase
 
     public function testValidateTimeoutAllowsSafeTimeouts(): void
     {
-        $parameters = new MockRedisParameters(60);
-        $connection = new MockRedisConnection($parameters);
-        $this->redis->connection = $connection;
+        $this->redis->connection = (new Client(['read_write_timeout' => 60]))->getConnection();
 
-        // Should not throw exception
+        $this->expectNotToPerformAssertions();
         $this->driver->validateTimeout(5);
-        $this->assertTrue(true);
     }
 
     public function testRealPredisTimeoutValidationThrowsOnUnsafe(): void
@@ -538,26 +700,7 @@ class RedisQueueDriverTest extends TestCase
         ]);
         $driver = new RedisQueueDriver($redisClient, 'test');
 
+        $this->expectNotToPerformAssertions();
         $driver->validateTimeout(5);
-        $this->assertTrue(true);
-    }
-}
-
-class MockRedisConnection
-{
-    public function __construct(public $parameters = null)
-    {
-    }
-
-    public function getParameters()
-    {
-        return $this->parameters;
-    }
-}
-
-class MockRedisParameters
-{
-    public function __construct(public $read_write_timeout)
-    {
     }
 }

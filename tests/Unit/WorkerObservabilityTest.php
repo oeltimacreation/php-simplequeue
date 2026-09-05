@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Tests\Unit;
 
 use Oeltima\SimpleQueue\Contract\JobHandlerInterface;
+use Oeltima\SimpleQueue\Contract\JobCompletedEvent;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
+use Oeltima\SimpleQueue\Contract\SupportsProcessingHeartbeat;
 use Oeltima\SimpleQueue\Contract\WorkerEventInterface;
 use Oeltima\SimpleQueue\Internal\WorkerLoopFailureHandler;
 use Oeltima\SimpleQueue\Internal\WorkerPolicy;
@@ -15,6 +17,10 @@ use Oeltima\SimpleQueue\Tests\Support\WorkerEventFixtures;
 use Oeltima\SimpleQueue\Tests\Support\WorkerTestCase;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Psr\Log\NullLogger;
+
+interface WorkerHeartbeatDriver extends QueueDriverInterface, SupportsProcessingHeartbeat
+{
+}
 
 final class WorkerObservabilityTest extends WorkerTestCase
 {
@@ -70,6 +76,60 @@ final class WorkerObservabilityTest extends WorkerTestCase
         self::assertArrayNotHasKey('trace', $events['infra_error']);
     }
 
+    public function testTypedEventRejectsInvalidFieldTypeConsistently(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Worker event field "job_id" must be a integer.');
+
+        JobCompletedEvent::fromArray([
+            'job_id' => '123',
+            'type' => 'test.job',
+            'duration_ms' => 1.0,
+        ]);
+    }
+
+    public function testProcessingHeartbeatFailureEmitsBoundedInfrastructureEvent(): void
+    {
+        $handler = new class implements JobHandlerInterface {
+            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
+            {
+                if ($progressCallback !== null) {
+                    $progressCallback(50, 'halfway');
+                }
+                return true;
+            }
+        };
+        $this->registry->register('test.job', $handler::class);
+        $job = JobDataFactory::running(['id' => 123, 'type' => 'test.job']);
+        $driver = $this->createMock(WorkerHeartbeatDriver::class);
+        $driver->expects($this->once())->method('dequeue')->willReturn(123);
+        $driver->expects($this->once())
+            ->method('heartbeatProcessing')
+            ->with('default', 123)
+            ->willThrowException(new \RuntimeException('Redis unavailable'));
+        $driver->expects($this->once())->method('ack')->with('default', 123);
+        $this->storage->expects($this->once())
+            ->method('claimById')
+            ->willReturn(ClaimedJobFactory::create($job, 'worker-1', 'lease'));
+        $this->storage->expects($this->once())
+            ->method('updateProgress')
+            ->with(self::anything(), 50, 'halfway')
+            ->willReturn(true);
+        $this->storage->expects($this->once())->method('markCompleted')->willReturn(true);
+        $events = [];
+        $worker = $this->createWorkerWithDriver($driver, [
+            'event_listener' => static function (string $name, array $payload) use (&$events): void {
+                $events[$name] = $payload;
+            },
+        ]);
+
+        self::assertTrue($worker->processOne());
+        self::assertSame([
+            'job_id' => 123,
+            'context' => 'processing_heartbeat',
+        ], $events['infrastructure_failure']);
+    }
+
     public function testWorkerEventListenerEmitsEvents(): void
     {
         $handler = new class implements JobHandlerInterface {
@@ -105,35 +165,58 @@ final class WorkerObservabilityTest extends WorkerTestCase
         ]);
         $worker->processOne();
 
-        $this->assertCount(2, $events);
-        $this->assertEquals('claimed', $events[0][0]);
-        $this->assertEquals(123, $events[0][1]['job_id']);
-        $this->assertArrayHasKey('acquire_latency_ms', $events[0][1]);
+        self::assertCount(2, $events);
+        self::assertEquals('claimed', $events[0][0]);
+        self::assertEquals(123, $events[0][1]['job_id']);
+        self::assertArrayHasKey('acquire_latency_ms', $events[0][1]);
 
-        $this->assertEquals('completed', $events[1][0]);
-        $this->assertEquals(123, $events[1][1]['job_id']);
-        $this->assertArrayHasKey('duration_ms', $events[1][1]);
+        self::assertEquals('completed', $events[1][0]);
+        self::assertEquals(123, $events[1][1]['job_id']);
+        self::assertArrayHasKey('duration_ms', $events[1][1]);
     }
 
-    public function testWorkerNormalizesCallableEventListenersToClosures(): void
+    public function testWorkerAcceptsCallableListenersFromOptionsAndSetter(): void
     {
-        $listener = new class {
+        $firstListener = new class {
+            /** @var list<string> */
+            public array $events = [];
+
             /** @param array<string, mixed> $data */
             public function handle(string $event, array $data): void
             {
+                $this->events[] = $event;
             }
         };
+        $secondListener = clone $firstListener;
+        $handler = new class implements JobHandlerInterface {
+            public function handle(int $jobId, array $payload, ?callable $progressCallback = null): mixed
+            {
+                return true;
+            }
+        };
+        $this->registry->register('test.job', $handler::class);
+
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $driver->expects($this->exactly(2))->method('dequeue')->willReturnOnConsecutiveCalls(123, 124);
+        $this->storage->expects($this->exactly(2))
+            ->method('claimById')
+            ->willReturnCallback(static fn (int $jobId, string $workerId) => ClaimedJobFactory::create(
+                JobDataFactory::running(['id' => $jobId, 'type' => 'test.job']),
+                $workerId,
+                'lease-' . $jobId
+            ));
+        $this->storage->expects($this->exactly(2))->method('markCompleted')->willReturn(true);
+
         $worker = $this->createWorkerWithDriver(
-            $this->createMock(QueueDriverInterface::class),
-            ['event_listener' => [$listener, 'handle']]
+            $driver,
+            ['event_listener' => [$firstListener, 'handle']]
         );
+        self::assertTrue($worker->processOne());
 
-        $reflection = new \ReflectionClass($worker);
-        $property = $reflection->getProperty('eventListener');
-        self::assertInstanceOf(\Closure::class, $property->getValue($worker));
+        $worker->setEventListener([$secondListener, 'handle']);
+        self::assertTrue($worker->processOne());
 
-        $worker->setEventListener([$listener, 'handle']);
-
-        self::assertInstanceOf(\Closure::class, $property->getValue($worker));
+        self::assertSame(['claimed', 'completed'], $firstListener->events);
+        self::assertSame(['claimed', 'completed'], $secondListener->events);
     }
 }

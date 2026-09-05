@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
 use Oeltima\SimpleQueue\AdminManager;
-use Oeltima\SimpleQueue\JobDispatcher;
 use Oeltima\SimpleQueue\JobRegistry;
 use Oeltima\SimpleQueue\QueueManager;
 use Oeltima\SimpleQueue\QueueReconciler;
@@ -13,21 +12,38 @@ use Oeltima\SimpleQueue\Worker;
 use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
 
 /** @return array<string, mixed> */
-function sqliteReconcileBenchmark(BenchmarkOptions $options): array
+function reconciliationBenchmark(BenchmarkOptions $options, string $distribution, bool $optimized): array
 {
-    $scenario = BenchmarkScenario::named(['value' => 'sqlite.reconcile']);
-    return benchmark($scenario, $options, static function () use ($options): Closure {
+    $path = $optimized ? 'optimized' : 'fallback';
+    $scenario = BenchmarkScenario::named(['value' => "sqlite.reconcile.{$path}.{$distribution}"]);
+    return benchmark($scenario, $options, static function () use ($options, $distribution, $optimized): Closure {
         [$pdo, $storage] = sqliteStorage();
-        (new JobDispatcher($storage, QueueManager::database($storage)))->dispatchBatch('benchmark.noop', payloads($options));
-        $reconciler = new QueueReconciler($storage, new InMemoryQueueDriver());
+        $jobIds = $storage->createJobs(array_map(
+            static fn (array $payload): array => ['type' => 'benchmark.noop', 'payload' => $payload],
+            payloads($options)
+        ));
+        $queue = new InMemoryQueueDriver();
+        $present = match ($distribution) {
+            'all_hit' => $jobIds,
+            'mixed' => array_slice($jobIds, 0, intdiv(count($jobIds), 2)),
+            'all_miss' => [],
+            default => throw new InvalidArgumentException('Unknown reconciliation distribution'),
+        };
+        $queue->enqueueBatch('default', $present);
+        $instrumented = new BenchmarkQueueDriver($queue);
+        $driver = $optimized ? $instrumented : new BenchmarkFallbackQueueDriver($instrumented);
+        $reconciler = new QueueReconciler($storage, $driver);
         $pdo->resetCounts();
-        return static function () use ($reconciler, $pdo, $options): array {
+        $instrumented->resetCounts();
+        return static function () use ($reconciler, $pdo, $options, $instrumented): array {
             $result = $reconciler->reconcile('default', new ReconcileOptions(
                 pageSize: $options->jobs,
                 membershipScanLimit: $options->jobs,
                 maxDurationSeconds: 60.0
             ));
-            return databaseCounts($pdo, ['operations' => $result->scanned]);
+            return array_merge(databaseCounts($pdo, ['operations' => $result->scanned]), [
+                'driver_roundtrips' => $instrumented->roundTrips(),
+            ]);
         };
     });
 }

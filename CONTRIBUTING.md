@@ -1,6 +1,6 @@
 # Contributing to PHP SimpleQueue
 
-Thank you for contributing to PHP SimpleQueue! This document provides guidelines for environment setup, code quality enforcement, quality ratchets, and adding new drivers or storage backends.
+Thank you for contributing to PHP SimpleQueue! This document covers environment setup, maintained quality gates, and adding drivers or storage backends.
 
 ---
 
@@ -33,14 +33,18 @@ composer check
 SimpleQueue maintains strict quality gates across static analysis, unit/integration testing, coding standards, and complexity limits.
 
 ```bash
-# Run the complete quality gate suite (PHPUnit, PHPStan, PHPCS, Quality Ratchet)
+# Run tests, PHPStan, PHPCS, and deterministic operation budgets
 composer check
 
 # Run unit and integration tests
 composer test
 
+# Expose order-dependent state with the committed seed
+composer test-random
+
 # Run tests with explicit HTML coverage (also writes coverage/clover.xml)
 composer test-coverage
+composer coverage-check
 
 # Run static analysis (PHPStan Level 9 with strict-rules)
 composer phpstan
@@ -51,38 +55,44 @@ composer cs-check
 # Auto-fix code style issues
 composer cs-fix
 
-# Generate physical code complexity and duplication report
-composer quality-report
-
-# Enforce quality ratchet rules against quality/quality-baseline.json
-composer quality-ratchet
-
 # Run performance benchmarks
 composer benchmark
+
+# Enforce the small deterministic benchmark budget
+composer budgets
+
+# Capture the 10/100/1,000/10,000 non-gating profile
+composer benchmark-profile
+
+# Run focused mutation testing at the frozen baseline
+composer mutation
 ```
 
 ---
 
-## Code Quality Ratchet System
+## Maintained quality gates
 
-SimpleQueue uses an internal dependency-free code analyzer (`composer quality-ratchet`) based on `token_get_all()` to enforce complexity and duplicate-window limits. The ratchet command first runs small fixtures for complexity, nesting, class-size, and duplicate-window behavior, then checks the repository baseline.
+PHPStan level 9 and PHPCS/Slevomat inspect source, tests, benchmarks, scripts,
+and executable examples. Clover gates line and method coverage; Infection gates
+critical transition behavior; Roave compares public/protected API against the
+last stable tag; deterministic operation counts guard database, queue, Redis,
+and event hot paths. The retired bespoke token analyzer is not part of v1.11.
 
 ### Quality Thresholds
 
 For all new code additions:
 
-- **Cognitive Complexity**: Max 15 per method
-- **Cyclomatic Complexity**: Max 15 per method
-- **Nesting Depth**: Max 3 control-flow levels
-- **Method Length**: Max 100 lines per method
-- **Class Length**: Max 500 lines per class (new classes)
-- **Production Duplication**: 0 new duplicate 50-token windows allowed
+- **Cyclomatic Complexity**: warning at 15; absolute maximum 25
+- **Nesting Depth**: warning at 3; absolute maximum 5
+- **Function Length**: maximum 100 lines in production source
+- **Class Length**: maximum 500 lines in production source, with the retained
+  `PdoJobStorage` v1 compatibility surface documented as the one exclusion
+- **Coverage**: at least 83.9% lines and 71.2% methods
+- **Mutation**: at least the frozen 64.79% focused baseline
 
-### Ratchet Policy
-
-Existing grandfathered hotspots cannot increase in complexity or line count. If a refactor reduces complexity, the quality baseline is updated via `composer quality-report` and committed to lock in the improvement.
-
-Exceptions to ratchet rules are rare and must be explicitly documented with a justification in `quality/ratchet-exceptions.json`.
+Timing medians are evidence, not shared-runner gates. Do not loosen a
+deterministic threshold to accommodate a change; explain and review any scoped
+configuration exclusion. See [the quality guide](docs/quality-baseline.md).
 
 ---
 
@@ -118,49 +128,23 @@ final class ProcessReportHandler implements JobHandlerInterface
 
 ### 2. Adding a Custom Queue Driver
 
-Implement `Oeltima\SimpleQueue\Contract\QueueDriverInterface`. To verify compliance with driver behavior, write a unit test extending `Oeltima\SimpleQueue\Tests\Contract\QueueDriverContractTest`:
-
-```php
-<?php
-
-declare(strict_types=1);
-
-namespace App\Tests\Driver;
-
-use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
-use Oeltima\SimpleQueue\Tests\Contract\QueueDriverContractTest;
-
-final class CustomQueueDriverTest extends QueueDriverContractTest
-{
-    protected function createDriver(): QueueDriverInterface
-    {
-        return new CustomQueueDriver();
-    }
-}
-```
+Implement `Oeltima\SimpleQueue\Contract\QueueDriverInterface`. Add the backend
+as a provider case in `tests/Contract/QueueDriverContractTest.php`, then cover
+each advertised optional capability and its invalid inputs. Service-backed
+drivers must fail—not skip—when their dedicated CI lane is configured. Future
+dispatch requires `SupportsDelayedJobs` or
+`SupportsStorageBackedScheduling`; claimed polling should implement
+`SupportsWorkerAwareClaimedDequeue`.
 
 ### 3. Adding a Custom Job Storage Backend
 
-Implement `Oeltima\SimpleQueue\Contract\JobStorageInterface`. Verify persistence contract compliance by extending `Oeltima\SimpleQueue\Tests\Contract\JobStorageContractTest`:
-
-```php
-<?php
-
-declare(strict_types=1);
-
-namespace App\Tests\Storage;
-
-use Oeltima\SimpleQueue\Contract\JobStorageInterface;
-use Oeltima\SimpleQueue\Tests\Contract\JobStorageContractTest;
-
-final class CustomJobStorageTest extends JobStorageContractTest
-{
-    protected function createStorage(): JobStorageInterface
-    {
-        return new CustomJobStorage();
-    }
-}
-```
+Implement `Oeltima\SimpleQueue\Contract\JobStorageInterface`. Add it to
+`tests/Contract/JobStorageContractTest.php` and run
+`tests/Support/StorageTransitionMatrix.php` against it. A production backend
+must prove atomic claims, lease fencing, canonical attempts, complete batch
+rollback, result serialization, stale recovery, and direct API validation.
+Implement lean cursor, scoped recovery, and administration capabilities only
+when their documented guarantees are atomic.
 
 ---
 

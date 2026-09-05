@@ -385,3 +385,57 @@ items; reconciliation remains limited to a 100-row page, a 250-entry membership
 scan, and one second. The worker retains only one reconciliation cursor and one
 Redis repair cursor per configured queue, so this profile found no per-iteration
 memory accumulation or unbounded idle work.
+
+## v1.11 operation deltas and reproducibility
+
+v1.11 changes operation budgets only where correctness requires it; unchanged
+hot paths gain no database statement, transaction, Redis roundtrip, or
+listener-disabled event allocation (proven by `benchmarks/operation-count-checks.php`).
+
+The release-candidate scale capture ran on PHP 8.4.24, SQLite 3.45.1, Linux
+x86-64, and an Intel i5-13400. These are single-sample local observations used
+to expose scaling shape; no before/after timing improvement is claimed.
+Complete medians, CPU, memory, and operation counters are archived in
+[`quality/v1.11-release-profile.json`](../quality/v1.11-release-profile.json).
+
+| Scenario (milliseconds) | 10 | 100 | 1,000 | 10,000 | Deterministic counter at 10,000 |
+|---|---:|---:|---:|---:|---|
+| In-memory repeated single enqueue/dequeue | 0.064 | 0.455 | 3.704 | 35.707 | In-process; linear work |
+| In-memory batch enqueue/dequeue | 0.042 | 0.574 | 3.683 | 38.732 | In-process; linear work |
+| SQLite atomic batch create | 0.258 | 1.070 | 9.644 | 96.304 | 100 INSERT chunks, 1 transaction |
+| SQLite Worker complete/result encode | 2.017 | 14.647 | 147.595 | 1,547.805 | 40,000 statements, 10,000 transactions |
+| Optimized reconciliation, all missing | 0.500 | 0.592 | 5.607 | 53.313 | 1 storage query, 1 queue operation |
+| Legacy reconciliation, all missing | 0.214 | 1.501 | 56.867 | 4,679.499 | 1 storage query, 30,000 queue operations |
+
+- **PDO batches are atomic**: one transaction/savepoint across all chunks
+  (SQLite 100 rows, MySQL/PostgreSQL 1,000 rows, plus 1 MiB encoded-parameter
+  splits). A 100-job SQLite batch is one transaction with bounded statements
+  (one INSERT per chunk plus transaction control) instead of one bare INSERT.
+  Later-chunk failure rolls back earlier chunks; IDs are exact via
+  `RETURNING` (PostgreSQL/modern SQLite), row-by-row fallback (older SQLite),
+  or session `auto_increment_increment` derivation with validation (MySQL).
+- **Redis reconciliation is one roundtrip per page**: the optimized batch
+  contract validates in PHP, checks bounded `LPOS` plus exact `ZSCORE`, restores
+  missing due/future IDs, and returns already-present IDs via one direct `EVAL`
+  (no `NOSCRIPT` retry). Storage scans use the lean `id, available_at`
+  projection without payload/result JSON. Per-item membership remains for
+  third-party fallback drivers.
+- **In-memory queues are amortized O(1)**: append/head-index replaces repeated
+  prepend; compaction runs only after the consumed head exceeds 1,024 entries
+  and half the buffer. Batches validate fully before mutating. Delayed
+  promotion selects earliest availability. The four-scale profile above grows
+  proportionally through 10,000 operations. Wall-clock varies by machine; the
+  gate is asymptotic work and deterministic operation counts, not shared-CI
+  timing.
+- **Stale Lua expansion chunks at 1,000 members**, matching delayed promotion
+  and avoiding Lua stack limits.
+- **Redis duplicate processing remains visible**: ACK, NACK, and stale recovery
+  use atomic Lua updates that retain/rebase the shared score while another
+  occurrence of the same ID remains in the processing list.
+
+Methodology: `composer budgets` enforces the small deterministic table;
+`composer benchmark -- --jobs=100 --iterations=5 --warmup=1` produces repeated
+timing samples; `composer benchmark-profile` captures 10/100/1,000/10,000
+in-memory queues, storage creation, PDO batches, worker/result paths, and
+optimized/legacy all-hit/all-miss/mixed reconciliation. The archive records
+the exact environment, sample configuration, medians, and counters.

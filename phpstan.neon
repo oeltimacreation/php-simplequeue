@@ -1,61 +1,31 @@
 parameters:
     level: 9
+    phpVersion: 80200
     paths:
         - src
         - tests
+        - benchmarks
+        - scripts
+        - examples
     reportUnmatchedIgnoredErrors: true
     ignoreErrors:
-        # Predis is optional dependency
-        - '#Predis\\ClientInterface#'
-        
-        # Ignore dynamic calls to static PHPUnit assertions in tests
+        # Intentional BC: built-in drivers retain deprecated capability interfaces.
         -
-            message: '#Dynamic call to static method PHPUnit\\Framework\\Assert::#'
-            path: tests
-            
-        # Ignore strict level 9 type-hint and mock object warnings in test files
+            message: '#implements deprecated interface Oeltima\\SimpleQueue\\Contract\\SupportsWorkerId#'
+            path: src/Driver/DatabaseQueueDriver.php
         -
-            identifier: missingType.parameter
-            path: tests
+            message: '#implements deprecated interface Oeltima\\SimpleQueue\\Contract\\SupportsQueueReconciliation#'
+            path: src/Driver/InMemoryQueueDriver.php
         -
-            identifier: missingType.return
-            path: tests
+            message: '#implements deprecated interface Oeltima\\SimpleQueue\\Contract\\SupportsQueueReconciliation#'
+            path: src/Driver/RedisQueueDriver.php
         -
-            identifier: missingType.iterableValue
-            path: tests
+            message: '#Call to method setWorkerId\(\) of deprecated interface#'
+            path: src/Worker.php
         -
-            identifier: assign.propertyType
-            path: tests
-        -
-            identifier: property.nonObject
-            path: tests
-        -
-            identifier: offsetAccess.nonOffsetAccessible
-            path: tests
-        -
-            identifier: argument.type
-            path: tests
-        -
-            identifier: method.alreadyNarrowedType
-            path: tests
+            message: '#Call to deprecated method setWorkerId\(\)#'
+            path: tests/Unit/DatabaseQueueDriverTest.php
+        # Predis PHPDoc promises this method, while older runtime clients may omit it.
         -
             identifier: function.alreadyNarrowedType
-            path: tests
-        -
-            identifier: closure.unusedUse
-            path: tests
-        -
-            identifier: return.type
-            path: tests
-        -
-            identifier: missingType.property
-            path: tests
-        -
-            identifier: cast.string
-            path: tests
-        -
-            identifier: booleanNot.exprNotBoolean
-            path: tests
-        -
-            identifier: ternary.shortNotAllowed
-            path: tests
+            path: src/Driver/RedisQueueDriver.php

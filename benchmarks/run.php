@@ -22,6 +22,7 @@ function benchmarkEnvironment(BenchmarkOptions $options): array
     $environment = [
         'php' => PHP_VERSION,
         'platform' => php_uname('s') . ' ' . php_uname('r') . ' ' . php_uname('m'),
+        'cpu' => benchmarkCpuModel(),
         'sapi' => PHP_SAPI,
         'pdo_drivers' => \PDO::getAvailableDrivers(),
         'sqlite' => $sqlite['versionString'] ?? null,
@@ -49,14 +50,12 @@ function benchmarkEnvironment(BenchmarkOptions $options): array
     try {
         $client->connect();
         $server = $client->info('server');
-        $serverInfo = is_array($server) && isset($server['Server']) && is_array($server['Server'])
+        $serverInfo = isset($server['Server']) && is_array($server['Server'])
             ? $server['Server']
             : $server;
         $environment['redis_server'] = [
-            'name' => is_array($serverInfo) ? ($serverInfo['server_name'] ?? null) : null,
-            'version' => is_array($serverInfo)
-                ? ($serverInfo['valkey_version'] ?? $serverInfo['redis_version'] ?? null)
-                : null,
+            'name' => $serverInfo['server_name'] ?? null,
+            'version' => $serverInfo['valkey_version'] ?? $serverInfo['redis_version'] ?? null,
         ];
     } finally {
         $client->disconnect();
@@ -65,25 +64,55 @@ function benchmarkEnvironment(BenchmarkOptions $options): array
     return $environment;
 }
 
-function runBenchmarks(): void
+function benchmarkCpuModel(): ?string
 {
-    $options = BenchmarkOptions::fromCli();
+    $cpuInfo = @file_get_contents('/proc/cpuinfo');
+    if (!is_string($cpuInfo)) {
+        return null;
+    }
+    if (preg_match('/^model name\s*:\s*(.+)$/m', $cpuInfo, $matches) !== 1) {
+        return null;
+    }
+    return trim($matches[1]);
+}
+
+/** @return list<array<string, mixed>> */
+function benchmarkResults(BenchmarkOptions $options): array
+{
     $results = localBenchmarks($options);
     if ($options->redisHost !== null) {
         $results = array_merge($results, redisBenchmarks($options));
     }
     assertHotLoopCounters($results);
+    return $results;
+}
 
-    echo json_encode([
+function runBenchmarks(): void
+{
+    $options = BenchmarkOptions::fromCli();
+    $report = [
         'environment' => benchmarkEnvironment($options),
         'configuration' => [
             'jobs' => $options->jobs,
             'iterations' => $options->iterations,
             'warmup' => $options->warmup,
             'idle_cycles' => $options->idleCycles,
+            'profile' => $options->profile,
         ],
-        'results' => $results,
-    ], JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR) . PHP_EOL;
+    ];
+    if ($options->profile) {
+        $profiles = [];
+        $profileSizes = [10, 100, 1_000, 10_000];
+        $report['configuration']['profile_sizes'] = $profileSizes;
+        foreach ($profileSizes as $jobs) {
+            $profiles[] = ['jobs' => $jobs, 'results' => benchmarkResults($options->withJobs($jobs))];
+        }
+        $report['profiles'] = $profiles;
+    } else {
+        $report['results'] = benchmarkResults($options);
+    }
+
+    echo json_encode($report, JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR) . PHP_EOL;
 }
 
 runBenchmarks();

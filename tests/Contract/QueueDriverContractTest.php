@@ -114,6 +114,14 @@ final class QueueDriverContractTest extends TestCase
         }
     }
 
+    /**
+     * @param array{
+     *     enqueue_future: callable(SupportsDelayedJobs): void,
+     *     future_count: int,
+     *     enqueue_due: callable(SupportsDelayedJobs): void,
+     *     due_job_id: int
+     * } $scenario
+     */
     #[DataProvider('delayedNotificationScenarios')]
     public function testDelayedNotificationsBecomeClaimableWhenDue(QueueBackend $backend, array $scenario): void
     {
@@ -190,7 +198,7 @@ final class QueueDriverContractTest extends TestCase
             return new DatabaseQueueDriver($this->databaseStorage, 50, $clock);
         }
 
-        return RedisFixture::driver($this, 'contract-' . bin2hex(random_bytes(8)));
+        return RedisFixture::driver('contract-' . bin2hex(random_bytes(8)));
     }
 
     private function enqueueJob(

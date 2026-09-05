@@ -8,6 +8,8 @@ use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Driver\RedisQueueDriver;
 use Oeltima\SimpleQueue\Storage\PdoJobStorage;
 use Oeltima\SimpleQueue\Tests\DbHelper;
+use Oeltima\SimpleQueue\Tests\Support\FrozenClock;
+use Oeltima\SimpleQueue\Tests\Support\StorageTransitionMatrix;
 use PDO;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -36,11 +38,6 @@ enum QueueServiceFixture
     public function prefix(): string
     {
         return $this === self::Redis ? 'integration-test' : 'integration-test-valkey';
-    }
-
-    public function hasExtendedCoverage(): bool
-    {
-        return $this === self::Valkey;
     }
 }
 
@@ -85,6 +82,11 @@ final class RealServicesTest extends TestCase
     /** @return iterable<string, array{QueueServiceFixture}> */
     public static function queueServices(): iterable
     {
+        $selected = self::selectedQueueService();
+        if ($selected !== null) {
+            yield $selected->label() => [$selected];
+            return;
+        }
         yield 'Redis' => [QueueServiceFixture::Redis];
         yield 'Valkey' => [QueueServiceFixture::Valkey];
     }
@@ -93,21 +95,27 @@ final class RealServicesTest extends TestCase
     public function testRealQueueDriver(QueueServiceFixture $service): void
     {
         $host = getenv($service->hostVariable());
-        if (!$host) {
-            $this->markTestSkipped($service->hostVariable() . ' is not set. Skipping real integration test.');
+        if (!is_string($host) || $host === '') {
+            if (self::selectedQueueService() === $service) {
+                self::fail($service->hostVariable() . ' is required for the configured service lane.');
+            }
+            self::markTestSkipped($service->hostVariable() . ' is not set. Skipping real integration test.');
         }
-        $port = getenv($service->portVariable()) ?: '6379';
+        $portValue = getenv($service->portVariable());
+        $port = is_string($portValue) && $portValue !== '' ? $portValue : '6379';
         $client = new Client(['scheme' => 'tcp', 'host' => $host, 'port' => (int) $port]);
         try {
             $client->connect();
         } catch (\Exception $exception) {
-            $this->markTestSkipped('Could not connect to ' . $service->label() . ': ' . $exception->getMessage());
+            if (self::selectedQueueService() === $service) {
+                self::fail('Could not connect to configured ' . $service->label() . ': ' . $exception->getMessage());
+            }
+            self::markTestSkipped('Could not connect to ' . $service->label() . ': ' . $exception->getMessage());
         }
-        $driver = new RedisQueueDriver($client, $service->prefix());
+        $clock = new FrozenClock();
+        $driver = new RedisQueueDriver($client, $service->prefix(), $clock);
         $this->verifyCoreQueueOperations($driver);
-        if ($service->hasExtendedCoverage()) {
-            $this->verifyExtendedQueueOperations($driver);
-        }
+        $this->verifyExtendedQueueOperations($driver, $clock);
         $driver->clear('default');
     }
 
@@ -115,29 +123,45 @@ final class RealServicesTest extends TestCase
     {
         $driver->clear('default');
         $driver->enqueue('default', 42);
-        $this->assertSame(1, $driver->getPendingCount('default'));
-        $this->assertSame(42, $driver->dequeue('default', 0));
-        $this->assertSame(0, $driver->getPendingCount('default'));
-        $this->assertSame(1, $driver->getProcessingCount('default'));
+        self::assertSame(1, $driver->getPendingCount('default'));
+        self::assertSame(42, $driver->dequeue('default', 0));
+        self::assertSame(0, $driver->getPendingCount('default'));
+        self::assertSame(1, $driver->getProcessingCount('default'));
         $driver->ack('default', 42);
-        $this->assertSame(0, $driver->getProcessingCount('default'));
+        self::assertSame(0, $driver->getProcessingCount('default'));
     }
 
-    private function verifyExtendedQueueOperations(RedisQueueDriver $driver): void
+    private function verifyExtendedQueueOperations(RedisQueueDriver $driver, FrozenClock $clock): void
     {
         $driver->enqueue('default', 99);
-        $this->assertSame(99, $driver->dequeue('default', 1));
+        self::assertSame(99, $driver->dequeue('default', 1));
         $driver->ack('default', 99);
         $driver->nack('default', 101, 1);
-        $this->assertSame(1, $driver->getDelayedCount('default'));
-        sleep(2);
-        $this->assertSame(1, $driver->promoteDelayedJobs('default'));
-        $this->assertSame(1, $driver->getPendingCount('default'));
+        self::assertSame(1, $driver->getDelayedCount('default'));
+        $clock->advance(2);
+        self::assertSame(1, $driver->promoteDelayedJobs('default'));
+        self::assertSame(1, $driver->getPendingCount('default'));
+
+        $driver->clear('default');
+        $driver->enqueueBatch('default', [202, 202]);
+        self::assertSame(202, $driver->dequeue('default', 0));
+        self::assertSame(202, $driver->dequeue('default', 0));
+        $driver->ack('default', 202);
+        self::assertSame(1, $driver->getProcessingCount('default'));
+        $clock->advance(61);
+        self::assertSame(1, $driver->recoverStaleProcessing('default', 60));
+        self::assertSame(0, $driver->getProcessingCount('default'));
+        self::assertSame(1, $driver->getPendingCount('default'));
     }
 
     /** @return iterable<string, array{DatabaseServiceFixture}> */
     public static function databaseServices(): iterable
     {
+        $selected = self::selectedDatabaseService();
+        if ($selected !== null) {
+            yield $selected->label() => [$selected];
+            return;
+        }
         yield 'MySQL' => [DatabaseServiceFixture::MySql];
         yield 'PostgreSQL' => [DatabaseServiceFixture::PostgreSql];
     }
@@ -149,7 +173,10 @@ final class RealServicesTest extends TestCase
         try {
             $pdo = $this->connect($service);
         } catch (\Exception $exception) {
-            $this->markTestSkipped('Could not connect to ' . $service->label() . ': ' . $exception->getMessage());
+            if (self::selectedDatabaseService() === $service) {
+                self::fail('Could not connect to configured ' . $service->label() . ': ' . $exception->getMessage());
+            }
+            self::markTestSkipped('Could not connect to ' . $service->label() . ': ' . $exception->getMessage());
         }
         $this->runStorageTests($pdo, $service);
     }
@@ -158,7 +185,7 @@ final class RealServicesTest extends TestCase
     public function testConcurrentIdempotentStorageCreation(DatabaseServiceFixture $service): void
     {
         if (!function_exists('pcntl_fork')) {
-            $this->markTestSkipped('Process control is unavailable.');
+            self::markTestSkipped('Process control is unavailable.');
         }
         $this->requireDatabaseService($service);
         $files = $this->concurrencyFiles();
@@ -173,6 +200,91 @@ final class RealServicesTest extends TestCase
         }
     }
 
+    #[DataProvider('databaseServices')]
+    public function testRealStorageTransitionMatrix(DatabaseServiceFixture $service): void
+    {
+        $this->requireDatabaseService($service);
+        $pdo = $this->connect($service);
+        $table = $service->table() . '_matrix';
+        $pdo->exec("DROP TABLE IF EXISTS {$table}");
+
+        try {
+            DbHelper::createSchema($pdo, $table);
+            $clock = new FrozenClock();
+            $storage = new PdoJobStorage($pdo, $table, $clock);
+            StorageTransitionMatrix::assertCreate($storage);
+            StorageTransitionMatrix::assertClaim($storage);
+            StorageTransitionMatrix::assertProgressAndCompletion($storage);
+            StorageTransitionMatrix::assertRetry($storage);
+            StorageTransitionMatrix::assertTerminalFailure($storage);
+            StorageTransitionMatrix::assertGracefulRelease($storage);
+            StorageTransitionMatrix::assertAdministration($storage);
+            StorageTransitionMatrix::assertOwnership($storage);
+
+            $before = $storage->count();
+            try {
+                $storage->createJobs([
+                    ['type' => 'valid.job', 'payload' => []],
+                    ['type' => '', 'payload' => []],
+                ]);
+                self::fail('Invalid batch must fail before mutation');
+            } catch (\InvalidArgumentException) {
+                $this->addToAssertionCount(1);
+            }
+            self::assertSame($before, $storage->count());
+
+            $pdo->exec("DROP TABLE IF EXISTS {$table}");
+            DbHelper::createSchema($pdo, $table);
+            $staleClock = new FrozenClock();
+            StorageTransitionMatrix::assertStaleParity(
+                new PdoJobStorage($pdo, $table, $staleClock),
+                $staleClock
+            );
+            $pdo->exec("DROP TABLE IF EXISTS {$table}");
+            DbHelper::createSchema($pdo, $table);
+            $scopedClock = new FrozenClock();
+            StorageTransitionMatrix::assertScopedStaleParity(
+                new PdoJobStorage($pdo, $table, $scopedClock),
+                $scopedClock
+            );
+        } finally {
+            $pdo->exec("DROP TABLE IF EXISTS {$table}");
+        }
+    }
+
+    #[DataProvider('databaseServices')]
+    public function testRealStorageCreatesTenThousandExactBatchIds(DatabaseServiceFixture $service): void
+    {
+        $this->requireDatabaseService($service);
+        $pdo = $this->connect($service);
+        $table = $service->table() . '_batch';
+        $pdo->exec("DROP TABLE IF EXISTS {$table}");
+        DbHelper::createSchema($pdo, $table);
+        $increment = $service === DatabaseServiceFixture::MySql ? 2 : 1;
+
+        try {
+            if ($service === DatabaseServiceFixture::MySql) {
+                $pdo->exec('SET SESSION auto_increment_increment = 2');
+            }
+            $storage = new PdoJobStorage($pdo, $table);
+            $definitions = [];
+            for ($index = 0; $index < 10_000; $index++) {
+                $definitions[] = ['type' => 'batch.job', 'payload' => ['index' => $index]];
+            }
+
+            $ids = $storage->createJobs($definitions);
+
+            self::assertCount(10_000, $ids);
+            self::assertSame(range($ids[0], $ids[0] + (9_999 * $increment), $increment), $ids);
+            self::assertSame(10_000, $storage->count());
+        } finally {
+            if ($service === DatabaseServiceFixture::MySql) {
+                $pdo->exec('SET SESSION auto_increment_increment = 1');
+            }
+            $pdo->exec("DROP TABLE IF EXISTS {$table}");
+        }
+    }
+
     private function runStorageTests(PDO $pdo, DatabaseServiceFixture $service): void
     {
         $table = $service->table();
@@ -180,21 +292,22 @@ final class RealServicesTest extends TestCase
         DbHelper::createSchema($pdo, $table);
         $storage = new PdoJobStorage($pdo, $table);
         $jobId = $storage->createJob('test.job', ['foo' => 'bar'], 'default');
-        $this->assertGreaterThan(0, $jobId);
+        self::assertGreaterThan(0, $jobId);
         $job = $storage->find($jobId);
-        $this->assertNotNull($job);
-        $this->assertSame(JobStatus::Pending, $job->status);
-        $this->assertSame(['foo' => 'bar'], $job->payload);
+        self::assertNotNull($job);
+        self::assertSame(JobStatus::Pending, $job->status);
+        self::assertSame(['foo' => 'bar'], $job->payload);
         $claim = $storage->claimNextAvailable('default', 'worker-1');
-        $this->assertNotNull($claim);
-        $this->assertSame($jobId, $claim->job->id);
-        $this->assertSame('worker-1', $claim->workerId);
-        $this->assertTrue($storage->heartbeat($claim));
-        $this->assertTrue($storage->updateProgress($claim, 50, 'working'));
-        $this->assertTrue($storage->markCompleted($claim, ['res' => 'ok']));
+        self::assertNotNull($claim);
+        self::assertSame($jobId, $claim->job->id);
+        self::assertSame('worker-1', $claim->workerId);
+        self::assertTrue($storage->heartbeat($claim));
+        self::assertTrue($storage->updateProgress($claim, 50, 'working'));
+        self::assertTrue($storage->markCompleted($claim, ['res' => 'ok']));
         $job = $storage->find($jobId);
-        $this->assertSame(JobStatus::Completed, $job->status);
-        $this->assertSame(['res' => 'ok'], $job->result);
+        self::assertNotNull($job);
+        self::assertSame(JobStatus::Completed, $job->status);
+        self::assertSame(['res' => 'ok'], $job->result);
         $this->verifyStorageSafety($storage);
         $pdo->exec("DROP TABLE IF EXISTS {$table}");
     }
@@ -203,36 +316,73 @@ final class RealServicesTest extends TestCase
     {
         $first = $storage->createIdempotentJob('test.idempotent', [], 'request-1', 'default', 3);
         $second = $storage->createIdempotentJob('test.idempotent', [], 'request-1', 'default', 3);
-        $this->assertTrue($first->created);
-        $this->assertFalse($second->created);
-        $this->assertSame($first->jobId, $second->jobId);
+        self::assertTrue($first->created);
+        self::assertFalse($second->created);
+        self::assertSame($first->jobId, $second->jobId);
         $fencedId = $storage->createJob('test.fenced', []);
         $oldClaim = $storage->claimById($fencedId, 'worker-old');
-        $this->assertNotNull($oldClaim);
-        $this->assertTrue($storage->scheduleRetry($oldClaim, 1, 0));
+        self::assertNotNull($oldClaim);
+        self::assertTrue($storage->scheduleRetry($oldClaim, 1, 0));
         $replacementClaim = $storage->claimById($fencedId, 'worker-new');
-        $this->assertNotNull($replacementClaim);
-        $this->assertNotSame($oldClaim->leaseToken, $replacementClaim->leaseToken);
-        $this->assertFalse($storage->heartbeat($oldClaim));
-        $this->assertFalse($storage->markCompleted($oldClaim));
-        $this->assertTrue($storage->markCompleted($replacementClaim));
+        self::assertNotNull($replacementClaim);
+        self::assertNotSame($oldClaim->leaseToken, $replacementClaim->leaseToken);
+        self::assertFalse($storage->heartbeat($oldClaim));
+        self::assertFalse($storage->markCompleted($oldClaim));
+        self::assertTrue($storage->markCompleted($replacementClaim));
     }
 
     private function requireDatabaseService(DatabaseServiceFixture $service): void
     {
-        if (!getenv($service->dsnVariable())) {
-            $this->markTestSkipped($service->dsnVariable() . ' is not set. Skipping real integration test.');
+        $dsn = getenv($service->dsnVariable());
+        if (is_string($dsn) && $dsn !== '') {
+            return;
         }
+        if (self::selectedDatabaseService() === $service) {
+            self::fail($service->dsnVariable() . ' is required for the configured service lane.');
+        }
+        self::markTestSkipped($service->dsnVariable() . ' is not set. Skipping real integration test.');
     }
 
     private function connect(DatabaseServiceFixture $service): PDO
     {
-        $dsn = getenv($service->dsnVariable()) ?: '';
-        $user = getenv($service->userVariable()) ?: '';
-        $password = getenv($service->passwordVariable()) ?: '';
+        $dsn = self::environmentValue($service->dsnVariable());
+        $user = self::environmentValue($service->userVariable());
+        $password = self::environmentValue($service->passwordVariable());
         $pdo = new PDO($dsn, $user, $password);
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         return $pdo;
+    }
+
+    private static function environmentValue(string $name): string
+    {
+        $value = getenv($name);
+        return is_string($value) ? $value : '';
+    }
+
+    private static function selectedQueueService(): ?QueueServiceFixture
+    {
+        $selected = getenv('SIMPLEQUEUE_QUEUE_SERVICE');
+        if (!is_string($selected) || $selected === '') {
+            return null;
+        }
+        return match (strtolower($selected)) {
+            'redis' => QueueServiceFixture::Redis,
+            'valkey' => QueueServiceFixture::Valkey,
+            default => throw new \LogicException('Unknown queue service selection: ' . $selected),
+        };
+    }
+
+    private static function selectedDatabaseService(): ?DatabaseServiceFixture
+    {
+        $selected = getenv('SIMPLEQUEUE_DATABASE_SERVICE');
+        if (!is_string($selected) || $selected === '') {
+            return null;
+        }
+        return match (strtolower($selected)) {
+            'mysql' => DatabaseServiceFixture::MySql,
+            'postgres', 'postgresql' => DatabaseServiceFixture::PostgreSql,
+            default => throw new \LogicException('Unknown database service selection: ' . $selected),
+        };
     }
 
     /** @return array{barrier: \SplFileInfo, results: list<\SplFileInfo>} */

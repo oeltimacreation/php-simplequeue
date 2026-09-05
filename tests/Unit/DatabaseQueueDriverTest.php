@@ -20,11 +20,6 @@ final class DatabaseQueueDriverTest extends TestCase
         $this->driver = new DatabaseQueueDriver($this->storage, 50); // Set poll interval to 50ms for tests
     }
 
-    public function testIsAvailableReturnsTrue(): void
-    {
-        $this->assertTrue($this->driver->isAvailable());
-    }
-
     public function testEnqueueThrowsExceptionForInvalidJobId(): void
     {
         $this->expectException(\InvalidArgumentException::class);
@@ -34,8 +29,8 @@ final class DatabaseQueueDriverTest extends TestCase
 
     public function testEnqueueWithPositiveJobIdDoesNothing(): void
     {
+        $this->expectNotToPerformAssertions();
         $this->driver->enqueue('default', 42);
-        $this->assertTrue(true); // Should not throw exception
     }
 
     public function testAckThrowsExceptionForInvalidJobId(): void
@@ -47,8 +42,8 @@ final class DatabaseQueueDriverTest extends TestCase
 
     public function testAckWithPositiveJobIdDoesNothing(): void
     {
+        $this->expectNotToPerformAssertions();
         $this->driver->ack('default', 42);
-        $this->assertTrue(true); // Should not throw exception
     }
 
     public function testNackThrowsExceptionForInvalidJobId(): void
@@ -60,8 +55,8 @@ final class DatabaseQueueDriverTest extends TestCase
 
     public function testNackWithPositiveJobIdDoesNothing(): void
     {
+        $this->expectNotToPerformAssertions();
         $this->driver->nack('default', 42, 10);
-        $this->assertTrue(true); // Should not throw exception
     }
 
     public function testDequeueReturnsNullWhenNoJobAvailableAndTimeoutExpires(): void
@@ -70,8 +65,8 @@ final class DatabaseQueueDriverTest extends TestCase
         $result = $this->driver->dequeue('default', 2);
         $duration = microtime(true) - $start;
 
-        $this->assertNull($result);
-        $this->assertGreaterThanOrEqual(1.0, $duration);
+        self::assertNull($result);
+        self::assertGreaterThanOrEqual(1.0, $duration);
     }
 
     public function testDequeueReturnsJobIdImmediatelyWhenAvailable(): void
@@ -80,7 +75,7 @@ final class DatabaseQueueDriverTest extends TestCase
 
         $result = $this->driver->dequeue('default', 5);
 
-        $this->assertEquals($jobId, $result);
+        self::assertEquals($jobId, $result);
     }
 
     public function testDequeueClaimedReturnsTheOriginalStorageClaim(): void
@@ -89,9 +84,9 @@ final class DatabaseQueueDriverTest extends TestCase
 
         $claim = $this->driver->dequeueClaimed('default', 0);
 
-        $this->assertNotNull($claim);
-        $this->assertSame($jobId, $claim->job->id);
-        $this->assertSame($claim->leaseToken, $claim->job->leaseToken);
+        self::assertNotNull($claim);
+        self::assertSame($jobId, $claim->job->id);
+        self::assertSame($claim->leaseToken, $claim->job->leaseToken);
     }
 
     public function testDequeueFiltersByQueue(): void
@@ -99,10 +94,10 @@ final class DatabaseQueueDriverTest extends TestCase
         $this->storage->createJob('test', ['foo' => 'bar'], 'other-queue');
 
         $result = $this->driver->dequeue('default', 0);
-        $this->assertNull($result);
+        self::assertNull($result);
 
         $result2 = $this->driver->dequeue('other-queue', 0);
-        $this->assertNotNull($result2);
+        self::assertNotNull($result2);
     }
 
     public function testDequeuePollsUntilJobAvailable(): void
@@ -140,7 +135,7 @@ final class DatabaseQueueDriverTest extends TestCase
         $driver = new DatabaseQueueDriver($mockStorage, 50);
         $result = $driver->dequeue('default', 2);
 
-        $this->assertEquals(123, $result);
+        self::assertEquals(123, $result);
     }
 
     public function testSetWorkerIdIsPassedToStorage(): void

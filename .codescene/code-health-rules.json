@@ -1,0 +1,55 @@
+{
+  "usage": "Tune structural heuristics for test fixtures, declarative benchmarks, and scalar boundary objects.",
+  "rule_sets": [
+    {
+      "matching_content_path": "tests/**",
+      "rules": [
+        { "name": "Code Duplication", "weight": 0.0 },
+        { "name": "Low Cohesion", "weight": 0.0 },
+        { "name": "Primitive Obsession", "weight": 0.0 },
+        { "name": "String Heavy Function Arguments", "weight": 0.0 },
+        { "name": "Large Method", "weight": 0.0 }
+      ],
+      "thresholds": []
+    },
+    {
+      "matching_content_path": "benchmarks/**",
+      "rules": [
+        { "name": "Code Duplication", "weight": 0.0 },
+        { "name": "Primitive Obsession", "weight": 0.0 },
+        { "name": "String Heavy Function Arguments", "weight": 0.0 },
+        { "name": "Large Method", "weight": 0.0 },
+        { "name": "Excess Number of Function Arguments", "weight": 0.0 }
+      ],
+      "thresholds": []
+    },
+    {
+      "matching_content_path": "src/Internal/JobStorageRules.php",
+      "rules": [
+        { "name": "Primitive Obsession", "weight": 0.0 }
+      ],
+      "thresholds": []
+    },
+    {
+      "matching_content_path": "src/WorkerOptions.php",
+      "rules": [
+        { "name": "Primitive Obsession", "weight": 0.0 }
+      ],
+      "thresholds": []
+    },
+    {
+      "matching_content_path": "src/Worker.php",
+      "rules": [
+        { "name": "Primitive Obsession", "weight": 0.0 }
+      ],
+      "thresholds": []
+    },
+    {
+      "matching_content_path": "src/Internal/WorkerJobProcessor.php",
+      "rules": [
+        { "name": "Primitive Obsession", "weight": 0.0 }
+      ],
+      "thresholds": []
+    }
+  ]
+}

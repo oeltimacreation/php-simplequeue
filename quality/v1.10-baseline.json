@@ -1,0 +1,42 @@
+{
+    "schema_version": 1,
+    "release": "v1.10.0",
+    "commit": "37464d0",
+    "verified_at_utc": "2026-09-03T00:00:00Z",
+    "tests": {
+        "count": 348,
+        "assertions": 2208,
+        "local_service_skips": 18
+    },
+    "coverage": {
+        "covered_lines": 1700,
+        "total_lines": 2026,
+        "line_percent": 83.91,
+        "covered_methods": 250,
+        "total_methods": 351,
+        "method_percent": 71.23
+    },
+    "inventory": {
+        "production": {
+            "files_and_classes": 81,
+            "methods": 351,
+            "physical_lines": 7564
+        },
+        "tests": {
+            "files": 45,
+            "classes": 72,
+            "methods": 447,
+            "physical_lines": 7838
+        }
+    },
+    "quality": {
+        "phpstan_expanded_trial_errors": 161,
+        "custom_analyzer_lines": 1083,
+        "generated_quality_baseline_bytes": 651159,
+        "dependency_advisories": 0
+    },
+    "notes": [
+        "Timing is intentionally excluded because shared-runner wall-clock measurements are not release gates.",
+        "Mutation evidence is stored separately in quality/mutation-baseline.json."
+    ]
+}

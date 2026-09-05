@@ -12,6 +12,8 @@ use Oeltima\SimpleQueue\Contract\JobData;
  */
 final class JobExecutionContext implements JobContextInterface
 {
+    private bool $proceeded = false;
+
     /**
      * @param JobData $job Claimed job data
      * @param \Closure(): mixed $continuation Next middleware or handler
@@ -67,6 +69,10 @@ final class JobExecutionContext implements JobContextInterface
      */
     public function proceed(): mixed
     {
+        if ($this->proceeded) {
+            throw new \LogicException('Job context proceed() must be called exactly once');
+        }
+        $this->proceeded = true;
         return ($this->continuation)();
     }
 }

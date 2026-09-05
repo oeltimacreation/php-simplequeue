@@ -15,34 +15,108 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  compatibility:
-    name: PHP ${{ matrix.php }} / ${{ matrix.service }}
+  service-free:
+    name: PHP ${{ matrix.php }} / in-memory+SQLite
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         php: ['8.2', '8.3', '8.4', '8.5']
-        service: [redis, valkey]
-        include:
-          - service: redis
-            redis_port: '6379'
-            db_dsn: 'mysql:host=127.0.0.1;port=3306;dbname=test_simplequeue'
-            db_user: root
-          - service: valkey
-            redis_port: '6380'
-            db_dsn: 'pgsql:host=127.0.0.1;port=5432;dbname=test_simplequeue'
-            db_user: postgres
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: shivammathur/setup-php@add91f08e1598a0b6ff470f1e389f9d652559bf0
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pdo, pdo_sqlite
+          coverage: none
+      - run: composer install --no-interaction --prefer-dist --no-progress
+      - run: composer test
+      - name: Committed-seed random-order suite
+        if: matrix.php == '8.2'
+        run: composer test-random
+
+  redis:
+    name: PHP ${{ matrix.php }} / Redis 7
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.5']
     services:
       redis:
         image: redis:7
         ports: ['6379:6379']
         options: >-
           --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+      SIMPLEQUEUE_QUEUE_SERVICE: redis
+      SIMPLEQUEUE_REQUIRED_QUEUE_SERVICE: redis
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: shivammathur/setup-php@add91f08e1598a0b6ff470f1e389f9d652559bf0
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pdo, pdo_sqlite
+          coverage: none
+      - run: composer install --no-interaction --prefer-dist --no-progress
+      - name: Queue contracts and scheduling
+        run: >-
+          vendor/bin/phpunit --no-coverage
+          tests/Contract/QueueDriverContractTest.php
+          tests/Contract/JobMiddlewareContractTest.php
+          tests/Integration/ScheduledDispatchTest.php
+      - name: Selected real-service contract
+        run: vendor/bin/phpunit --no-coverage --filter testRealQueueDriver tests/Integration/RealServicesTest.php
+      - run: composer budgets
+
+  valkey:
+    name: PHP ${{ matrix.php }} / Valkey 8
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.5']
+    services:
       valkey:
         image: valkey/valkey:8
-        ports: ['6380:6379']
+        ports: ['6379:6379']
         options: >-
           --health-cmd "valkey-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+      VALKEY_HOST: 127.0.0.1
+      VALKEY_PORT: 6379
+      SIMPLEQUEUE_QUEUE_SERVICE: valkey
+      SIMPLEQUEUE_REQUIRED_QUEUE_SERVICE: valkey
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: shivammathur/setup-php@add91f08e1598a0b6ff470f1e389f9d652559bf0
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pdo, pdo_sqlite
+          coverage: none
+      - run: composer install --no-interaction --prefer-dist --no-progress
+      - name: Queue contracts and scheduling
+        run: >-
+          vendor/bin/phpunit --no-coverage
+          tests/Contract/QueueDriverContractTest.php
+          tests/Contract/JobMiddlewareContractTest.php
+          tests/Integration/ScheduledDispatchTest.php
+      - name: Selected real-service contract
+        run: vendor/bin/phpunit --no-coverage --filter testRealQueueDriver tests/Integration/RealServicesTest.php
+      - run: composer budgets
+
+  mysql:
+    name: PHP ${{ matrix.php }} / MySQL 8
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.5']
+    services:
       mysql:
         image: mysql:8.0
         env:
@@ -51,6 +125,38 @@ jobs:
         ports: ['3306:3306']
         options: >-
           --health-cmd="mysqladmin ping" --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      MYSQL_DSN: mysql:host=127.0.0.1;port=3306;dbname=test_simplequeue
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ''
+      SIMPLEQUEUE_DATABASE_SERVICE: mysql
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: shivammathur/setup-php@add91f08e1598a0b6ff470f1e389f9d652559bf0
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pdo, pdo_mysql, pcntl
+          coverage: none
+      - run: composer install --no-interaction --prefer-dist --no-progress
+      - name: Shared storage transition and fault contracts
+        run: >-
+          vendor/bin/phpunit --no-coverage
+          tests/Unit/StorageTransitionMatrixTest.php
+          tests/Integration/FailureInjectionTest.php
+      - name: Selected real-service storage, batch, and concurrency contracts
+        run: >-
+          vendor/bin/phpunit --no-coverage
+          --filter '/testRealStorage|testConcurrentIdempotentStorageCreation/'
+          tests/Integration/RealServicesTest.php
+
+  postgres:
+    name: PHP ${{ matrix.php }} / PostgreSQL 15
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.5']
+    services:
       postgres:
         image: postgres:15
         env:
@@ -59,29 +165,29 @@ jobs:
         ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready" --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      POSTGRES_DSN: pgsql:host=127.0.0.1;port=5432;dbname=test_simplequeue
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ''
+      SIMPLEQUEUE_DATABASE_SERVICE: postgres
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - uses: shivammathur/setup-php@add91f08e1598a0b6ff470f1e389f9d652559bf0
         with:
           php-version: ${{ matrix.php }}
-          extensions: pdo, pdo_sqlite, pdo_mysql, pdo_pgsql
+          extensions: pdo, pdo_pgsql, pcntl
           coverage: none
       - run: composer install --no-interaction --prefer-dist --no-progress
-      - run: composer test
-        env:
-          REDIS_HOST: 127.0.0.1
-          REDIS_PORT: ${{ matrix.redis_port }}
-          VALKEY_HOST: 127.0.0.1
-          VALKEY_PORT: 6380
-          MYSQL_DSN: mysql:host=127.0.0.1;port=3306;dbname=test_simplequeue
-          MYSQL_USER: root
-          MYSQL_PASSWORD: ''
-          POSTGRES_DSN: pgsql:host=127.0.0.1;port=5432;dbname=test_simplequeue
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: ''
-          DB_DSN: ${{ matrix.db_dsn }}
-          DB_USER: ${{ matrix.db_user }}
-          DB_PASSWORD: ''
+      - name: Shared storage transition and fault contracts
+        run: >-
+          vendor/bin/phpunit --no-coverage
+          tests/Unit/StorageTransitionMatrixTest.php
+          tests/Integration/FailureInjectionTest.php
+      - name: Selected real-service storage, batch, and concurrency contracts
+        run: >-
+          vendor/bin/phpunit --no-coverage
+          --filter '/testRealStorage|testConcurrentIdempotentStorageCreation/'
+          tests/Integration/RealServicesTest.php
 
   quality:
     name: Quality gates
@@ -96,12 +202,42 @@ jobs:
       - run: composer validate --strict --no-check-lock --no-check-version
       - run: composer install --no-interaction --prefer-dist --no-progress
       - run: composer audit
-      - run: composer check
       - run: composer test-coverage
-      - run: php scripts/check-coverage.php coverage/clover.xml 70
+      - run: composer coverage-check
+      - run: composer phpstan
+      - run: composer cs-check
+      - run: composer budgets
+      - run: composer mutation
+      - run: php scripts/consumer-smoke.php vendor/autoload.php
       - run: find examples -name '*.php' -print0 | xargs -0 -n1 php -l
 
   lowest-dependencies:
+    name: PHP 8.2 / lowest dependencies + Redis 7
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+      SIMPLEQUEUE_QUEUE_SERVICE: redis
+      SIMPLEQUEUE_REQUIRED_QUEUE_SERVICE: redis
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: shivammathur/setup-php@add91f08e1598a0b6ff470f1e389f9d652559bf0
+        with:
+          php-version: '8.2'
+          extensions: pdo, pdo_sqlite
+          coverage: none
+      - run: composer update --prefer-lowest --prefer-stable --no-interaction --prefer-dist --no-progress
+      - run: composer test
+      - run: composer budgets
+
+  database-only-consumer:
+    name: Isolated no-dev SQLite consumer
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -110,16 +246,20 @@ jobs:
           php-version: '8.2'
           extensions: pdo, pdo_sqlite
           coverage: none
-      - run: composer update --prefer-lowest --prefer-stable --no-interaction --prefer-dist
-      - run: composer test
-
-  database-only-consumer:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      - uses: shivammathur/setup-php@add91f08e1598a0b6ff470f1e389f9d652559bf0
-        with:
-          php-version: '8.2'
-          coverage: none
-      - run: composer install --no-dev --no-interaction --prefer-dist --no-progress
-      - run: php examples/basic/in-memory.php
+      - name: Build package artifact
+        run: |
+          mkdir -p "$RUNNER_TEMP/simplequeue-package"
+          composer archive --format=zip --dir="$RUNNER_TEMP/simplequeue-package"
+      - name: Install isolated consumer without development dependencies or Predis
+        run: |
+          mkdir -p "$RUNNER_TEMP/simplequeue-consumer"
+          cd "$RUNNER_TEMP/simplequeue-consumer"
+          composer init --name=simplequeue/consumer-smoke --no-interaction
+          composer config repositories.simplequeue artifact "$RUNNER_TEMP/simplequeue-package"
+          composer require 'oeltimacreation/php-simplequeue:*' --no-interaction --prefer-dist --no-progress
+          composer install --no-dev --no-interaction --prefer-dist --no-progress
+          if composer show predis/predis --no-interaction >/dev/null 2>&1; then
+            echo 'Predis must not be installed in the database-only consumer' >&2
+            exit 1
+          fi
+          php "$GITHUB_WORKSPACE/scripts/consumer-smoke.php" "$PWD/vendor/autoload.php"

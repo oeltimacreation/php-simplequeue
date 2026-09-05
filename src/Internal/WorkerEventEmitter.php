@@ -17,15 +17,10 @@ final class WorkerEventEmitter
     /**
      * @param LoggerInterface $logger Logger used to isolate listener failures
      * @param mixed $listener Legacy worker event listener
-     * @param \Closure|null $mirror Worker-owned listener mirror
      */
-    public function __construct(
-        private readonly LoggerInterface $logger,
-        mixed $listener,
-        ?\Closure &$mirror
-    ) {
+    public function __construct(private readonly LoggerInterface $logger, mixed $listener)
+    {
         $this->listener = is_callable($listener) ? \Closure::fromCallable($listener) : null;
-        $mirror = $this->listener;
     }
 
     private ?\Closure $listener;

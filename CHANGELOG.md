@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-09-05
+
+### Added
+
+- Added `Exception\IndeterminateStorageOutcomeException` for genuinely uncertain PDO mutations; callers must inspect or reconcile durable state instead of retrying blindly.
+- Added `Contract\SupportsWorkerAwareClaimedDequeue::dequeueClaimedForWorker()` so workers claim with caller-supplied identity without shared mutable driver state.
+- Added `Contract\SupportsStorageBackedScheduling` marker for drivers whose dequeue discovers due work from storage; scheduled dispatch preflights this or `SupportsDelayedJobs` before storage mutation.
+- Added `Contract\PendingNotification`, `Contract\SupportsPendingNotificationCursor::scanPendingNotifications()`, and `Contract\SupportsBatchQueueReconciliation::reconcileNotifications()` for lean, single-roundtrip reconciliation pages.
+- Added `Contract\SleeperInterface` and `SystemSleeper` for deterministic polling and backoff; `WorkerOptions::$sleeper` and `DatabaseQueueDriver` accept an optional sleeper.
+- Added `WorkerOptions::$lockingEnabled` to distinguish default, custom, and disabled locking explicitly.
+
+### Changed
+
+- Hardened PDO durability: mutations never replay after a statement or commit attempt; connection/commit failures after that boundary raise the dedicated indeterminate exception; claims are rejected inside caller-owned transactions; table names are validated as one or two dot-separated identifiers.
+- Unified job-state and attempt semantics across PDO and in-memory backends: `attempts` counts failed executions, terminal failures consume one attempt, retries reset result/completion/progress and require an attempt remaining, graceful releases preserve attempts and failure metadata, and stale recovery shares one decision rule with the canonical stale error.
+- Corrected worker effect ordering to persist first, emit second, and ACK/NACK third; lost ownership never ACKs/NACKs or continues handler work; completion-storage errors escape as infrastructure instead of consuming a handler retry; result-serialization failure is a fenced terminal failure without handler replay.
+- Made worker IDs collision-safe (`hostname:pid:random` within 255 bytes), emit `claimed` on both dequeue paths, throw infrastructure errors from `processOne()`, guard re-entrant execution, restore prior signal handlers and async mode, interpret `memory_limit` as MiB, strictly parse options, and isolate default locks by user, working directory, and exact queue name with `0700`/`0600` protections.
+- Bounded reconciliation and batch scaling: delayed promotion runs before reconciliation, either pending or delayed membership counts as notified, only canonical UTC availability is accepted, optimized pages use one queue roundtrip and one bounded storage query, in-memory enqueue/dequeue are amortized `O(1)` with atomic batches and earliest-availability promotion, and Redis stale recovery chunks Lua expansion at 1,000 members.
+- Deprecated `SupportsWorkerId` (use worker-aware claimed dequeue) and `SupportsQueueReconciliation` (use lean cursor with batch reconciliation); legacy fallbacks remain functional through v1.x.
+
+### Fixed
+
+- Fixed first-attempt graceful shutdown leaving jobs `running` by accepting non-negative retry counts for pre-execution releases.
+- Fixed duplicate pending notifications for due jobs still present in delayed structures.
+- Fixed `JobData::canRetry()` returning `true` for terminal jobs.
+- Fixed completion leaving stale error metadata and retry leaving result/completion/progress state.
+- Fixed `memory_limit` compared as bytes instead of MiB and array options coercing `"false"` to `true`.
+- Fixed default lock-name collisions and predictable `/tmp` symlink exposure.
+- Preserved recovery visibility when duplicate Redis notifications with the same job ID remain in processing after ACK, NACK, or stale recovery.
+- Rejected and cleaned malformed Redis job IDs, and rejected non-canonical, negative, fractional, or overflowing script counts instead of coercing them.
+
+### Removed
+
+- Removed bespoke quality-metrics analyzer, fixtures, and ratchet baselines in favor of maintained PHPStan, PHPCS, coverage, mutation, API comparison, and operation-budget gates.
+
+### Security
+
+- Validated storage table names and bounded string columns (255 bytes) consistently across PDO and in-memory backends.
+- Hardened default worker lock directories and files against symlink and ownership attacks.
+
 ## [1.10.0] - 2026-08-18
 
 ### Added

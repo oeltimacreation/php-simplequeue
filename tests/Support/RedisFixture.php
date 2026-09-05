@@ -15,27 +15,34 @@ final class RedisFixture
     /**
      * Connect to the Redis service configured for contract tests.
      *
-     * @param TestCase $test Test case used for an explicit skip
      * @param string $prefix Driver key prefix
      * @param ClockInterface $clock Test clock
      * @return RedisQueueDriver Connected Redis driver
      */
     public static function driver(
-        TestCase $test,
         string $prefix,
         ClockInterface $clock = new SystemClock()
     ): RedisQueueDriver {
         $host = getenv('REDIS_HOST');
+        $required = getenv('SIMPLEQUEUE_REQUIRED_QUEUE_SERVICE');
+        $requiredService = is_string($required) && $required !== '';
         if (!is_string($host) || $host === '') {
-            $test->markTestSkipped('REDIS_HOST is not set. Skipping Redis-backed test.');
+            if ($requiredService) {
+                TestCase::fail('REDIS_HOST is required for the configured ' . $required . ' lane.');
+            }
+            TestCase::markTestSkipped('REDIS_HOST is not set. Skipping Redis-backed test.');
         }
 
-        $port = getenv('REDIS_PORT') ?: '6379';
+        $portValue = getenv('REDIS_PORT');
+        $port = is_string($portValue) && $portValue !== '' ? $portValue : '6379';
         $client = new Client(['scheme' => 'tcp', 'host' => $host, 'port' => (int) $port]);
         try {
             $client->connect();
         } catch (\Throwable $exception) {
-            $test->markTestSkipped('Could not connect to Redis: ' . $exception->getMessage());
+            if ($requiredService) {
+                TestCase::fail('Could not connect to configured ' . $required . ': ' . $exception->getMessage());
+            }
+            TestCase::markTestSkipped('Could not connect to Redis: ' . $exception->getMessage());
         }
 
         return new RedisQueueDriver($client, $prefix, $clock);

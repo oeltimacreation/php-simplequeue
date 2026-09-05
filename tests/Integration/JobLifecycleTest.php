@@ -54,22 +54,22 @@ class JobLifecycleTest extends TestCase
         $jobId = $this->dispatcher->dispatch('test.job', ['key' => 'value']);
 
         $job = $this->storage->find($jobId);
-        $this->assertNotNull($job);
-        $this->assertSame(JobStatus::Pending, $job->status);
+        self::assertNotNull($job);
+        self::assertSame(JobStatus::Pending, $job->status);
 
         $pending = $this->driver->getPending('default');
-        $this->assertContains($jobId, $pending);
+        self::assertContains($jobId, $pending);
 
         $processed = $this->worker->processOne();
-        $this->assertTrue($processed);
+        self::assertTrue($processed);
 
         $job = $this->storage->find($jobId);
-        $this->assertNotNull($job);
-        $this->assertSame(JobStatus::Completed, $job->status);
-        $this->assertSame(['result' => 'success'], $job->result);
+        self::assertNotNull($job);
+        self::assertSame(JobStatus::Completed, $job->status);
+        self::assertSame(['result' => 'success'], $job->result);
 
-        $this->assertEmpty($this->driver->getPending('default'));
-        $this->assertEmpty($this->driver->getProcessing('default'));
+        self::assertEmpty($this->driver->getPending('default'));
+        self::assertEmpty($this->driver->getProcessing('default'));
     }
 
     public function testFullJobLifecycleWithProgress(): void
@@ -92,9 +92,9 @@ class JobLifecycleTest extends TestCase
         $this->worker->processOne();
 
         $job = $this->storage->find($jobId);
-        $this->assertNotNull($job);
-        $this->assertSame(JobStatus::Completed, $job->status);
-        $this->assertSame(['processed' => true], $job->result);
+        self::assertNotNull($job);
+        self::assertSame(JobStatus::Completed, $job->status);
+        self::assertSame(['processed' => true], $job->result);
     }
 
     public function testJobFailureAndRetry(): void
@@ -134,17 +134,17 @@ class JobLifecycleTest extends TestCase
         $this->worker->processOne();
 
         $job = $this->storage->find($jobId);
-        $this->assertNotNull($job);
-        $this->assertSame(JobStatus::Pending, $job->status);
-        $this->assertSame(1, $job->attempts);
+        self::assertNotNull($job);
+        self::assertSame(JobStatus::Pending, $job->status);
+        self::assertSame(1, $job->attempts);
 
         $this->worker->processOne();
 
         $job = $this->storage->find($jobId);
-        $this->assertNotNull($job);
-        $this->assertSame(JobStatus::Completed, $job->status);
-        $this->assertSame(['retried' => true], $job->result);
-        $this->assertSame(2, $handler::$callCount);
+        self::assertNotNull($job);
+        self::assertSame(JobStatus::Completed, $job->status);
+        self::assertSame(['retried' => true], $job->result);
+        self::assertSame(2, $handler::$callCount);
     }
 
     public function testBatchDispatch(): void
@@ -165,20 +165,22 @@ class JobLifecycleTest extends TestCase
         ];
 
         $jobIds = $this->dispatcher->dispatchBatch('test.batch', $payloads);
-        $this->assertCount(3, $jobIds);
+        self::assertCount(3, $jobIds);
 
         foreach ($jobIds as $jobId) {
             $job = $this->storage->find($jobId);
-            $this->assertSame(JobStatus::Pending, $job->status);
+            self::assertNotNull($job);
+            self::assertSame(JobStatus::Pending, $job->status);
         }
 
         for ($i = 0; $i < 3; $i++) {
-            $this->assertTrue($this->worker->processOne());
+            self::assertTrue($this->worker->processOne());
         }
 
         foreach ($jobIds as $jobId) {
             $job = $this->storage->find($jobId);
-            $this->assertSame(JobStatus::Completed, $job->status);
+            self::assertNotNull($job);
+            self::assertSame(JobStatus::Completed, $job->status);
         }
     }
 
@@ -194,20 +196,21 @@ class JobLifecycleTest extends TestCase
         $this->registry->register('test.idempotent', get_class($handler));
 
         $result1 = $this->dispatcher->dispatchIdempotent('test.idempotent', ['key' => 'value'], 'req-1');
-        $this->assertTrue($result1['created']);
+        self::assertTrue($result1['created']);
         $firstJobId = $result1['job_id'];
 
         $result2 = $this->dispatcher->dispatchIdempotent('test.idempotent', ['key' => 'value'], 'req-1');
-        $this->assertFalse($result2['created']);
-        $this->assertSame($firstJobId, $result2['job_id']);
+        self::assertFalse($result2['created']);
+        self::assertSame($firstJobId, $result2['job_id']);
 
         $this->worker->processOne();
 
         $job = $this->storage->find($firstJobId);
-        $this->assertSame(JobStatus::Completed, $job->status);
+        self::assertNotNull($job);
+        self::assertSame(JobStatus::Completed, $job->status);
 
         $result3 = $this->dispatcher->dispatchIdempotent('test.idempotent', ['key' => 'value2'], 'req-1');
-        $this->assertTrue($result3['created']);
-        $this->assertNotSame($firstJobId, $result3['job_id']);
+        self::assertTrue($result3['created']);
+        self::assertNotSame($firstJobId, $result3['job_id']);
     }
 }

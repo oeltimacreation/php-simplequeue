@@ -15,6 +15,7 @@ use Oeltima\SimpleQueue\Worker;
 
 final class FailedJobExampleHandler implements JobHandlerInterface
 {
+    /** @param array<string, mixed> $payload Job payload */
     public function handle(int $jobId, array $payload, ?callable $progressCallback = null): never
     {
         throw new RuntimeException('Example handler failure');

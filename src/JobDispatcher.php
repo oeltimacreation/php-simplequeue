@@ -10,10 +10,12 @@ use Oeltima\SimpleQueue\Contract\JobData;
 use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\SupportsBatchEnqueue;
+use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
 use Oeltima\SimpleQueue\Contract\SupportsIdempotentJobCreation;
 use Oeltima\SimpleQueue\Contract\SupportsJobRemoval;
+use Oeltima\SimpleQueue\Contract\SupportsStorageBackedScheduling;
 use Oeltima\SimpleQueue\Exception\QueueException;
-use Oeltima\SimpleQueue\Internal\PositiveJobId;
+use Oeltima\SimpleQueue\Internal\JobStorageRules;
 
 /**
  * Service for dispatching jobs to the queue.
@@ -55,6 +57,7 @@ final class JobDispatcher
     ): int {
         $this->validateDispatchArguments($type, $queue, $maxAttempts, $requestId);
         $resolvedAt = $this->resolveAvailableAt($availableAt);
+        $this->preflightScheduledDispatch($resolvedAt);
 
         if ($resolvedAt === null) {
             $jobId = $this->storage->createJob($type, $payload, $queue, $maxAttempts, $requestId);
@@ -187,6 +190,7 @@ final class JobDispatcher
     ): array {
         $this->validateDispatchArguments($type, $queue, $maxAttempts, null);
         $resolvedAt = $this->resolveAvailableAt($availableAt);
+        $this->preflightScheduledDispatch($resolvedAt);
 
         $jobIds = $this->storage->createJobs(
             $this->batchDefinitions($type, $payloads, $queue, $maxAttempts, $resolvedAt)
@@ -236,7 +240,7 @@ final class JobDispatcher
      */
     public function cancelJob(int $jobId): bool
     {
-        $jobId = PositiveJobId::fromInt($jobId)->value;
+        $jobId = JobStorageRules::validatePositiveId($jobId);
         $job = $this->storage->find($jobId);
         $cancelled = $this->storage->cancel($jobId);
         if (($cancelled || $job?->status === JobStatus::Cancelled) && $job !== null) {
@@ -351,6 +355,23 @@ final class JobDispatcher
         } else {
             $this->queueManager->enqueueDelayed($jobId, $queue, $resolvedAt);
         }
+    }
+
+    /**
+     * Preflight future dispatch before storage mutation.
+     *
+     * @param int|null $resolvedAt Resolved future timestamp or null for immediate
+     */
+    private function preflightScheduledDispatch(?int $resolvedAt): void
+    {
+        if ($resolvedAt === null) {
+            return;
+        }
+        $driver = $this->queueManager->driver();
+        if ($driver instanceof SupportsDelayedJobs || $driver instanceof SupportsStorageBackedScheduling) {
+            return;
+        }
+        throw new QueueException('Driver does not support scheduled dispatch for future jobs');
     }
 
     /**

@@ -47,8 +47,8 @@ class JobDataTest extends TestCase
             'lease_token' => 'lease-abc',
         ]);
 
-        $this->assertSame('lease-abc', $job->leaseToken);
-        $this->assertSame('lease-abc', $job->toArray()['lease_token']);
+        self::assertSame('lease-abc', $job->leaseToken);
+        self::assertSame('lease-abc', $job->toArray()['lease_token']);
     }
 
     public function testNormalizeAvailableAtConvertsNonUtcTimezoneToUtcString(): void
@@ -58,7 +58,7 @@ class JobDataTest extends TestCase
 
         $utcString = \Oeltima\SimpleQueue\Internal\JobStorageRules::normalizeAvailableAt($dt, $clock);
 
-        $this->assertSame('2026-08-08 03:00:00', $utcString);
+        self::assertSame('2026-08-08 03:00:00', $utcString);
     }
 
     public function testEncodeJsonThrowsSerializationExceptionOnUnencodableData(): void

@@ -10,8 +10,9 @@ Configure a Redis Predis `read_write_timeout` greater than the worker
 prefix is part of every key; do not also apply an uncoordinated Predis global
 prefix. Redis and Valkey service support starts at Redis 7 / Valkey 8.
 
-The Redis driver uses `EVAL` for its non-blocking move-and-timestamp operation;
-this is supported by Redis 7 and Valkey 8 with Predis 3 in either RESP mode.
+The Redis driver uses `EVALSHA` with `EVAL` fallback for its non-blocking
+move-and-timestamp operation; this is supported by Redis 7 and Valkey 8 with
+Predis 3 in either RESP mode.
 Blocking `BLMOVE` necessarily has a short crash window before its timestamp write.
 Maintenance scans bounded processing-list slices and stamps entries missing from
 the visibility ZSET; they become recoverable after one TTL. Do not run this
@@ -20,18 +21,33 @@ the queue's pending, processing, and visibility keys in the same hash slot.
 For handlers expected to exceed `stuck_job_ttl`, report progress at least every
 `stuck_job_ttl / 2`, or configure a larger TTL.
 
-Use `lock_file` to isolate worker processes. Supervisor should restart on
-non-zero exits and retain stdout/stderr for diagnosis. Exit code `0` means a
-normal stop or configured limit, `1` means an unhandled worker error, and `2`
-means the singleton lock was unavailable.
+Workers generate a bounded `hostname:pid:random` identity, so multiple Worker
+objects in one PHP process cannot share ownership accidentally. On Unix, the
+default singleton lock lives in an effective-user-private `0700` directory and
+uses a `0600` file whose name hashes the working directory and exact queue.
+Symlinks, non-regular targets, foreign owners, unsafe modes, and an inode swap
+while opening are rejected. Use a custom `lock_file` when supervisor layout
+requires it; disable locking only for controlled single-process use with
+`new WorkerOptions(lockingEnabled: false)` (or legacy array `lock_file: null`).
+Windows logs that locking is unavailable.
+
+Supervisor should restart on non-zero exits and retain stdout/stderr for
+diagnosis. Exit code `0` means a normal stop or configured limit, `1` means an
+unhandled worker error, and `2` means the singleton lock was unavailable.
+Sequential `run()` calls are supported: counters and stop state reset, and the
+prior SIGTERM/SIGINT handlers and async-signal mode are restored after each
+run. Re-entrant `run()`/`processOne()` calls are rejected. `processOne()`
+returns `false` only when no claim exists; storage/driver failures are thrown.
 
 ## Typed worker events
 
-The worker builds a typed readonly value object for every lifecycle event before
-invoking the configured listener. The existing listener remains compatible and
-receives the same `(string $event, array $data)` arguments; the worker converts
-the typed object through `getName()` and `toArray()` at that boundary. Listener
-failures are logged and do not change the job transition.
+The worker allocates typed readonly lifecycle events only when a listener is
+configured; the unconfigured hot path avoids construction while preserving
+listener names, payloads, ordering, and failure isolation. The existing
+listener remains compatible and receives the same `(string $event, array $data)`
+arguments; the worker converts the typed object through `getName()` and
+`toArray()` at that boundary. Listener failures are logged and do not change
+the job transition.
 
 The stable event catalog and payload keys are:
 
@@ -94,15 +110,22 @@ across dispatchers and workers.
 ## Retention and repair
 
 Call `JobStorageAdminInterface::pruneCompleted()` on a scheduled maintenance
-job. Retention applies to terminal records whose completion timestamp is older
-than the configured period; keep enough history for incident investigation.
+job. Retention applies to completed and cancelled records whose completion
+timestamp is older than the configured period; failed records require an
+explicit purge decision. Keep enough history for incident investigation.
 `QueueReconciler` performs bounded source-of-truth repair. Persist
 `ReconcileResult::$nextCursor` when invoking it from cron; workers keep this
 cursor in memory. Pending jobs are scanned in ascending ID order and wrap after
 the final page, so old records are eventually considered. The duration setting
 is a soft deadline checked between bounded membership operations. Redis pending
 membership uses a bounded `LPOS`; a false negative can enqueue a duplicate,
-which is safe under the library's at-least-once delivery contract.
+which is safe under the library's at-least-once delivery contract. The
+`duplicates` counter therefore means “already notified or found inside the
+bounded pending scan,” not a proof that no duplicate exists beyond the scan
+limit. Built-in drivers reconcile a lean `id`/`available_at` page in one queue
+operation; legacy capability combinations retain the per-item fallback.
+Availability must use the canonical UTC `Y-m-d H:i:s` format. Invalid values
+increment `invalid` and are never enqueued.
 
 ## Failed-job administration
 
@@ -153,25 +176,28 @@ reconciliation errors. A storage write is authoritative; a notifier cleanup
 failure indicates an inconsistency to repair and must not be treated as a
 storage rollback.
 
-The v1.9 validation profile is published in [performance.md](performance.md).
-It covers the unchanged dispatch/claim/worker paths, middleware execution, and
-failed-job re-queue operation counts. Run the same command after changing a
-driver, storage implementation, or worker middleware pipeline and compare the
-medians and counters before deploying.
+The v1.11 validation profile is published in [performance.md](performance.md),
+with machine-readable evidence in
+[`quality/v1.11-release-profile.json`](../quality/v1.11-release-profile.json).
+Run `composer budgets` after changing a driver, storage implementation, or
+worker pipeline. Use `composer benchmark-profile` for the non-gating
+10/100/1,000/10,000 timing profile; compare deterministic counters first.
 
 ## Upgrade safety
 
-The v1.4 lease migration must be applied before using lease-based custom
-storage implementations. Preserve existing Redis keys and add new keys only
-with an upgrade-safe rollout. Validate configuration and run the compatibility
-smoke test after deploying a new library version.
+The v1.3.0 lease migration (`examples/migrations/1.3.0-lease-based-claims.sql`)
+must be applied before using lease-based custom storage implementations.
+Preserve existing Redis keys and add new keys only with an upgrade-safe
+rollout. Validate configuration and run the compatibility smoke test after
+deploying a new library version.
 
 ## Release and deployment checks
 
-Run `composer validate --strict`, `composer audit`, `composer check`, and the
-coverage command from a clean checkout. CI also resolves lowest supported
+Run `composer validate --strict --no-check-lock --no-check-version`,
+`composer audit`, `composer check-ci`, `composer test-random`, and
+`composer mutation` from a clean checkout. CI also resolves lowest supported
 dependencies and tests PHP 8.2–8.5 against Redis 7, Valkey 8, MySQL 8,
 PostgreSQL 15, and SQLite. Install smoke tests should include database-only
-usage without Predis and existing v1.4 schema/key deployments.
+usage without Predis and existing v1.3 lease-schema/key deployments.
 Keep the compatibility smoke tests and raise coverage through focused tests;
 do not lower quality gates to accommodate unrelated changes.

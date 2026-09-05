@@ -22,7 +22,7 @@ trait PdoFailedJobAdministration
             $this->now(),
             $jobId,
             [
-                'execute' => $this->execute(...),
+                'execute' => $this->executeMutation(...),
                 'find' => $this->find(...),
             ]
         );
@@ -34,7 +34,7 @@ trait PdoFailedJobAdministration
         return PdoFailedJobOperations::purge(
             $this->table,
             $jobId,
-            $this->execute(...),
+            $this->executeMutation(...),
             $this->find(...)
         );
     }

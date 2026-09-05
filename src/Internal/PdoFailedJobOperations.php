@@ -11,7 +11,7 @@ use Oeltima\SimpleQueue\Contract\JobStatus;
  * Builds guarded failed-job transitions for PDO storage.
  *
  * @phpstan-type OperationContext array{
- *     execute: callable(string, array<string, mixed>): \PDOStatement,
+ *     execute: callable(string, array<string, mixed>, string): \PDOStatement,
  *     find: callable(int): (?JobData)
  * }
  * @internal
@@ -23,20 +23,14 @@ final class PdoFailedJobOperations
     }
 
     /**
-     * Reset a failed row to a fresh pending state.
-     *
      * @param string $table Storage table name
      * @param string $now Current storage timestamp
      * @param int $jobId Job identifier
      * @param OperationContext $operations Statement executor and job lookup
-     * @return JobData|null Reset job, or null when it is missing or not failed
      */
-    public static function requeue(
-        string $table,
-        string $now,
-        int $jobId,
-        array $operations
-    ): ?JobData {
+    public static function requeue(string $table, string $now, int $jobId, array $operations): ?JobData
+    {
+        JobStorageRules::validatePositiveId($jobId);
         $sql = "UPDATE {$table}
             SET status = 'pending', attempts = 0, available_at = :available_at,
                 started_at = NULL, completed_at = NULL, locked_by = NULL,
@@ -48,26 +42,20 @@ final class PdoFailedJobOperations
             'available_at' => $now,
             'updated_at' => $now,
             'id' => $jobId,
-        ]);
+        ], 'requeueFailed');
 
         return $statement->rowCount() > 0 ? ($operations['find'])($jobId) : null;
     }
 
     /**
-     * Delete a failed row and return its last durable representation.
-     *
      * @param string $table Storage table name
      * @param int $jobId Job identifier
-     * @param callable(string, array<string, mixed>): \PDOStatement $execute Statement executor
+     * @param callable(string, array<string, mixed>, string): \PDOStatement $execute Statement executor
      * @param callable(int): (?JobData) $find Job lookup
-     * @return JobData|null Deleted job, or null when it is missing or not failed
      */
-    public static function purge(
-        string $table,
-        int $jobId,
-        callable $execute,
-        callable $find
-    ): ?JobData {
+    public static function purge(string $table, int $jobId, callable $execute, callable $find): ?JobData
+    {
+        JobStorageRules::validatePositiveId($jobId);
         $job = $find($jobId);
         if ($job === null || $job->status !== JobStatus::Failed) {
             return null;
@@ -75,7 +63,8 @@ final class PdoFailedJobOperations
 
         $statement = $execute(
             "DELETE FROM {$table} WHERE id = :id AND status = 'failed'",
-            ['id' => $jobId]
+            ['id' => $jobId],
+            'purgeFailed'
         );
 
         return $statement->rowCount() > 0 ? $job : null;

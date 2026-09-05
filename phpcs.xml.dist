@@ -8,6 +8,9 @@
 
     <file>src</file>
     <file>tests</file>
+    <file>benchmarks</file>
+    <file>scripts</file>
+    <file>examples</file>
 
     <!-- Base ruleset -->
     <rule ref="PSR12"/>
@@ -16,10 +19,21 @@
     <!-- Tests can define multiple classes/interfaces in a single file for mocks -->
     <rule ref="PSR1.Classes.ClassDeclaration.MultipleClasses">
         <exclude-pattern>tests/*</exclude-pattern>
+        <exclude-pattern>benchmarks/*</exclude-pattern>
+        <exclude-pattern>examples/*</exclude-pattern>
     </rule>
     <!-- Tests can have side effects (e.g. bootstrapping, mock definitions) -->
     <rule ref="PSR1.Files.SideEffects.FoundWithSymbols">
         <exclude-pattern>tests/*</exclude-pattern>
+        <exclude-pattern>benchmarks/*</exclude-pattern>
+        <exclude-pattern>scripts/*</exclude-pattern>
+        <exclude-pattern>examples/*</exclude-pattern>
+    </rule>
+    <!-- Executable examples and benchmark fixtures intentionally use the global namespace. -->
+    <rule ref="PSR1.Classes.ClassDeclaration.MissingNamespace">
+        <exclude-pattern>benchmarks/*</exclude-pattern>
+        <exclude-pattern>scripts/*</exclude-pattern>
+        <exclude-pattern>examples/*</exclude-pattern>
     </rule>
     <!-- Tests can have long lines (assertions, mock calls, SQL strings) -->
     <rule ref="Generic.Files.LineLength">
@@ -37,15 +51,37 @@
     <!-- Code complexity / Nesting limits -->
     <rule ref="Generic.Metrics.NestingLevel">
         <properties>
-            <property name="nestingLevel" value="5"/>
-            <property name="absoluteNestingLevel" value="8"/>
+            <property name="nestingLevel" value="3"/>
+            <property name="absoluteNestingLevel" value="5"/>
         </properties>
     </rule>
     <rule ref="Generic.Metrics.CyclomaticComplexity">
         <properties>
-            <property name="complexity" value="25"/>
-            <property name="absoluteComplexity" value="35"/>
+            <property name="complexity" value="15"/>
+            <property name="absoluteComplexity" value="25"/>
         </properties>
+    </rule>
+
+    <!-- Maintainable production-code size limits. -->
+    <rule ref="SlevomatCodingStandard.Functions.FunctionLength">
+        <properties>
+            <property name="maxLinesLength" value="100"/>
+        </properties>
+        <exclude-pattern>tests/*</exclude-pattern>
+        <exclude-pattern>benchmarks/*</exclude-pattern>
+        <exclude-pattern>scripts/*</exclude-pattern>
+        <exclude-pattern>examples/*</exclude-pattern>
+    </rule>
+    <rule ref="SlevomatCodingStandard.Classes.ClassLength">
+        <properties>
+            <property name="maxLinesLength" value="500"/>
+        </properties>
+        <!-- Retained compatibility surface prevents a safe v1 split. -->
+        <exclude-pattern>src/Storage/PdoJobStorage.php</exclude-pattern>
+        <exclude-pattern>tests/*</exclude-pattern>
+        <exclude-pattern>benchmarks/*</exclude-pattern>
+        <exclude-pattern>scripts/*</exclude-pattern>
+        <exclude-pattern>examples/*</exclude-pattern>
     </rule>
 
     <!-- Slevomat Coding Standard Sniffs -->
@@ -59,6 +95,8 @@
     <!-- Enforce Type Hints (exclude tests to avoid overly verbose mock definitions) -->
     <rule ref="SlevomatCodingStandard.TypeHints.ParameterTypeHint">
         <exclude-pattern>tests/*</exclude-pattern>
+        <!-- Predis v3 retains untyped interface parameters; the benchmark adapter must match them. -->
+        <exclude-pattern>benchmarks/redis-instrumentation.php</exclude-pattern>
     </rule>
     <rule ref="SlevomatCodingStandard.TypeHints.ReturnTypeHint">
         <exclude-pattern>tests/*</exclude-pattern>

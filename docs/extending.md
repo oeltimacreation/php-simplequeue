@@ -49,7 +49,9 @@ $registry->middleware->register(new AuditMiddleware());
 `JobContextInterface` provides typed access to the job ID, type, decoded
 payload, queue, and one-based execution attempt. Call `proceed()` exactly once
 to continue to the next middleware or handler. Middleware may run before and
-after logic around that call and may return the continuation's result.
+after logic around that call and may return the continuation's result. A second
+call on the same context throws `LogicException` before invoking downstream
+code again.
 
 Registration order is deterministic: the first registered middleware is the
 outermost wrapper. If middleware or the continuation throws, the exception
@@ -67,7 +69,10 @@ write methods use `ClaimedJob`, whose lease token prevents an old worker from
 modifying a job claimed by a newer worker. Implement optional capability
 interfaces only when the storage supports their guarantees, including
 `SupportsIdempotentJobCreation`, `SupportsPendingJobCursor`, and
-`SupportsQueueScopedStaleRecovery`.
+`SupportsQueueScopedStaleRecovery`. Prefer
+`SupportsPendingNotificationCursor` for reconciliation: it returns only ID and
+availability, avoiding payload/result hydration. The full-job cursor remains a
+v1 compatibility fallback.
 
 `JobStorageAdminInterface` adds listing, counting, and retention pruning for
 operational tools.
@@ -84,17 +89,34 @@ only transports job IDs; storage remains authoritative. Optional capabilities
 advertise additional behavior without breaking third-party implementations:
 
 - `SupportsBatchEnqueue`
+- `SupportsBatchQueueReconciliation`
+- `SupportsBoundedQueueMembership`
 - `SupportsDelayedJobs`
 - `SupportsJobRemoval`
 - `SupportsProcessingHeartbeat`
-- `SupportsQueueReconciliation`
+- `SupportsStorageBackedScheduling`
 - `SupportsStaleRecovery`
 - `SupportsTimeoutValidation`
+- `SupportsWorkerAwareClaimedDequeue`
 
 `SupportsDelayedJobs` adds `enqueueDelayed()`, `enqueueDelayedBatch()`, and
 `promoteDelayedJobs()`. `enqueueDelayedBatch()` is additive: drivers that skip
 it are still correct, because `QueueManager::enqueueDelayedBatch()` falls back
 to one `enqueueDelayed()` call per job.
+
+A future initial dispatch is accepted only when the driver implements
+`SupportsDelayedJobs` or `SupportsStorageBackedScheduling`. The latter is for a
+storage-polling driver that discovers due rows without a notification. Do not
+advertise it for a driver that would leave future jobs invisible; unsupported
+scheduling throws before storage is changed.
+
+Workers prefer `SupportsWorkerAwareClaimedDequeue`, which receives the worker
+identity on every claim and avoids mutable identity on a shared driver.
+`SupportsWorkerId` remains functional but is deprecated for removal in v2.
+For repair, combine `SupportsBoundedQueueMembership` with
+`SupportsBatchQueueReconciliation` to check pending/delayed membership and
+restore a complete page atomically. `SupportsQueueReconciliation` remains a
+deprecated v1 fallback.
 
 `AdminManager::purgeFailed()` requires `SupportsJobRemoval` so an administrative
 purge can remove pending, delayed, and processing notifications. A storage-

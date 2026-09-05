@@ -14,7 +14,10 @@ final class DbHelper
      */
     public static function createSchema(PDO $pdo, string $tableName = 'background_jobs'): void
     {
-        $driver = (string) $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+        $driver = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+        if (!is_string($driver)) {
+            throw new \RuntimeException('PDO returned an invalid driver name');
+        }
 
         if ($driver === 'sqlite') {
             $pdo->exec("

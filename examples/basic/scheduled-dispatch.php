@@ -14,9 +14,11 @@ use Oeltima\SimpleQueue\Worker;
 
 final class PrintScheduledMessage implements JobHandlerInterface
 {
+    /** @param array<string, mixed> $payload Job payload */
     public function handle(int $jobId, array $payload, ?callable $progress = null): mixed
     {
-        $message = (string) ($payload['message'] ?? 'No message');
+        $message = $payload['message'] ?? 'No message';
+        $message = is_string($message) ? $message : 'No message';
         echo "Job #{$jobId}: {$message}\n";
 
         return ['message' => $message];

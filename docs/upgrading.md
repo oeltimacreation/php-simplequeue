@@ -1,5 +1,47 @@
 # Upgrading
 
+## To v1.11.x
+
+v1.11 is a hardening release that corrects durable outcomes, attempt counts,
+worker effect ordering, configuration, locking, reconciliation, and batch
+atomicity without breaking the v1.10 public/protected API. No schema or Redis
+key migration is required.
+
+- **Attempts**: `attempts` counts failed executions; terminal failures
+  (handler, serialization, stale) consume one attempt. `canRetry()` is false
+  for terminal jobs, and direct retry scheduling rejects an exhausted count.
+  First-attempt shutdown releases preserve `attempts 0` and prior error data.
+- **PDO outcomes**: an error after a mutation may have reached the server now
+  raises `IndeterminateStorageOutcomeException`; do not retry it blindly.
+  Reads may retry once only with a connection factory and outside a caller
+  transaction. Claims inside caller-owned transactions are rejected.
+- **Storage boundaries**: built-in hydration now rejects missing/corrupt durable
+  fields. Table names and schema-sized strings are validated, batches validate
+  completely before mutation, and PDO chunks remain one atomic transaction.
+- **Worker effects**: durable transitions persist first, events emit second,
+  and ACK/NACK runs third. Notification failures after a durable transition
+  escape as infrastructure; lost ownership never ACKs/NACKs.
+- **Options**: numeric options require canonical strings, booleans require
+  actual booleans, `memory_limit` is MiB, and array `lock_file: null` disables
+  locking while typed defaults use safe per-queue locks. `processOne()`
+  throws infrastructure errors instead of returning `false`.
+- **Scheduling**: future dispatch requires `SupportsDelayedJobs` or
+  `SupportsStorageBackedScheduling`; otherwise it throws before storage
+  mutation.
+- **Reconciliation/Redis**: built-ins scan lean notification projections and
+  reconcile a page in one queue operation. Availability must be canonical UTC;
+  `duplicates` reflects delayed membership or a bounded pending hit. Duplicate
+  processing entries retain a recoverable visibility score after ACK/NACK.
+- **Deprecations**: `SupportsWorkerId` and `SupportsQueueReconciliation`
+  remain functional; prefer worker-aware claimed dequeue and lean/batch
+  reconciliation. v2 removal candidates.
+
+## To v1.10.x
+
+v1.10 established the test and static-analysis baseline with reproducible
+performance profiles and operation-count guardrails. No schema migration is
+required from v1.9.
+
 ## To v1.9.x
 
 v1.9 adds middleware, typed worker event value objects, and failed-job

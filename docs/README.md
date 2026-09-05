@@ -17,7 +17,7 @@ If you are setting up, configuring, or running SimpleQueue in an application:
 
 If you are embedding SimpleQueue, upgrading from prior releases, or building custom storage/drivers:
 
-1. **[Upgrading Guide](upgrading.md)** — Upgrading instructions and backward-compatibility notes across versions (including v1.7.x, v1.8.x, and v1.9.x).
+1. **[Upgrading Guide](upgrading.md)** — Upgrade behavior and compatibility notes through v1.11.x.
 2. **[Extending SimpleQueue](extending.md)** — Implementing custom `JobHandlerInterface`, custom `JobStorageInterface`, or custom `QueueDriverInterface`.
 3. **[Backend Parity Map](backend-parity.md)** — Feature-by-feature matrix comparing Redis driver, Database driver, and In-Memory driver behavior.
 4. **[Failure & Recovery Matrix](failure-matrix.md)** — Edge-case analysis of worker crashes, network partitions, database deadlocks, and stale lease recovery.
@@ -30,7 +30,7 @@ If you are contributing to PHP SimpleQueue, reviewing architecture, or examining
 
 1. **[Architecture Specification](architecture.md)** — High-level architecture, two-layer storage/driver model, job lifecycle state machine, lease fencing, scheduled dispatch, and hydration boundaries.
 2. **[Type-Safety Specifications](type-safety.md)** — PHP 8.2+ type compliance, array shapes (`JobDefinitionShape`, `StorageRowShape`), immutable value objects, and serialization rules.
-3. **[Quality Baseline](quality-baseline.md)** — Repository code quality metrics, method/class size limits, cognitive/cyclomatic complexity bounds, and the quality ratchet system.
+3. **[Quality Baseline](quality-baseline.md)** — PHPStan, PHPCS complexity/size limits, coverage, mutation, API compatibility, and operation-budget gates.
 4. **[Performance Profile](performance.md)** — Benchmark scenarios, throughput baseline, payload wire byte measurements, and PDO/Redis roundtrip counts.
 5. **[Maintainer Notes](maintainer-notes.md)** — Release procedures, Git tag vs. Composer version rules, Packagist publishing workflows, and verification commands.
 
@@ -39,4 +39,3 @@ If you are contributing to PHP SimpleQueue, reviewing architecture, or examining
 ## Runnable Examples
 
 Complete, runnable code examples live in [examples/](../examples/README.md).
-

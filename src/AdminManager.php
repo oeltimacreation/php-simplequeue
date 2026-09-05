@@ -12,7 +12,7 @@ use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\SupportsFailedJobAdministration;
 use Oeltima\SimpleQueue\Contract\SupportsJobRemoval;
 use Oeltima\SimpleQueue\Exception\QueueException;
-use Oeltima\SimpleQueue\Internal\PositiveJobId;
+use Oeltima\SimpleQueue\Internal\JobStorageRules;
 
 /**
  * Coordinates failed-job administration across durable storage and queue notifications.
@@ -53,7 +53,7 @@ final class AdminManager implements FailedJobAdminInterface
      */
     public function inspectFailed(int $jobId): ?JobData
     {
-        $job = $this->storage->find(PositiveJobId::fromInt($jobId)->value);
+        $job = $this->storage->find(JobStorageRules::validatePositiveId($jobId));
 
         return $job?->status === JobStatus::Failed ? $job : null;
     }
@@ -66,7 +66,7 @@ final class AdminManager implements FailedJobAdminInterface
      */
     public function requeueFailed(int $jobId): bool
     {
-        $job = $this->storage->requeueFailed(PositiveJobId::fromInt($jobId)->value);
+        $job = $this->storage->requeueFailed(JobStorageRules::validatePositiveId($jobId));
         if ($job === null) {
             return false;
         }
@@ -92,7 +92,7 @@ final class AdminManager implements FailedJobAdminInterface
      */
     public function purgeFailed(int $jobId): bool
     {
-        $normalizedId = PositiveJobId::fromInt($jobId)->value;
+        $normalizedId = JobStorageRules::validatePositiveId($jobId);
         $job = $this->inspectFailed($normalizedId);
         if ($job === null) {
             return false;

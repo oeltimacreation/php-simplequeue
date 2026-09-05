@@ -22,21 +22,6 @@ final readonly class WorkerPolicy
     }
 
     /**
-     * Determine whether an exception represents an infrastructure failure.
-     *
-     * @param \Throwable $exception Failure raised by the worker loop
-     * @return bool True when infrastructure backoff should be applied
-     */
-    public function isInfrastructureException(\Throwable $exception): bool
-    {
-        if ($exception instanceof \PDOException || $exception instanceof \RedisException) {
-            return true;
-        }
-
-        return str_starts_with($exception::class, 'Predis\\');
-    }
-
-    /**
      * Calculate infrastructure backoff for consecutive errors.
      *
      * @param int $errorCount One-based consecutive error count
@@ -74,11 +59,11 @@ final readonly class WorkerPolicy
      * Determine whether a fenced storage transition reports lost ownership.
      *
      * @param bool $transitionApplied Result of the fenced storage transition
-     * @return OwnershipOutcome Exhaustive ownership outcome
+     * @return bool True when ownership was lost
      */
-    public function ownershipOutcome(bool $transitionApplied): OwnershipOutcome
+    public function lostOwnership(bool $transitionApplied): bool
     {
-        return $transitionApplied ? OwnershipOutcome::Owned : OwnershipOutcome::Lost;
+        return !$transitionApplied;
     }
 
     private function exponentialDelay(int $exponent): int

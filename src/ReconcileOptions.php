@@ -13,13 +13,17 @@ final readonly class ReconcileOptions
         public int $membershipScanLimit = 250,
         public float $maxDurationSeconds = 1.0
     ) {
-        if (
-            ($cursor !== null && $cursor < 1)
-            || $pageSize < 1
-            || $membershipScanLimit < 1
-            || $maxDurationSeconds <= 0
-        ) {
-            throw new \InvalidArgumentException('Reconciliation cursor and limits must be positive');
+        if ($cursor !== null && $cursor < 1) {
+            throw new \InvalidArgumentException('Reconciliation cursor must be positive');
+        }
+        if ($pageSize < 1 || $pageSize > 10000) {
+            throw new \InvalidArgumentException('Reconciliation page size must be between 1 and 10000');
+        }
+        if ($membershipScanLimit < 1 || $membershipScanLimit > 1000000) {
+            throw new \InvalidArgumentException('Reconciliation membership scan limit must be between 1 and 1000000');
+        }
+        if (!is_finite($maxDurationSeconds) || $maxDurationSeconds <= 0) {
+            throw new \InvalidArgumentException('Reconciliation max duration must be finite and positive');
         }
     }
 }

@@ -113,8 +113,16 @@ final class FailurePathTest extends TestCase
         [$dispatcher, $worker] = $this->successfulWorker($storage, $driver);
         $jobId = $dispatcher->dispatch('test.success', []);
 
-        self::assertTrue($worker->processOne());
-        self::assertSame(JobStatus::Completed, $storage->find($jobId)->status);
+        // Durable completion persists; ACK failure escapes as infrastructure.
+        try {
+            $worker->processOne();
+            self::fail('ACK failure after durable transition must escape');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('Injected ack failure', $exception->getMessage());
+        }
+        $completedJob = $storage->find($jobId);
+        self::assertNotNull($completedJob);
+        self::assertSame(JobStatus::Completed, $completedJob->status);
         self::assertSame([$jobId], $inner->getProcessing('default'));
 
         $clock->advance(61);
@@ -132,7 +140,12 @@ final class FailurePathTest extends TestCase
         $driver = $this->faultInjectingDriver($inner, QueueFailureOperation::Reject);
         [$jobId, $worker] = $this->retryJob($storage, $driver);
 
-        self::assertTrue($worker->processOne());
+        try {
+            $worker->processOne();
+            self::fail('NACK failure after durable retry must escape');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('Injected nack failure', $exception->getMessage());
+        }
         $job = $storage->find($jobId);
         self::assertSame(JobStatus::Pending, $job?->status);
         self::assertSame(1, $job->attempts);
@@ -161,7 +174,12 @@ final class FailurePathTest extends TestCase
         $driver = new InMemoryQueueDriver($clock);
         [$jobId, $worker] = $this->retryJob($storage, $driver);
 
-        self::assertTrue($worker->processOne());
+        try {
+            $worker->processOne();
+            self::fail('Retry storage failure must escape as infrastructure');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('Injected retry storage failure', $exception->getMessage());
+        }
         self::assertSame(JobStatus::Running, $storage->find($jobId)?->status);
         self::assertSame([$jobId], $driver->getProcessing('default'));
 
@@ -185,14 +203,22 @@ final class FailurePathTest extends TestCase
         $registry->register('test.serialize', $handler::class);
         $dispatcher = new JobDispatcher($storage, new QueueManager($driver));
         $jobId = $dispatcher->dispatch('test.serialize', []);
+        $events = [];
+        $worker = new Worker($storage, new QueueManager($driver), $registry, options: [
+            'lock_file' => null,
+            'event_listener' => static function (string $name) use (&$events): void {
+                $events[] = $name;
+            },
+        ]);
 
-        self::assertTrue($this->worker($storage, $driver, $registry)->processOne());
+        self::assertTrue($worker->processOne());
 
         $job = $storage->find($jobId);
         self::assertSame(JobStatus::Failed, $job?->status);
         self::assertSame('Unable to encode job result as JSON', $job->errorMessage);
         self::assertSame([], $driver->getProcessing('default'));
         self::assertSame([], $driver->getPending('default'));
+        self::assertSame(['claimed', 'failed'], $events);
     }
 
     public function testDuplicateDeliveryExecutesHandlerOnlyOnce(): void
@@ -371,7 +397,7 @@ final class FailurePathTest extends TestCase
         self::assertTrue($worker->processOne());
         $job = $storage->find($jobId);
         self::assertSame(JobStatus::Failed, $job?->status);
-        self::assertSame(1, $job->attempts);
+        self::assertSame(2, $job->attempts);
         self::assertSame([], $driver->getPending('default'));
         self::assertSame([], $driver->getDelayed('default'));
         self::assertSame([], $driver->getProcessing('default'));

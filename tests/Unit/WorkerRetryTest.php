@@ -20,7 +20,7 @@ final class WorkerRetryTest extends WorkerTestCase
 
         $driver->expects($this->once())
             ->method('nack')
-            ->with('default', 789, $this->greaterThan(0));
+            ->with('default', 789, self::greaterThan(0));
 
         $worker = $this->createWorkerWithDriver($driver, [
             'retry_base_delay' => 2,
@@ -41,10 +41,10 @@ final class WorkerRetryTest extends WorkerTestCase
         $this->storage->expects($this->once())
             ->method('scheduleRetry')
             ->with(
-                $this->callback(fn($claim) => $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 300),
+                self::callback(fn($claim) => $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 300),
                 1,
                 2,
-                $this->isString()
+                self::isString()
             )
             ->willReturn(true);
 
@@ -69,10 +69,10 @@ final class WorkerRetryTest extends WorkerTestCase
         $this->storage->expects($this->once())
             ->method('scheduleRetry')
             ->with(
-                $this->callback(fn($claim) => $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 400),
+                self::callback(fn($claim) => $claim instanceof \Oeltima\SimpleQueue\Contract\ClaimedJob && $claim->job->id === 400),
                 9,
                 300,
-                $this->isString()
+                self::isString()
             )
             ->willReturn(true);
 

@@ -22,17 +22,28 @@ class PdoJobStorageTest extends TestCase
         return $pdo;
     }
 
+    private function createConnectionLossPdo(): PDO
+    {
+        return new class ('sqlite::memory:') extends PDO {
+            /** @param array<array-key, mixed> $options */
+            public function prepare(string $query, array $options = []): PDOStatement|false
+            {
+                throw new \PDOException('SQLSTATE[HY000]: 2006 MySQL server has gone away', 2006);
+            }
+        };
+    }
+
     public function testConstructorAcceptsPdoInstance(): void
     {
         $pdo = $this->createSqlitePdo();
         $storage = new PdoJobStorage($pdo);
 
         $id = $storage->createJob('test.job', ['data' => 'value']);
-        $this->assertEquals(1, $id);
+        self::assertEquals(1, $id);
 
         $job = $storage->find($id);
-        $this->assertNotNull($job);
-        $this->assertEquals('test.job', $job->type);
+        self::assertNotNull($job);
+        self::assertEquals('test.job', $job->type);
     }
 
     public function testConstructorEnforcesExceptionErrorModeForPdoInstance(): void
@@ -42,7 +53,7 @@ class PdoJobStorageTest extends TestCase
 
         new PdoJobStorage($pdo);
 
-        $this->assertSame(PDO::ERRMODE_EXCEPTION, $pdo->getAttribute(PDO::ATTR_ERRMODE));
+        self::assertSame(PDO::ERRMODE_EXCEPTION, $pdo->getAttribute(PDO::ATTR_ERRMODE));
     }
 
     public function testConstructorAcceptsCallableFactory(): void
@@ -56,8 +67,8 @@ class PdoJobStorageTest extends TestCase
         $storage = new PdoJobStorage($factory);
 
         $id = $storage->createJob('test.job', ['data' => 'value']);
-        $this->assertEquals(1, $id);
-        $this->assertEquals(1, $callCount, 'Factory should be called once for initial connection');
+        self::assertEquals(1, $id);
+        self::assertEquals(1, $callCount, 'Factory should be called once for initial connection');
     }
 
     public function testFactoryConnectionEnforcesExceptionErrorMode(): void
@@ -73,8 +84,8 @@ class PdoJobStorageTest extends TestCase
         $storage = new PdoJobStorage($factory);
         $storage->createJob('test.job', []);
 
-        $this->assertInstanceOf(PDO::class, $createdPdo);
-        $this->assertSame(PDO::ERRMODE_EXCEPTION, $createdPdo->getAttribute(PDO::ATTR_ERRMODE));
+        self::assertInstanceOf(PDO::class, $createdPdo);
+        self::assertSame(PDO::ERRMODE_EXCEPTION, $createdPdo->getAttribute(PDO::ATTR_ERRMODE));
     }
 
     public function testReconnectForcesNewConnection(): void
@@ -88,20 +99,32 @@ class PdoJobStorageTest extends TestCase
         $storage = new PdoJobStorage($factory);
 
         $storage->createJob('test.job', []);
-        $this->assertEquals(1, $callCount);
+        self::assertEquals(1, $callCount);
 
         $storage->reconnect();
 
         $storage->createJob('test.job', []);
-        $this->assertEquals(2, $callCount, 'Factory should be called again after reconnect');
+        self::assertEquals(2, $callCount, 'Factory should be called again after reconnect');
+    }
+
+    public function testReconnectRejectsDirectPdoStorageWithoutDiscardingConnection(): void
+    {
+        $storage = new PdoJobStorage($this->createSqlitePdo());
+
+        try {
+            $storage->reconnect();
+            self::fail('Direct PDO storage must reject reconnect');
+        } catch (\LogicException $exception) {
+            self::assertSame('Direct-PDO storage has no connection factory to reconnect with', $exception->getMessage());
+        }
+
+        self::assertSame(1, $storage->createJob('test.job', []));
     }
 
     public function testAutoReconnectsOnStaleConnection(): void
     {
         $callCount = 0;
-        $goodPdo = null;
-
-        $factory = function () use (&$callCount, &$goodPdo): PDO {
+        $factory = function () use (&$callCount): PDO {
             $callCount++;
             return $this->createSqlitePdo();
         };
@@ -109,10 +132,10 @@ class PdoJobStorageTest extends TestCase
         $storage = new PdoJobStorage($factory);
 
         $storage->createJob('test.job', []);
-        $this->assertEquals(1, $callCount);
+        self::assertEquals(1, $callCount);
 
         $storage->createJob('another.job', []);
-        $this->assertEquals(1, $callCount, 'Should reuse existing healthy connection');
+        self::assertEquals(1, $callCount, 'Should reuse existing healthy connection');
     }
 
     public function testDoesNotRunHealthCheckBeforeEveryQuery(): void
@@ -135,7 +158,7 @@ class PdoJobStorageTest extends TestCase
         $id = $storage->createJob('test.job', []);
         $storage->find($id);
 
-        $this->assertSame(0, $pdo->queryCount);
+        self::assertSame(0, $pdo->queryCount);
     }
 
     public function testReconnectsAfterConnectionLossException(): void
@@ -145,12 +168,7 @@ class PdoJobStorageTest extends TestCase
             $callCount++;
 
             if ($callCount === 1) {
-                return new class ('sqlite::memory:') extends PDO {
-                    public function prepare(string $query, array $options = []): PDOStatement|false
-                    {
-                        throw new \PDOException('SQLSTATE[HY000]: 2006 MySQL server has gone away', 2006);
-                    }
-                };
+                return $this->createConnectionLossPdo();
             }
 
             return $this->createSqlitePdo();
@@ -158,10 +176,9 @@ class PdoJobStorageTest extends TestCase
 
         $storage = new PdoJobStorage($factory);
 
-        $id = $storage->createJob('test.job', []);
-
-        $this->assertSame(1, $id);
-        $this->assertSame(2, $callCount);
+        // Mutations never replay after a statement attempt; uncertain outcomes raise.
+        $this->expectException(\Oeltima\SimpleQueue\Exception\IndeterminateStorageOutcomeException::class);
+        $storage->createJob('test.job', []);
     }
 
     public function testCreateJobStoresPayload(): void
@@ -173,7 +190,8 @@ class PdoJobStorageTest extends TestCase
         $id = $storage->createJob('import.users', $payload);
 
         $job = $storage->find($id);
-        $this->assertEquals($payload, $job->payload);
+        self::assertNotNull($job);
+        self::assertEquals($payload, $job->payload);
     }
 
     public function testCreateJobUsesInjectedClock(): void
@@ -185,9 +203,10 @@ class PdoJobStorageTest extends TestCase
         $id = $storage->createJob('test.job', []);
         $job = $storage->find($id);
 
-        $this->assertEquals('2026-01-02 03:04:05', $job->createdAt);
-        $this->assertEquals('2026-01-02 03:04:05', $job->updatedAt);
-        $this->assertEquals('2026-01-02 03:04:05', $job->availableAt);
+        self::assertNotNull($job);
+        self::assertEquals('2026-01-02 03:04:05', $job->createdAt);
+        self::assertEquals('2026-01-02 03:04:05', $job->updatedAt);
+        self::assertEquals('2026-01-02 03:04:05', $job->availableAt);
     }
 
     public function testScheduleRetryUsesInjectedClock(): void
@@ -198,11 +217,12 @@ class PdoJobStorageTest extends TestCase
 
         $id = $storage->createJob('test.job', []);
         $claim = $storage->claimById($id, 'worker-1');
-        $this->assertNotNull($claim);
+        self::assertNotNull($claim);
         $storage->scheduleRetry($claim, 1, 60, 'Temporary failure');
 
         $job = $storage->find($id);
-        $this->assertEquals('2026-01-02 03:05:05', $job->availableAt);
+        self::assertNotNull($job);
+        self::assertEquals('2026-01-02 03:05:05', $job->availableAt);
     }
 
     public function testClaimByIdLocksProperly(): void
@@ -213,15 +233,16 @@ class PdoJobStorageTest extends TestCase
         $id = $storage->createJob('test.job', []);
 
         $claim = $storage->claimById($id, 'worker-1');
-        $this->assertNotNull($claim);
+        self::assertNotNull($claim);
 
         $job = $storage->find($id);
-        $this->assertSame(JobStatus::Running, $job->status);
-        $this->assertEquals('worker-1', $job->lockedBy);
-        $this->assertNotNull($job->leaseToken);
+        self::assertNotNull($job);
+        self::assertSame(JobStatus::Running, $job->status);
+        self::assertEquals('worker-1', $job->lockedBy);
+        self::assertNotNull($job->leaseToken);
 
         $claimAgain = $storage->claimById($id, 'worker-2');
-        $this->assertNull($claimAgain, 'Should not claim already running job');
+        self::assertNull($claimAgain, 'Should not claim already running job');
     }
 
     public function testClaimByIdAllowsSameWorkerToReclaim(): void
@@ -232,12 +253,12 @@ class PdoJobStorageTest extends TestCase
         $id = $storage->createJob('test.job', []);
 
         $claim1 = $storage->claimById($id, 'worker-1');
-        $this->assertNotNull($claim1);
+        self::assertNotNull($claim1);
 
         $claim2 = $storage->claimById($id, 'worker-1');
-        $this->assertNotNull($claim2);
-        $this->assertEquals($id, $claim2->job->id);
-        $this->assertNotEquals($claim1->leaseToken, $claim2->leaseToken);
+        self::assertNotNull($claim2);
+        self::assertEquals($id, $claim2->job->id);
+        self::assertNotEquals($claim1->leaseToken, $claim2->leaseToken);
     }
 
     public function testReclaimFencesThePreviousLease(): void
@@ -247,13 +268,13 @@ class PdoJobStorageTest extends TestCase
         $id = $storage->createJob('test.job', []);
 
         $firstClaim = $storage->claimById($id, 'worker-1');
-        $this->assertNotNull($firstClaim);
+        self::assertNotNull($firstClaim);
         $secondClaim = $storage->claimById($id, 'worker-1');
-        $this->assertNotNull($secondClaim);
+        self::assertNotNull($secondClaim);
 
-        $this->assertFalse($storage->markCompleted($firstClaim));
-        $this->assertTrue($storage->markCompleted($secondClaim));
-        $this->assertSame(JobStatus::Completed, $storage->find($id)?->status);
+        self::assertFalse($storage->markCompleted($firstClaim));
+        self::assertTrue($storage->markCompleted($secondClaim));
+        self::assertSame(JobStatus::Completed, $storage->find($id)?->status);
     }
 
     public function testClaimTransactionRollsBackWhenClaimUpdateFails(): void
@@ -268,16 +289,16 @@ class PdoJobStorageTest extends TestCase
 
         try {
             $storage->claimById($id, 'worker-1');
-            $this->fail('Expected the failed claim update to be reported');
+            self::fail('Expected the failed claim update to be reported');
         } catch (\PDOException $exception) {
-            $this->assertStringContainsString('claim rejected', $exception->getMessage());
+            self::assertStringContainsString('claim rejected', $exception->getMessage());
         }
 
-        $this->assertFalse($pdo->inTransaction());
+        self::assertFalse($pdo->inTransaction());
         $job = $storage->find($id);
-        $this->assertNotNull($job);
-        $this->assertSame(JobStatus::Pending, $job->status);
-        $this->assertNull($job->leaseToken);
+        self::assertNotNull($job);
+        self::assertSame(JobStatus::Pending, $job->status);
+        self::assertNull($job->leaseToken);
     }
 
     public function testClaimNextAvailableReturnsClaimedJob(): void
@@ -289,14 +310,14 @@ class PdoJobStorageTest extends TestCase
 
         $claim = $storage->claimNextAvailable('default', 'worker-1');
 
-        $this->assertNotNull($claim);
-        $this->assertEquals($id, $claim->job->id);
-        $this->assertEquals('worker-1', $claim->workerId);
-        $this->assertNotEmpty($claim->leaseToken);
-        $this->assertEquals($claim->leaseToken, $claim->job->leaseToken);
-        $this->assertSame(JobStatus::Running, $claim->job->status);
+        self::assertNotNull($claim);
+        self::assertEquals($id, $claim->job->id);
+        self::assertEquals('worker-1', $claim->workerId);
+        self::assertNotEmpty($claim->leaseToken);
+        self::assertEquals($claim->leaseToken, $claim->job->leaseToken);
+        self::assertSame(JobStatus::Running, $claim->job->status);
 
-        $this->assertNull($storage->claimNextAvailable('default', 'worker-2'));
+        self::assertNull($storage->claimNextAvailable('default', 'worker-2'));
     }
 
     public function testClaimByIdReturnsNullForUnavailableJob(): void
@@ -305,9 +326,9 @@ class PdoJobStorageTest extends TestCase
         $storage = new PdoJobStorage($pdo);
 
         $id = $storage->createJob('test.job', []);
-        $this->assertNotNull($storage->claimById($id, 'worker-1'));
+        self::assertNotNull($storage->claimById($id, 'worker-1'));
 
-        $this->assertNull($storage->claimById($id, 'worker-2'));
+        self::assertNull($storage->claimById($id, 'worker-2'));
     }
 
     public function testClaimNextAvailableUsesAvailableAtOrdering(): void
@@ -323,8 +344,8 @@ class PdoJobStorageTest extends TestCase
 
         $claim = $storage->claimNextAvailable('default', 'worker-1');
 
-        $this->assertNotNull($claim);
-        $this->assertSame($earlierId, $claim->job->id);
+        self::assertNotNull($claim);
+        self::assertSame($earlierId, $claim->job->id);
     }
 
     public function testMarkCompletedWithResult(): void
@@ -334,14 +355,15 @@ class PdoJobStorageTest extends TestCase
 
         $id = $storage->createJob('test.job', []);
         $claim = $storage->claimById($id, 'worker-1');
-        $this->assertNotNull($claim);
+        self::assertNotNull($claim);
 
         $result = ['imported' => 100, 'failed' => 5];
         $storage->markCompleted($claim, $result);
 
         $job = $storage->find($id);
-        $this->assertSame(JobStatus::Completed, $job->status);
-        $this->assertEquals($result, $job->result);
+        self::assertNotNull($job);
+        self::assertSame(JobStatus::Completed, $job->status);
+        self::assertEquals($result, $job->result);
     }
 
     public function testUpdateProgress(): void
@@ -351,13 +373,14 @@ class PdoJobStorageTest extends TestCase
 
         $id = $storage->createJob('test.job', []);
         $claim = $storage->claimById($id, 'worker-1');
-        $this->assertNotNull($claim);
+        self::assertNotNull($claim);
 
         $storage->updateProgress($claim, 50, 'Halfway there');
 
         $job = $storage->find($id);
-        $this->assertEquals(50, $job->progress);
-        $this->assertEquals('Halfway there', $job->progressMessage);
+        self::assertNotNull($job);
+        self::assertEquals(50, $job->progress);
+        self::assertEquals('Halfway there', $job->progressMessage);
     }
 
     public function testScheduleRetry(): void
@@ -367,15 +390,16 @@ class PdoJobStorageTest extends TestCase
 
         $id = $storage->createJob('test.job', []);
         $claim = $storage->claimById($id, 'worker-1');
-        $this->assertNotNull($claim);
+        self::assertNotNull($claim);
 
         $storage->scheduleRetry($claim, 1, 60, 'Temporary failure');
 
         $job = $storage->find($id);
-        $this->assertSame(JobStatus::Pending, $job->status);
-        $this->assertEquals(1, $job->attempts);
-        $this->assertNull($job->lockedBy);
-        $this->assertNotNull($job->availableAt);
+        self::assertNotNull($job);
+        self::assertSame(JobStatus::Pending, $job->status);
+        self::assertEquals(1, $job->attempts);
+        self::assertNull($job->lockedBy);
+        self::assertNotNull($job->availableAt);
     }
 
     public function testRecoverStaleJobsIncrementsAttempts(): void
@@ -385,18 +409,19 @@ class PdoJobStorageTest extends TestCase
 
         $id = $storage->createJob('test.job', [], 'default', 3);
         $claim = $storage->claimById($id, 'worker-1');
-        $this->assertNotNull($claim);
+        self::assertNotNull($claim);
 
         $pdo->exec("UPDATE background_jobs SET locked_at = '2026-01-01 00:00:00'");
 
         $recovered = $storage->recoverStaleJobs(60);
-        $this->assertSame(1, $recovered);
+        self::assertSame(1, $recovered);
 
         $job = $storage->find($id);
-        $this->assertSame(JobStatus::Pending, $job->status);
-        $this->assertSame(1, $job->attempts);
-        $this->assertNull($job->lockedBy);
-        $this->assertNull($job->leaseToken);
+        self::assertNotNull($job);
+        self::assertSame(JobStatus::Pending, $job->status);
+        self::assertSame(1, $job->attempts);
+        self::assertNull($job->lockedBy);
+        self::assertNull($job->leaseToken);
     }
 
     public function testRecoverStaleJobsFailsPoisonJobs(): void
@@ -406,19 +431,20 @@ class PdoJobStorageTest extends TestCase
 
         $id = $storage->createJob('test.job', [], 'default', 1);
         $claim = $storage->claimById($id, 'worker-1');
-        $this->assertNotNull($claim);
+        self::assertNotNull($claim);
 
         $pdo->exec("UPDATE background_jobs SET locked_at = '2026-01-01 00:00:00'");
 
         $recovered = $storage->recoverStaleJobs(60);
-        $this->assertSame(1, $recovered);
+        self::assertSame(1, $recovered);
 
         $job = $storage->find($id);
-        $this->assertSame(JobStatus::Failed, $job->status);
-        $this->assertSame('Job timed out / worker crashed (stale recovery)', $job->errorMessage);
-        $this->assertNull($job->lockedBy);
-        $this->assertNull($job->leaseToken);
-        $this->assertNotNull($job->completedAt);
+        self::assertNotNull($job);
+        self::assertSame(JobStatus::Failed, $job->status);
+        self::assertSame('Job timed out / worker crashed (stale recovery)', $job->errorMessage);
+        self::assertNull($job->lockedBy);
+        self::assertNull($job->leaseToken);
+        self::assertNotNull($job->completedAt);
     }
 
     public function testCreateJobsBatch(): void
@@ -432,19 +458,167 @@ class PdoJobStorageTest extends TestCase
         ];
 
         $ids = $storage->createJobs($jobs);
-        $this->assertCount(2, $ids);
+        self::assertCount(2, $ids);
 
         $job1 = $storage->find($ids[0]);
-        $this->assertNotNull($job1);
-        $this->assertEquals('test.job1', $job1->type);
-        $this->assertEquals(['a' => 1], $job1->payload);
-        $this->assertEquals(3, $job1->maxAttempts);
+        self::assertNotNull($job1);
+        self::assertEquals('test.job1', $job1->type);
+        self::assertEquals(['a' => 1], $job1->payload);
+        self::assertEquals(3, $job1->maxAttempts);
 
         $job2 = $storage->find($ids[1]);
-        $this->assertNotNull($job2);
-        $this->assertEquals('test.job2', $job2->type);
-        $this->assertEquals(['b' => 2], $job2->payload);
-        $this->assertEquals(5, $job2->maxAttempts);
+        self::assertNotNull($job2);
+        self::assertEquals('test.job2', $job2->type);
+        self::assertEquals(['b' => 2], $job2->payload);
+        self::assertEquals(5, $job2->maxAttempts);
+    }
+
+    public function testCreateJobsUsesSavepointInsideCallerTransaction(): void
+    {
+        $pdo = $this->createSqlitePdo();
+        $storage = new PdoJobStorage($pdo);
+        $pdo->beginTransaction();
+
+        try {
+            $ids = $storage->createJobs([
+                ['type' => 'first.job', 'payload' => []],
+                ['type' => 'second.job', 'payload' => []],
+            ]);
+
+            self::assertCount(2, $ids);
+            self::assertTrue($pdo->inTransaction());
+            self::assertSame(2, $storage->count());
+        } finally {
+            $pdo->rollBack();
+        }
+
+        self::assertSame(0, $storage->count());
+    }
+
+    public function testCreateJobsValidatesDerivedIdsOnNonReturningDriverPath(): void
+    {
+        $pdo = new class ('sqlite::memory:') extends PDO {
+            public bool $reportMysqlDriver = false;
+
+            public function getAttribute(int $attribute): mixed
+            {
+                if ($attribute === PDO::ATTR_DRIVER_NAME && $this->reportMysqlDriver) {
+                    return 'mysql';
+                }
+                return parent::getAttribute($attribute);
+            }
+
+            public function lastInsertId(?string $name = null): string|false
+            {
+                $lastId = parent::lastInsertId($name);
+                if (!$this->reportMysqlDriver || $lastId === false) {
+                    return $lastId;
+                }
+                // SQLite reports the final multi-row ID; MySQL reports the first.
+                return (string) ((int) $lastId - 1);
+            }
+        };
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        \Oeltima\SimpleQueue\Tests\DbHelper::createSchema($pdo);
+        $pdo->reportMysqlDriver = true;
+        $storage = new PdoJobStorage($pdo);
+
+        $ids = $storage->createJobs([
+            ['type' => 'first.job', 'payload' => []],
+            ['type' => 'second.job', 'payload' => []],
+        ]);
+
+        self::assertSame([1, 2], $ids);
+        self::assertSame(2, $storage->count());
+    }
+
+    public function testIdempotentCreationReusesOnlyActiveRequestId(): void
+    {
+        $storage = new PdoJobStorage($this->createSqlitePdo());
+
+        $first = $storage->createIdempotentJob('test.job', ['version' => 1], 'request-1', 'default', 3);
+        $duplicate = $storage->createIdempotentJob('test.job', ['version' => 2], 'request-1', 'default', 3);
+
+        self::assertTrue($first->created);
+        self::assertFalse($duplicate->created);
+        self::assertSame($first->jobId, $duplicate->jobId);
+
+        $claim = $storage->claimById($first->jobId, 'worker-1');
+        self::assertNotNull($claim);
+        self::assertTrue($storage->markCompleted($claim));
+
+        $replacement = $storage->createIdempotentJob('test.job', ['version' => 3], 'request-1', 'default', 3);
+        self::assertTrue($replacement->created);
+        self::assertNotSame($first->jobId, $replacement->jobId);
+    }
+
+    public function testIdempotentCreationResolvesUniqueConflictInsideCallerTransaction(): void
+    {
+        $pdo = $this->createSqlitePdo();
+        $storage = new class ($pdo) extends PdoJobStorage {
+            public bool $hideNextRequestLookup = false;
+
+            public function findActiveByRequestId(string $requestId): ?\Oeltima\SimpleQueue\Contract\JobData
+            {
+                if ($this->hideNextRequestLookup) {
+                    $this->hideNextRequestLookup = false;
+                    return null;
+                }
+                return parent::findActiveByRequestId($requestId);
+            }
+        };
+        $existingId = $storage->createJob('test.job', [], 'default', 3, 'request-race');
+        $pdo->beginTransaction();
+        $storage->hideNextRequestLookup = true;
+
+        try {
+            $result = $storage->createIdempotentJob('test.job', [], 'request-race', 'default', 3);
+
+            self::assertFalse($result->created);
+            self::assertSame($existingId, $result->jobId);
+            self::assertTrue($pdo->inTransaction());
+        } finally {
+            $pdo->rollBack();
+        }
+    }
+
+    public function testQueueScopedRecoveryHonorsQueueLimitAndRetryBudget(): void
+    {
+        $pdo = $this->createSqlitePdo();
+        $clock = new FrozenClock();
+        $storage = new PdoJobStorage($pdo, 'background_jobs', $clock);
+        $retryId = $storage->createJob('retry.job', [], 'alpha', 3);
+        $terminalId = $storage->createJob('terminal.job', [], 'alpha', 1);
+        $otherQueueId = $storage->createJob('other.job', [], 'beta', 3);
+        self::assertNotNull($storage->claimById($retryId, 'worker-1'));
+        self::assertNotNull($storage->claimById($terminalId, 'worker-2'));
+        self::assertNotNull($storage->claimById($otherQueueId, 'worker-3'));
+        $clock->advance(61);
+
+        self::assertSame(2, $storage->recoverStaleJobsForQueue('alpha', 60, 2));
+        self::assertSame(JobStatus::Pending, $storage->find($retryId)?->status);
+        self::assertSame(JobStatus::Failed, $storage->find($terminalId)?->status);
+        self::assertSame(JobStatus::Running, $storage->find($otherQueueId)?->status);
+        self::assertSame(0, $storage->recoverStaleJobsForQueue('alpha', 60, 2));
+    }
+
+    public function testPruneCompletedDeletesOnlyExpiredTerminalRows(): void
+    {
+        $clock = new FrozenClock();
+        $storage = new PdoJobStorage($this->createSqlitePdo(), 'background_jobs', $clock);
+        $completedId = $storage->createJob('completed.job', []);
+        $cancelledId = $storage->createJob('cancelled.job', []);
+        $pendingId = $storage->createJob('pending.job', []);
+        $claim = $storage->claimById($completedId, 'worker-1');
+        self::assertNotNull($claim);
+        self::assertTrue($storage->markCompleted($claim));
+        self::assertTrue($storage->cancel($cancelledId));
+        $clock->advance(2 * 86400);
+
+        self::assertSame(2, $storage->pruneCompleted(1));
+        self::assertNull($storage->find($completedId));
+        self::assertNull($storage->find($cancelledId));
+        self::assertNotNull($storage->find($pendingId));
     }
 
     public function testCancelPendingJob(): void
@@ -456,13 +630,13 @@ class PdoJobStorageTest extends TestCase
 
         $result = $storage->cancel($id);
 
-        $this->assertTrue($result);
+        self::assertTrue($result);
         $job = $storage->find($id);
-        $this->assertNotNull($job);
-        $this->assertSame(JobStatus::Cancelled, $job->status);
-        $this->assertNotNull($job->completedAt);
-        $this->assertNull($job->lockedBy);
-        $this->assertNull($job->leaseToken);
+        self::assertNotNull($job);
+        self::assertSame(JobStatus::Cancelled, $job->status);
+        self::assertNotNull($job->completedAt);
+        self::assertNull($job->lockedBy);
+        self::assertNull($job->leaseToken);
     }
 
     public function testCancelNonPendingJobFails(): void
@@ -472,14 +646,14 @@ class PdoJobStorageTest extends TestCase
 
         $id = $storage->createJob('test.job', []);
         $claim = $storage->claimById($id, 'worker-1');
-        $this->assertNotNull($claim);
+        self::assertNotNull($claim);
 
         $result = $storage->cancel($id);
 
-        $this->assertFalse($result);
+        self::assertFalse($result);
         $job = $storage->find($id);
-        $this->assertNotNull($job);
-        $this->assertSame(JobStatus::Running, $job->status);
+        self::assertNotNull($job);
+        self::assertSame(JobStatus::Running, $job->status);
     }
 
     public function testCancelNonExistentJobFails(): void
@@ -488,6 +662,6 @@ class PdoJobStorageTest extends TestCase
         $storage = new PdoJobStorage($pdo);
 
         $result = $storage->cancel(9999);
-        $this->assertFalse($result);
+        self::assertFalse($result);
     }
 }

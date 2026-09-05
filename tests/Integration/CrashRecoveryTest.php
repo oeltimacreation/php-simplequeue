@@ -11,6 +11,7 @@ use Oeltima\SimpleQueue\JobDispatcher;
 use Oeltima\SimpleQueue\JobRegistry;
 use Oeltima\SimpleQueue\QueueManager;
 use Oeltima\SimpleQueue\Storage\InMemoryJobStorage;
+use Oeltima\SimpleQueue\Tests\Support\FrozenClock;
 use Oeltima\SimpleQueue\Worker;
 use PHPUnit\Framework\TestCase;
 
@@ -21,11 +22,13 @@ class CrashRecoveryTest extends TestCase
     private QueueManager $queueManager;
     private JobDispatcher $dispatcher;
     private JobRegistry $registry;
+    private FrozenClock $clock;
 
     protected function setUp(): void
     {
-        $this->storage = new InMemoryJobStorage();
-        $this->driver = new InMemoryQueueDriver();
+        $this->clock = new FrozenClock();
+        $this->storage = new InMemoryJobStorage($this->clock);
+        $this->driver = new InMemoryQueueDriver($this->clock);
         $this->queueManager = new QueueManager($this->driver);
         $this->registry = new JobRegistry();
         $this->dispatcher = new JobDispatcher($this->storage, $this->queueManager);
@@ -35,26 +38,7 @@ class CrashRecoveryTest extends TestCase
     {
         $this->driver->dequeue('default', 0);
         $this->storage->claimById($jobId, 'crashed-worker:1234');
-
-        $storageReflection = new \ReflectionClass($this->storage);
-        $jobsProp = $storageReflection->getProperty('jobs');
-        $jobs = $jobsProp->getValue($this->storage);
-        $jobs[$jobId]['locked_at'] = date('Y-m-d H:i:s', time() - 700);
-        $jobs[$jobId]['status'] = JobStatus::Running;
-        $jobsProp->setValue($this->storage, $jobs);
-
-        $driverReflection = new \ReflectionClass($this->driver);
-        $prop = $driverReflection->getProperty('processingStartedAt');
-        $times = $prop->getValue($this->driver);
-        $times['default'][$jobId] = time() - 700;
-        $prop->setValue($this->driver, $times);
-    }
-
-    private function invokeRecoverStaleJobs(Worker $worker): void
-    {
-        $reflection = new \ReflectionClass($worker);
-        $method = $reflection->getMethod('recoverStaleJobs');
-        $method->invoke($worker);
+        $this->clock->advance(700);
     }
 
     public function testWorkerRecoveryAfterSimulatedCrash(): void
@@ -73,7 +57,8 @@ class CrashRecoveryTest extends TestCase
         $this->simulateCrash($jobId);
 
         $job = $this->storage->find($jobId);
-        $this->assertSame(JobStatus::Running, $job->status);
+        self::assertNotNull($job);
+        self::assertSame(JobStatus::Running, $job->status);
 
         $worker = new Worker(
             $this->storage,
@@ -81,20 +66,15 @@ class CrashRecoveryTest extends TestCase
             $this->registry,
             null,
             'default',
-            ['lock_file' => null, 'poll_timeout' => 0, 'stuck_job_ttl' => 600]
+            ['lock_file' => null, 'poll_timeout' => 0, 'stuck_job_ttl' => 600, 'stop_when_empty' => true]
         );
 
-        $this->invokeRecoverStaleJobs($worker);
+        self::assertSame(Worker::EXIT_SUCCESS, $worker->run());
 
         $job = $this->storage->find($jobId);
-        $this->assertSame(JobStatus::Pending, $job->status);
-
-        $processed = $worker->processOne();
-        $this->assertTrue($processed);
-
-        $job = $this->storage->find($jobId);
-        $this->assertSame(JobStatus::Completed, $job->status);
-        $this->assertSame(['recovered' => true], $job->result);
+        self::assertNotNull($job);
+        self::assertSame(JobStatus::Completed, $job->status);
+        self::assertSame(['recovered' => true], $job->result);
     }
 
     public function testMultipleStaleJobsRecovery(): void
@@ -119,7 +99,8 @@ class CrashRecoveryTest extends TestCase
 
         foreach ($jobIds as $jobId) {
             $job = $this->storage->find($jobId);
-            $this->assertSame(JobStatus::Running, $job->status);
+            self::assertNotNull($job);
+            self::assertSame(JobStatus::Running, $job->status);
         }
 
         $worker = new Worker(
@@ -128,23 +109,15 @@ class CrashRecoveryTest extends TestCase
             $this->registry,
             null,
             'default',
-            ['lock_file' => null, 'poll_timeout' => 0, 'stuck_job_ttl' => 600]
+            ['lock_file' => null, 'poll_timeout' => 0, 'stuck_job_ttl' => 600, 'stop_when_empty' => true]
         );
 
-        $this->invokeRecoverStaleJobs($worker);
+        self::assertSame(Worker::EXIT_SUCCESS, $worker->run());
 
         foreach ($jobIds as $jobId) {
             $job = $this->storage->find($jobId);
-            $this->assertSame(JobStatus::Pending, $job->status);
-        }
-
-        for ($i = 0; $i < 3; $i++) {
-            $this->assertTrue($worker->processOne());
-        }
-
-        foreach ($jobIds as $jobId) {
-            $job = $this->storage->find($jobId);
-            $this->assertSame(JobStatus::Completed, $job->status);
+            self::assertNotNull($job);
+            self::assertSame(JobStatus::Completed, $job->status);
         }
     }
 }

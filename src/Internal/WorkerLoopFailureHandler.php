@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Internal;
 
 use Oeltima\SimpleQueue\Contract\InfrastructureErrorEvent;
+use Oeltima\SimpleQueue\Contract\SleeperInterface;
 use Oeltima\SimpleQueue\Contract\WorkerBackoffEvent;
 use Psr\Log\LoggerInterface;
 
@@ -18,10 +19,12 @@ final class WorkerLoopFailureHandler
     /**
      * @param LoggerInterface $logger Worker logger
      * @param WorkerPolicy $policy Pure worker failure policy
+     * @param SleeperInterface|null $sleeper Deterministic sleep boundary
      */
     public function __construct(
         private readonly LoggerInterface $logger,
-        private readonly WorkerPolicy $policy
+        private readonly WorkerPolicy $policy,
+        private readonly ?SleeperInterface $sleeper = null
     ) {
     }
 
@@ -35,14 +38,6 @@ final class WorkerLoopFailureHandler
      */
     public function handle(\Throwable $exception, int $consecutiveErrors, callable $emit): int
     {
-        if (!$this->policy->isInfrastructureException($exception)) {
-            $this->logger->error('Worker loop encountered an unexpected error', [
-                'error' => $exception->getMessage(),
-            ]);
-            $this->sleep(1.0);
-            return $consecutiveErrors;
-        }
-
         $consecutiveErrors++;
         $delay = $this->policy->backoffDelay($consecutiveErrors);
         $totalDelaySeconds = $delay + (random_int(0, 1000) / 1000.0);
@@ -60,8 +55,13 @@ final class WorkerLoopFailureHandler
 
     private function sleep(float $seconds): void
     {
-        if ($seconds > 0) {
-            usleep((int) ($seconds * 1_000_000));
+        if ($seconds <= 0) {
+            return;
         }
+        if ($this->sleeper !== null) {
+            $this->sleeper->sleep($seconds);
+            return;
+        }
+        usleep((int) ($seconds * 1_000_000));
     }
 }
