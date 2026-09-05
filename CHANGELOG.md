@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-09-05
+
 ### Added
 
 - Added `Exception\IndeterminateStorageOutcomeException` for genuinely uncertain PDO mutations; callers must inspect or reconcile durable state instead of retrying blindly.
