@@ -94,6 +94,8 @@ final class Worker
         }
         $this->eventEmitter = new WorkerEventEmitter($this->logger, $this->options->eventListener);
         $this->jobProcessor = new WorkerJobProcessor(new WorkerJobProcessorDependencies([
+            'progressInterval' => $this->options->progressInterval,
+            'heartbeatInterval' => min($this->options->heartbeatInterval, $this->options->stuckJobTtl / 3.0),
             'storage' => $this->storage,
             'registry' => $this->registry,
             'logger' => $this->logger,

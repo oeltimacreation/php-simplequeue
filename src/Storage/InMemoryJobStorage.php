@@ -44,6 +44,7 @@ class InMemoryJobStorage implements
     JobStorageInterface,
     JobStorageAdminInterface,
     SupportsIdempotentJobCreation,
+    \Oeltima\SimpleQueue\Contract\SupportsClaimInspection,
     SupportsFailedJobAdministration,
     SupportsPendingJobCursor,
     SupportsPendingNotificationCursor,
@@ -358,6 +359,12 @@ class InMemoryJobStorage implements
         $this->releaseClaim($job, $now);
 
         return true;
+    }
+
+    /** @inheritDoc */
+    public function isClaimOwned(ClaimedJob $claim): bool
+    {
+        return $this->ownsClaim($claim);
     }
 
     public function heartbeat(ClaimedJob $claim): bool

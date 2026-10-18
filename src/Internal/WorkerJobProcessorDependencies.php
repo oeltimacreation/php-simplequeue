@@ -19,6 +19,8 @@ final readonly class WorkerJobProcessorDependencies
     public WorkerPolicy $policy;
     public ClockInterface $clock;
     public WorkerEventEmitter $eventEmitter;
+    public float $progressInterval;
+    public float $heartbeatInterval;
 
     /**
      * @param array{
@@ -28,11 +30,15 @@ final readonly class WorkerJobProcessorDependencies
      *     queue: string,
      *     policy: WorkerPolicy,
      *     clock: ClockInterface,
+     *     progressInterval?: float,
+     *     heartbeatInterval?: float,
      *     eventEmitter: WorkerEventEmitter
      * } $dependencies
      */
     public function __construct(array $dependencies)
     {
+        $this->progressInterval = $dependencies['progressInterval'] ?? 0.0;
+        $this->heartbeatInterval = $dependencies['heartbeatInterval'] ?? 15.0;
         $this->storage = $dependencies['storage'];
         $this->registry = $dependencies['registry'];
         $this->logger = $dependencies['logger'];

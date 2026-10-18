@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added cooperative middleware progress, heartbeat and ownership controls with opt-in progress coalescing.
 - Added optional PDO transaction participants for atomic job/reference/outbox writes, including stale recovery.
 - Added `JobNotificationException` with known created IDs and queue details when storage succeeds but notification is uncertain.
 

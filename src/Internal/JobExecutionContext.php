@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue\Internal;
 
-use Oeltima\SimpleQueue\Contract\JobContextInterface;
+use Oeltima\SimpleQueue\Contract\ControlledJobContextInterface;
 use Oeltima\SimpleQueue\Contract\JobData;
 
 /**
  * Default worker-owned implementation of the middleware execution context.
  */
-final class JobExecutionContext implements JobContextInterface
+final class JobExecutionContext implements ControlledJobContextInterface
 {
     private bool $proceeded = false;
 
@@ -20,7 +20,8 @@ final class JobExecutionContext implements JobContextInterface
      */
     public function __construct(
         private readonly JobData $job,
-        private readonly \Closure $continuation
+        private readonly \Closure $continuation,
+        private readonly ?WorkerExecutionControl $control = null
     ) {
     }
 
@@ -62,6 +63,29 @@ final class JobExecutionContext implements JobContextInterface
     public function getAttempts(): int
     {
         return $this->job->attempts + 1;
+    }
+
+    /** @inheritDoc */
+    public function reportProgress(int $percent, ?string $message = null): void
+    {
+        $this->executionControl()->reportProgress($percent, $message);
+    }
+
+    /** @inheritDoc */
+    public function heartbeat(): void
+    {
+        $this->executionControl()->heartbeat();
+    }
+
+    /** @inheritDoc */
+    public function assertOwnership(): void
+    {
+        $this->executionControl()->assertOwnership();
+    }
+
+    private function executionControl(): WorkerExecutionControl
+    {
+        return $this->control ?? throw new \LogicException('Execution controls require a worker-owned context');
     }
 
     /**

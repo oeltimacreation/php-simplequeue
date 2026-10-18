@@ -26,8 +26,15 @@ final readonly class WorkerOptions
         public float $recoveryInterval = 60.0,
         public mixed $eventListener = null,
         public bool $lockingEnabled = true,
-        public ?SleeperInterface $sleeper = null
+        public ?SleeperInterface $sleeper = null,
+        public float $progressInterval = 0.0,
+        public float $heartbeatInterval = 15.0
     ) {
+        self::assertFiniteNonNegative($progressInterval, 'Worker progress interval');
+        self::assertFiniteNonNegative($heartbeatInterval, 'Worker heartbeat interval');
+        if ($heartbeatInterval <= 0) {
+            throw new \InvalidArgumentException('Worker heartbeat interval must be positive');
+        }
         self::validateTiming($pollTimeout, $stuckJobTtl, $retryBaseDelay, $retryMaxDelay);
         self::validateLimits($maxJobs, $maxTime, $memoryLimit);
         self::validateIntervals($promoteInterval, $recoveryInterval);
@@ -129,7 +136,9 @@ final readonly class WorkerOptions
             recoveryInterval: self::decimalOption($options, 'recovery_interval', 60.0),
             eventListener: self::strictListener($options),
             lockingEnabled: $lockingEnabled,
-            sleeper: self::sleeper($options)
+            sleeper: self::sleeper($options),
+            progressInterval: self::decimalOption($options, 'progress_interval', 0.0),
+            heartbeatInterval: self::decimalOption($options, 'heartbeat_interval', 15.0)
         );
     }
 

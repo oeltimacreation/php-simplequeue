@@ -64,6 +64,7 @@ class PdoJobStorage implements
     JobStorageInterface,
     JobStorageAdminInterface,
     SupportsIdempotentJobCreation,
+    \Oeltima\SimpleQueue\Contract\SupportsClaimInspection,
     SupportsFailedJobAdministration,
     SupportsPendingJobCursor,
     SupportsPendingNotificationCursor,
@@ -856,6 +857,12 @@ class PdoJobStorage implements
         ]);
 
         return $stmt->rowCount() > 0;
+    }
+
+    /** @inheritDoc */
+    public function isClaimOwned(ClaimedJob $claim): bool
+    {
+        return $this->claimStillOwned($claim);
     }
 
     public function heartbeat(ClaimedJob $claim): bool

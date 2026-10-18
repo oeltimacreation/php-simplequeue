@@ -25,7 +25,8 @@ final class JobMiddlewareRunner
         array $middlewares,
         ClaimedJob $claim,
         JobHandlerInterface $handler,
-        callable $progressCallback
+        callable $progressCallback,
+        ?WorkerExecutionControl $control = null
     ): mixed {
         if ($middlewares === []) {
             return $handler->handle($claim->job->id, $claim->job->payload, $progressCallback);
@@ -37,8 +38,8 @@ final class JobMiddlewareRunner
 
         foreach (array_reverse($middlewares) as $middleware) {
             $continuation = $next;
-            $next = static function () use ($claim, $middleware, $continuation): mixed {
-                $context = new JobExecutionContext($claim->job, $continuation);
+            $next = static function () use ($claim, $middleware, $continuation, $control): mixed {
+                $context = new JobExecutionContext($claim->job, $continuation, $control);
 
                 return $middleware->process($context);
             };
