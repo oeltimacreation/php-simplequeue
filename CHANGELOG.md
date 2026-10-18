@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Prevented corrupt payload/result JSON from blocking stale-job recovery and reduced recovery memory by reading only job identities.
+
+### Changed
+
+- Reduced transactional claim reads by fetching the full job only after the guarded claim update.
+
 ## [1.11.0] - 2026-09-05
 
 ### Added

@@ -1241,7 +1241,7 @@ class PdoJobStorage implements
     private function claimSelection(array $context): array
     {
         if ($context['id'] !== null) {
-            $selectSql = "SELECT * FROM {$this->table}
+            $selectSql = "SELECT id FROM {$this->table}
                 WHERE id = :id
                 AND (
                     (status = 'pending' AND available_at <= :now)
@@ -1254,7 +1254,7 @@ class PdoJobStorage implements
                 'worker_id' => $context['workerId'],
             ];
         } else {
-            $selectSql = "SELECT * FROM {$this->table}
+            $selectSql = "SELECT id FROM {$this->table}
                 WHERE status = 'pending'
                 AND queue = :queue
                 AND available_at <= :now

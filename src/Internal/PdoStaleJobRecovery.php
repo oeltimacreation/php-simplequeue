@@ -118,7 +118,8 @@ final readonly class PdoStaleJobRecovery
 
     private function staleRowsSql(): string
     {
-        return "SELECT * FROM {$this->table} WHERE queue = :queue AND status = 'running' " .
+        return "SELECT id FROM {$this->table} WHERE queue = :queue AND status = 'running' " .
+            'AND attempts >= 0 AND max_attempts >= 1 ' .
             'AND (locked_at IS NULL OR locked_at < :threshold) ' .
             'ORDER BY CASE WHEN locked_at IS NULL THEN 0 ELSE 1 END, locked_at ASC, id ASC LIMIT :limit';
     }
@@ -131,56 +132,41 @@ final readonly class PdoStaleJobRecovery
     {
         $recovered = 0;
         foreach ($rows as $row) {
-            $recovered += $this->recoverRow(JobDataHydrator::hydrateStrict($row), $context);
+            $id = $row['id'] ?? null;
+            if (!is_int($id) && !(is_string($id) && ctype_digit($id))) {
+                continue;
+            }
+            $changed = ($this->mutate)([
+                'sql' => $this->recoverRowSql(),
+                'params' => [
+                    'id' => (int) $id,
+                    'threshold' => $context['threshold'],
+                    'error_message' => $context['error'],
+                    'completed_at' => $context['now'],
+                    'available_at' => $context['now'],
+                    'updated_at' => $context['now'],
+                ],
+                'operation' => 'recoverStaleJobsForQueue',
+            ]);
+            $recovered += $changed->rowCount();
         }
         return $recovered;
     }
 
-    /** @param array{now: string, threshold: string, error: string} $context */
-    private function recoverRow(\Oeltima\SimpleQueue\Contract\JobData $job, array $context): int
+    private function recoverRowSql(): string
     {
-        $terminal = !RetryDecision::forAttempt($job->attempts + 1, $job->maxAttempts)->shouldRetry();
-        $changed = ($this->mutate)([
-            'sql' => $this->recoverRowSql($terminal),
-            'params' => $this->recoverRowParams($job, $context, $terminal),
-            'operation' => 'recoverStaleJobsForQueue',
-        ]);
-        return $changed->rowCount();
-    }
-
-    private function recoverRowSql(bool $terminal): string
-    {
-        $reset = $terminal
-            ? 'completed_at = :completed_at,'
-            : 'result = NULL, completed_at = NULL, progress = NULL, progress_message = NULL,';
-        return "UPDATE {$this->table} SET status = :status, attempts = :attempts,
-            error_message = :error_message, {$reset} available_at = :available_at,
-            locked_by = NULL, locked_at = NULL, lease_token = NULL, updated_at = :updated_at
-            WHERE id = :id AND status = 'running'
+        // Evaluate terminality before incrementing attempts (MySQL assignments run left to right).
+        $terminal = 'attempts + 1 >= max_attempts';
+        return "UPDATE {$this->table} SET
+            status = CASE WHEN {$terminal} THEN 'failed' ELSE 'pending' END,
+            completed_at = CASE WHEN {$terminal} THEN COALESCE(:completed_at, completed_at) ELSE NULL END,
+            result = CASE WHEN {$terminal} THEN result ELSE NULL END,
+            progress = CASE WHEN {$terminal} THEN progress ELSE NULL END,
+            progress_message = CASE WHEN {$terminal} THEN progress_message ELSE NULL END,
+            error_message = :error_message, available_at = :available_at,
+            locked_by = NULL, locked_at = NULL, lease_token = NULL, updated_at = :updated_at,
+            attempts = attempts + 1
+            WHERE id = :id AND status = 'running' AND attempts >= 0 AND max_attempts >= 1
             AND (locked_at IS NULL OR locked_at < :threshold)";
-    }
-
-    /**
-     * @param array{now: string, threshold: string, error: string} $context
-     * @return array<string, mixed>
-     */
-    private function recoverRowParams(
-        \Oeltima\SimpleQueue\Contract\JobData $job,
-        array $context,
-        bool $terminal
-    ): array {
-        $params = [
-            'status' => $terminal ? 'failed' : 'pending',
-            'attempts' => $job->attempts + 1,
-            'error_message' => $context['error'],
-            'available_at' => $context['now'],
-            'updated_at' => $context['now'],
-            'id' => $job->id,
-            'threshold' => $context['threshold'],
-        ];
-        if ($terminal) {
-            $params['completed_at'] = $context['now'];
-        }
-        return $params;
     }
 }
