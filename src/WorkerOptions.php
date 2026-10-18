@@ -122,6 +122,18 @@ final readonly class WorkerOptions
         }
     }
 
+    /**
+     * Convert an application byte setting into the worker's MiB unit, rounding up.
+     *
+     * @param int $bytes Byte limit; zero disables recycling by memory
+     * @return int MiB limit without an intermediate overflowing addition
+     */
+    public static function memoryMiBFromBytes(int $bytes): int
+    {
+        self::assertNonNegative($bytes, 'Worker memory bytes');
+        return intdiv($bytes, 1048576) + ($bytes % 1048576 === 0 ? 0 : 1);
+    }
+
     /** @param array<string, mixed> $options */
     public static function fromArray(array $options): self
     {
