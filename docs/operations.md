@@ -275,3 +275,10 @@ Use one maintenance owner per queue, or coordinate owners in the application
 scheduler. Multiple maintainers are safe under fencing/at-least-once delivery but
 can repeat scans and notifications. Measure cursor coverage time and delayed-job
 lag rather than equating a short pass with prompt repair of an entire backlog.
+
+Scoped stale recovery filters invalid retry metadata (`attempts < 0` or
+`max_attempts < 1`) before selecting a bounded page and rechecks it at mutation
+time. Such rows remain untouched so they cannot repeatedly displace valid rows.
+Monitor stale running rows with invalid counts separately in the application;
+repair their metadata through an audited operator workflow. Recovery deliberately
+does not decode payload/result JSON or rewrite malformed bodies.

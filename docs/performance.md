@@ -478,3 +478,17 @@ compact queries, sampled telemetry, blocking dequeue, and real reconciliation
 distributions. Its deterministic gates measure SQL executions and fetched JSON
 bytes as well as roundtrips. Claims retain three executions and one transaction;
 recovery and compact queries fetch no payload/result bytes.
+
+The same local PHP/SQLite environment compared ten-row small-value (32 bytes)
+and large-value (1 MiB) fixtures over five samples, with setup excluded. The
+v1.11.0 and candidate runs used the same execution/JSON-byte instrumentation.
+The large-value results were:
+
+| Operation, ten rows | Baseline median | Candidate median | Baseline fetched JSON | Candidate fetched JSON | SQL executions |
+|---|---:|---:|---:|---:|---:|
+| Claim | 18.209 ms | 14.832 ms | 20,971,760 B | 10,485,880 B | 30 in both |
+| Scoped stale recovery | 26.672 ms | 3.772 ms | 10,485,880 B | 0 B | 11 in both |
+
+Peak incremental PHP memory in that recovery fixture fell from 11,606,168 B to
+14,088 B. SQLite may still copy large records internally; zero fetched JSON
+measures the PHP-facing projection rather than total database engine I/O.
