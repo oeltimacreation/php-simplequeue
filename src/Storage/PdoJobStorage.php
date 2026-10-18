@@ -64,6 +64,7 @@ class PdoJobStorage implements
     JobStorageInterface,
     JobStorageAdminInterface,
     SupportsIdempotentJobCreation,
+    \Oeltima\SimpleQueue\Contract\SupportsIdempotentBatchCreation,
     \Oeltima\SimpleQueue\Contract\SupportsClaimInspection,
     SupportsFailedJobAdministration,
     SupportsPendingJobCursor,
@@ -723,6 +724,24 @@ class PdoJobStorage implements
      * @param string $workerId Worker identifier
      * @return ClaimedJob|null Claimed job or null when no job is available
      */
+    /**
+     * @param array<int, JobDefinitionShape> $jobs Definitions with request IDs
+     * @return list<IdempotentJobResult> Input-ordered atomic outcomes
+     */
+    public function createIdempotentJobs(array $jobs): array
+    {
+        $jobs = \Oeltima\SimpleQueue\Internal\IdempotentBatch::validate($jobs, $this->clock());
+        if ($jobs === []) {
+            return [];
+        }
+        $batch = new \Oeltima\SimpleQueue\Internal\PdoIdempotentBatch($this->table);
+        return $this->withMutation('createIdempotentJobs', fn (PDO $pdo): array => $batch->create(
+            $pdo,
+            $jobs,
+            fn (array $missing): array => array_values($this->createJobs($missing))
+        ));
+    }
+
     public function claimNextAvailable(string $queue, string $workerId): ?ClaimedJob
     {
         return $this->claimJob($queue, null, $workerId);

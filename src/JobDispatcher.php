@@ -211,6 +211,61 @@ final class JobDispatcher
     }
 
     /**
+     * Dispatch an atomic batch with per-job active-request deduplication.
+     *
+     * @param array<int, JobDefinitionShape> $jobs Definitions with request IDs
+     * @return list<\Oeltima\SimpleQueue\Contract\IdempotentJobResult> Ordered outcomes
+     */
+    public function dispatchIdempotentBatch(array $jobs): array
+    {
+        if (!$this->storage instanceof \Oeltima\SimpleQueue\Contract\SupportsIdempotentBatchCreation) {
+            throw new \LogicException('Storage does not support atomic idempotent batches');
+        }
+        $jobs = \Oeltima\SimpleQueue\Internal\IdempotentBatch::validate($jobs, $this->clock);
+        foreach ($jobs as &$job) {
+            $job['availableAt'] = $this->resolveAvailableAt($job['availableAt'] ?? null);
+            $this->preflightScheduledDispatch($job['availableAt']);
+        }
+        unset($job);
+        $results = $this->storage->createIdempotentJobs($jobs);
+        $groups = [];
+        $notifications = [];
+        foreach ($results as $index => $result) {
+            if (!$result->created) {
+                continue;
+            }
+            $queue = $jobs[$index]['queue'] ?? 'default';
+            $at = $this->resolveAvailableAt($jobs[$index]['availableAt'] ?? null);
+            $key = serialize([$queue, $at]);
+            $groups[$key] ??= ['queue' => $queue, 'at' => $at, 'ids' => []];
+            $groups[$key]['ids'][] = $result->jobId;
+            $notifications[] = ['jobId' => $result->jobId, 'queue' => $queue, 'availableAt' => $at];
+        }
+        foreach ($groups as $group) {
+            try {
+                if ($group['at'] === null) {
+                    $this->notifyBatch($group['queue'], $group['ids']);
+                } else {
+                    $this->queueManager->enqueueDelayedBatch(new DelayedBatch(
+                        $group['ids'],
+                        $group['queue'],
+                        $group['at']
+                    ));
+                }
+            } catch (\Throwable $exception) {
+                throw new JobNotificationException(
+                    array_column($notifications, 'jobId'),
+                    $group['queue'],
+                    $group['at'],
+                    $exception,
+                    $notifications
+                );
+            }
+        }
+        return $results;
+    }
+
+    /**
      * Get the status of a job.
      *
      * @param int $jobId Job identifier

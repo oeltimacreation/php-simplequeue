@@ -153,3 +153,37 @@ The chosen check cadence determines cancellation detection latency.
 A zero poll timeout with `stop_when_empty = false` repeatedly probes an empty
 queue without sleeping. Prefer a positive blocking timeout for a daemon; custom
 `processOne()` loops should sleep through an application-owned sleeper when empty.
+
+## Idempotent bulk dispatch
+
+`dispatchIdempotentBatch()` accepts full definitions with a `requestId` per job:
+
+```php
+$outcomes = $dispatcher->dispatchIdempotentBatch([
+    ['type' => 'report.generate', 'payload' => ['id' => 10], 'requestId' => 'report:10'],
+    ['type' => 'report.generate', 'payload' => ['id' => 11], 'requestId' => 'report:11'],
+]);
+$jobId = $outcomes[0]->jobId;
+$created = $outcomes[0]->created;
+```
+
+Results preserve input order. Repeated keys create once; existing active keys
+return their original IDs without changing payloads or sending notifications.
+Request IDs share the storage's active namespace across job types and queues.
+Definitions can set `queue`, `maxAttempts` and `availableAt`; future availability
+requires a scheduling-capable driver before any mutation occurs.
+
+The optional `SupportsIdempotentBatchCreation` capability is implemented by both
+built-in stores. Unsupported storage rejects this API before creating jobs. All
+input validates before one atomic logical batch; PDO uses bounded SQL chunks
+and retains caller-owned transactions. Normal uncontended requests batch active
+lookups and inserts. Unique-key races/collation aliases use a transactional
+fallback with exact IDs, rather than guessing an auto-increment sequence.
+
+Only newly created jobs are notified, grouped by queue and availability. Queue
+notification is separate from storage atomicity: `JobNotificationException`
+contains all known created IDs and, for mixed batches, `notifications` metadata
+with each stored queue and availability. Its primary queue identifies the group
+that failed; earlier groups may already be notified and later groups unattempted.
+Use bounded reconciliation and retain referenced input rather than inserting the
+batch again. Uncertain database commits retain their separate exception type.

@@ -44,12 +44,15 @@ class InMemoryJobStorage implements
     JobStorageInterface,
     JobStorageAdminInterface,
     SupportsIdempotentJobCreation,
+    \Oeltima\SimpleQueue\Contract\SupportsIdempotentBatchCreation,
     \Oeltima\SimpleQueue\Contract\SupportsClaimInspection,
     SupportsFailedJobAdministration,
     SupportsPendingJobCursor,
     SupportsPendingNotificationCursor,
     SupportsQueueScopedStaleRecovery
 {
+    use \Oeltima\SimpleQueue\Internal\InMemoryIdempotentBatches;
+
     /** @var array<int, StoredJobRow> */
     private array $jobs = [];
     private int $nextId = 1;

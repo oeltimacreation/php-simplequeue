@@ -17,12 +17,14 @@ final class JobNotificationException extends QueueException
      * @param string $queue Stored notification queue
      * @param int|null $availableAt Scheduled availability, or null for immediate work
      * @param \Throwable $previous Original notification failure
+     * @param list<array{jobId: int, queue: string, availableAt: int|null}> $notifications Created notification metadata
      */
     public function __construct(
         public readonly array $jobIds,
         public readonly string $queue,
         public readonly ?int $availableAt,
-        \Throwable $previous
+        \Throwable $previous,
+        public readonly array $notifications = []
     ) {
         parent::__construct(
             'Job storage acknowledged creation but queue notification is uncertain: ' . $previous->getMessage(),

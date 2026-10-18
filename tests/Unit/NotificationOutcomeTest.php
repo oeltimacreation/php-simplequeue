@@ -52,4 +52,23 @@ final class NotificationOutcomeTest extends TestCase
             self::assertSame(3, $storage->count());
         }
     }
+
+    public function testMixedIdempotentBatchFailureCarriesEveryStoredNotification(): void
+    {
+        $storage = new InMemoryJobStorage();
+        $driver = $this->createMock(QueueDriverInterface::class);
+        $driver->method('enqueue')->willThrowException(new \RuntimeException('Unavailable'));
+        try {
+            (new JobDispatcher($storage, new QueueManager($driver)))->dispatchIdempotentBatch([
+                ['type' => 'test', 'payload' => [], 'queue' => 'first', 'requestId' => 'one'],
+                ['type' => 'test', 'payload' => [], 'queue' => 'second', 'requestId' => 'two'],
+            ]);
+            self::fail('Expected notification uncertainty');
+        } catch (JobNotificationException $exception) {
+            self::assertSame([1, 2], $exception->jobIds);
+            self::assertSame(['first', 'second'], array_column($exception->notifications, 'queue'));
+            self::assertSame('first', $exception->queue);
+            self::assertSame(2, $storage->count());
+        }
+    }
 }
