@@ -28,8 +28,16 @@ final readonly class WorkerOptions
         public bool $lockingEnabled = true,
         public ?SleeperInterface $sleeper = null,
         public float $progressInterval = 0.0,
-        public float $heartbeatInterval = 15.0
+        public float $heartbeatInterval = 15.0,
+        public int $recoveryLimit = 100,
+        public int $reconcilePageSize = 100,
+        public int $membershipScanLimit = 250,
+        public float $reconcileMaxDuration = 1.0
     ) {
+        new ReconcileOptions(null, $reconcilePageSize, $membershipScanLimit, $reconcileMaxDuration);
+        if ($recoveryLimit < 1 || $recoveryLimit > 10000) {
+            throw new \InvalidArgumentException('Worker recovery limit must be between 1 and 10000');
+        }
         self::assertFiniteNonNegative($progressInterval, 'Worker progress interval');
         self::assertFiniteNonNegative($heartbeatInterval, 'Worker heartbeat interval');
         if ($heartbeatInterval <= 0) {
@@ -138,7 +146,11 @@ final readonly class WorkerOptions
             lockingEnabled: $lockingEnabled,
             sleeper: self::sleeper($options),
             progressInterval: self::decimalOption($options, 'progress_interval', 0.0),
-            heartbeatInterval: self::decimalOption($options, 'heartbeat_interval', 15.0)
+            heartbeatInterval: self::decimalOption($options, 'heartbeat_interval', 15.0),
+            recoveryLimit: self::integerOption($options, 'recovery_limit', 100),
+            reconcilePageSize: self::integerOption($options, 'reconcile_page_size', 100),
+            membershipScanLimit: self::integerOption($options, 'membership_scan_limit', 250),
+            reconcileMaxDuration: self::decimalOption($options, 'reconcile_max_duration', 1.0)
         );
     }
 

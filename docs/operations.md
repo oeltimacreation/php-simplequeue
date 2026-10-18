@@ -247,3 +247,31 @@ Keep tenant/client authorization and additional application filters in the
 application adapter. The general queue query interface is not an authorization
 boundary or an unrestricted dynamic-column filter API. Existing `find()` and
 full-job offset listing retain their behavior.
+
+## Independent maintenance for long-running work
+
+Run `QueueMaintenance` in an application-owned process when every worker can be
+occupied by long jobs. `examples/redis/maintenance.php` shows a supervised loop.
+Each `run($queue, new MaintenanceOptions(), $cursor)` promotes delayed jobs,
+recovers stale rows/notifications and reconciles one page, in that order. Retain
+`MaintenanceResult::nextCursor` between passes; persist it externally if the
+maintenance process must resume its position after restart.
+
+Bounds cover promotion/recovery counts, page size, membership window and a
+cooperative time deadline. A running database/Redis command cannot be interrupted
+by that deadline. Results expose elapsed time, phase flags and reconciliation
+counts; a deferred phase preserves the caller cursor. `recovered` counts durable
+rows plus notifications and may count the same logical job in both layers.
+Standalone `run()` requires queue-scoped stale-recovery capability and rejects
+legacy global-only storage; Worker retains its legacy fallback.
+
+Workers delegate the same maintenance operations and retain existing intervals.
+Additional typed options are `recoveryLimit`, `reconcilePageSize`,
+`membershipScanLimit` and `reconcileMaxDuration` (array forms use snake_case).
+Defaults remain 100 stale rows, a 100-row page, a 250-entry membership window and
+one second. `processOne()` retains promotion-only maintenance semantics.
+
+Use one maintenance owner per queue, or coordinate owners in the application
+scheduler. Multiple maintainers are safe under fencing/at-least-once delivery but
+can repeat scans and notifications. Measure cursor coverage time and delayed-job
+lag rather than equating a short pass with prompt repair of an entire backlog.

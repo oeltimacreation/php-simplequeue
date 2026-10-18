@@ -10,13 +10,8 @@ use Oeltima\SimpleQueue\Contract\JobClaimedEvent;
 use Oeltima\SimpleQueue\Contract\JobStorageInterface;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Contract\SleeperInterface;
-use Oeltima\SimpleQueue\Contract\SupportsBoundedQueueMembership;
 use Oeltima\SimpleQueue\Contract\SupportsClaimedDequeue;
 use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
-use Oeltima\SimpleQueue\Contract\SupportsPendingJobCursor;
-use Oeltima\SimpleQueue\Contract\SupportsPendingNotificationCursor;
-use Oeltima\SimpleQueue\Contract\SupportsQueueScopedStaleRecovery;
-use Oeltima\SimpleQueue\Contract\SupportsStaleRecovery;
 use Oeltima\SimpleQueue\Contract\SupportsTimeoutValidation;
 use Oeltima\SimpleQueue\Contract\SupportsWorkerAwareClaimedDequeue;
 use Oeltima\SimpleQueue\Contract\SupportsWorkerId;
@@ -49,6 +44,7 @@ final class Worker
     private readonly ClockInterface $clock;
     private readonly SleeperInterface $sleeper;
     private readonly WorkerPolicy $policy;
+    private readonly QueueMaintenance $maintenance;
     private readonly WorkerEventEmitter $eventEmitter;
     private readonly WorkerJobProcessor $jobProcessor;
     private readonly WorkerLoopFailureHandler $loopFailureHandler;
@@ -88,6 +84,7 @@ final class Worker
         $this->policy = new WorkerPolicy($this->options->retryBaseDelay, $this->options->retryMaxDelay);
         $this->clock = $this->options->clock ?? new SystemClock();
         $this->sleeper = $this->options->sleeper ?? new SystemSleeper();
+        $this->maintenance = new QueueMaintenance($this->storage, $driver, $this->clock);
         $this->loopFailureHandler = new WorkerLoopFailureHandler($this->logger, $this->policy, $this->sleeper);
         if ($driver instanceof SupportsTimeoutValidation) {
             $driver->validateTimeout($this->options->pollTimeout);
@@ -480,22 +477,13 @@ final class Worker
 
     private function promoteDelayedJobs(): void
     {
-        $driver = $this->queueManager->driver();
-        if ($driver instanceof SupportsDelayedJobs) {
-            $driver->promoteDelayedJobs($this->queue, $this->options->promoteLimit);
-        }
+        $this->maintenance->promote($this->queue, $this->options->promoteLimit);
     }
 
     private function recoverStaleJobs(): void
     {
         $ttl = $this->options->stuckJobTtl;
-        $recovered = $this->storage instanceof SupportsQueueScopedStaleRecovery
-            ? $this->storage->recoverStaleJobsForQueue($this->queue, $ttl, 100)
-            : $this->storage->recoverStaleJobs($ttl);
-        $driver = $this->queueManager->driver();
-        if ($driver instanceof SupportsStaleRecovery) {
-            $recovered += $driver->recoverStaleProcessing($this->queue, $ttl);
-        }
+        $recovered = $this->maintenance->recover($this->queue, $ttl, $this->options->recoveryLimit);
         if ($recovered > 0) {
             $this->logger->warning('Recovered stale jobs', ['count' => $recovered, 'ttl_seconds' => $ttl]);
         }
@@ -503,19 +491,15 @@ final class Worker
 
     private function reconcileDbAndRedis(): void
     {
-        $driver = $this->queueManager->driver();
-        $storage = $this->storage;
-        if (!$driver instanceof SupportsBoundedQueueMembership) {
+        $result = $this->maintenance->reconcile($this->queue, new ReconcileOptions(
+            cursor: $this->reconcileCursor,
+            pageSize: $this->options->reconcilePageSize,
+            membershipScanLimit: $this->options->membershipScanLimit,
+            maxDurationSeconds: $this->options->reconcileMaxDuration
+        ));
+        if ($result === null) {
             return;
         }
-        if (!$storage instanceof SupportsPendingNotificationCursor && !$storage instanceof SupportsPendingJobCursor) {
-            return;
-        }
-
-        $result = (new QueueReconciler($storage, $driver, $this->clock))->reconcile(
-            $this->queue,
-            new ReconcileOptions(cursor: $this->reconcileCursor)
-        );
         $this->reconcileCursor = $result->nextCursor;
         $this->logger->info('Bounded DB-Redis reconciliation completed', [
             'scanned' => $result->scanned,

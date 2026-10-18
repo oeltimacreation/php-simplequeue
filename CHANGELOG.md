@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added independently runnable bounded queue maintenance with explicit cursors and configurable worker recovery/reconciliation budgets.
 - Added compact job summaries, keyset pagination, ordered multi-ID reads and grouped status counts without payload/result hydration.
 - Added atomic idempotent batch dispatch with per-job request IDs, ordered outcomes and grouped notifications.
 - Added queue-statistics snapshots and a bounded sampler to avoid per-event Redis count roundtrips.
