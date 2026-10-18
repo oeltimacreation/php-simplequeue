@@ -9,6 +9,11 @@ use Predis\Client;
 function redisBenchmarks(BenchmarkOptions $options): array
 {
     return [
+        redisReconciliationBenchmark($options, 'all_hit'),
+        redisReconciliationBenchmark($options, 'all_miss'),
+        redisReconciliationBenchmark($options, 'mixed'),
+        redisSampledStatisticsBenchmark($options),
+        redisBlockingDequeueBenchmark($options),
         redisBatchBenchmark($options),
         redisScheduledBenchmark($options, 'single'),
         redisScheduledBenchmark($options, 'batch'),

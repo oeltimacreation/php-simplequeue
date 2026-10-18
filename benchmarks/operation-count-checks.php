@@ -182,6 +182,56 @@ function operationBudgetDefinitions(): array
         'read maintenance: no transaction'
     );
 
+    foreach (['small', 'large'] as $size) {
+        $add(
+            'sqlite.claim_payload_' . $size,
+            'median_db_executions',
+            'exact-per',
+            [3, 0, 1],
+            'statements: ID claim and authoritative read'
+        );
+        foreach (['recover', 'compact'] as $operation) {
+            $add(
+                'sqlite.' . $operation . '_payload_' . $size,
+                'median_db_fetched_json_bytes',
+                'exact-fixed',
+                [0, 0, 1],
+                'projection: no payload or result'
+            );
+        }
+    }
+    $add(
+        'sqlite.idempotent_batch',
+        'median_db_executions',
+        'maximum-chunk',
+        [3, 6, 100],
+        'batch: chunk-based creation and duplicate lookup'
+    );
+    foreach (['all_hit', 'all_miss', 'mixed'] as $distribution) {
+        $add(
+            'redis.reconcile.' . $distribution,
+            'median_redis_roundtrips',
+            'exact-fixed',
+            [0, 1, 1],
+            'Lua: one atomic page'
+        );
+    }
+    $add(
+        'redis.sampled_statistics',
+        'median_redis_roundtrips',
+        'exact-fixed',
+        [0, 1, 1],
+        'pipeline: one snapshot per interval'
+    );
+    $add(
+        'redis.sampled_statistics',
+        'median_redis_commands',
+        'exact-fixed',
+        [0, 3, 1],
+        'statistics: three counts per snapshot'
+    );
+    $add('redis.dequeue_blocking_ack', 'median_redis_roundtrips', 'exact-per', [3, 0, 1], 'blocking: move, score, ACK');
+
     $add('redis.dispatch_scheduled_single', 'median_redis_roundtrips', 'maximum-per', [1, 0, 1], 'ZADD: one per job');
     $add('redis.dispatch_scheduled_batch', 'median_redis_roundtrips', 'exact-fixed', [0, 1, 1], 'ZADD: one per batch');
     $add('redis.promote_delayed', 'median_redis_roundtrips', 'maximum-fixed', [0, 1, 1], 'Lua: one promotion');

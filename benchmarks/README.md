@@ -52,3 +52,16 @@ SQL reports retain the historical `db_queries` prepare/exec counter for existing
 budgets and additionally report `db_prepares`, `db_executions` (including direct
 queries), and `db_fetched_json_bytes`. Reusing a prepared statement therefore
 never hides its executions. Transaction-control calls are counted separately.
+
+The candidate workloads also measure atomic idempotent batch creation followed
+by an identical submission, claims/recovery/compact reads with 32-byte and 1 MiB
+payload values, sampled Redis statistics, positive-timeout blocking dequeue,
+and real Redis all-hit/all-miss/mixed reconciliation against a 10,000-entry
+backlog. Payload scenarios cap the number of rows at ten to keep the large-value
+profile bounded. Blocking dequeue seeds ready work; it measures the positive
+timeout transport path without including an empty-queue wait. Reconciliation
+pages grow through 10/100/1,000/10,000 in the profile command.
+
+Budgets assert actual claim executions, zero fetched JSON for recovery/compact
+queries, chunk-based idempotent I/O, one statistics pipeline, and one atomic
+reconciliation roundtrip. They do not impose shared-runner timing thresholds.
