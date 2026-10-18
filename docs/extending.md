@@ -146,3 +146,33 @@ available backends, `WorkerEventContractTest` checks every typed event's stable
 payload, and `FailedJobAdminContractTest` compares failed-job transitions across
 in-memory and PDO storage. Run `composer benchmark` when a worker or driver path
 changes; operation-count assertions are part of that command.
+
+## Transactional PDO participation
+
+Pass an optional `PdoJobParticipantInterface` as the final `participant` argument
+to `PdoJobStorage`. `beforeCreate()` receives fully validated original definitions
+inside the insertion transaction. Use it to validate and register immutable input
+references. `afterTransition()` receives the affected ID and storage operation;
+read current state on the supplied PDO connection to record an outbox event or
+link the new job to its input. Single, batch, scheduled and idempotent creation
+use the same participation boundary. An existing idempotent job is not created
+again and produces no creation callback.
+
+Callbacks run before commit on the same connection. Exceptions roll back both
+the job change and application writes. Never commit, roll back, reconnect, send
+HTTP requests, or resolve a different connection inside a participant. Caller
+transactions use savepoints and remain caller-owned. A connection/commit failure
+still raises `IndeterminateStorageOutcomeException`; do not replay it blindly.
+
+Successful ID-scoped mutations, including `fencedUpdate`, `cancel`, failed-job
+administration and `recoverStaleJobsForQueue`, notify the participant only when
+the conditional SQL changes a row. Claims, unchanged updates, losing fences and
+bulk retention pruning produce no callback. Unscoped stale recovery uses bounded
+individual transitions when participation is enabled, so terminal stale jobs
+also produce outbox records. This opt-in path incurs transactional/application
+work; unconfigured storage keeps its existing budgets.
+
+Use the built-in transition logic rather than overriding completion/failure SQL:
+it preserves failed-attempt counts, reset fields, serialization exceptions and
+lease fencing. Deliver the application outbox from a separate process after
+commit. The queue library does not own callback HTTP delivery or input retention.

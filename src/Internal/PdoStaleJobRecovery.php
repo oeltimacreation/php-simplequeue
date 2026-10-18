@@ -58,6 +58,32 @@ final readonly class PdoStaleJobRecovery
         return $failed->rowCount() + $pending->rowCount();
     }
 
+    /** Recover every stale job through bounded individual transitions for participants. */
+    public function recoverIndividually(int $ttlSeconds): int
+    {
+        JobStorageRules::validateStaleRecovery($ttlSeconds, 1);
+        $context = $this->recoveryContext($ttlSeconds);
+        $cursor = 0;
+        $total = 0;
+        do {
+            $rows = ($this->rows)([
+                'sql' => "SELECT id FROM {$this->table} WHERE status = 'running'
+                    AND attempts >= 0 AND max_attempts >= 1 AND id > :after_id
+                    AND (locked_at IS NULL OR locked_at < :threshold) ORDER BY id LIMIT :limit",
+                'params' => ['after_id' => $cursor, 'threshold' => $context['threshold']],
+                'limit' => 100,
+            ]);
+            $total += $this->recoverRows($rows, $context);
+            foreach ($rows as $row) {
+                $id = $row['id'] ?? 0;
+                if (is_int($id) || (is_string($id) && ctype_digit($id))) {
+                    $cursor = max($cursor, (int) $id);
+                }
+            }
+        } while (count($rows) === 100);
+        return $total;
+    }
+
     public function recoverQueue(string $queue, int $ttlSeconds, int $limit): int
     {
         JobStorageRules::validateQueueOrType($queue, 'Queue');

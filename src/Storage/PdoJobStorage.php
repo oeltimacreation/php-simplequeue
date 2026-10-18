@@ -26,6 +26,8 @@ use Oeltima\SimpleQueue\Internal\PdoBatchJobInserter;
 use Oeltima\SimpleQueue\Internal\PdoFailedJobAdministration;
 use Oeltima\SimpleQueue\Internal\PdoStaleJobRecovery;
 use Oeltima\SimpleQueue\SystemClock;
+use Oeltima\SimpleQueue\Contract\PdoJobParticipantInterface;
+use Oeltima\SimpleQueue\Internal\PdoParticipation;
 use PDO;
 use PDOException;
 use PDOStatement;
@@ -77,17 +79,21 @@ class PdoJobStorage implements
 
     private readonly PdoBatchJobInserter $batchInserter;
     private readonly PdoStaleJobRecovery $staleJobRecovery;
+    private readonly ?PdoParticipation $participation;
 
     /**
      * @param PDO|callable $connection PDO instance or factory callable (fn(): PDO)
      * @param string $table Table name for jobs (default: 'background_jobs')
      * @param ClockInterface|null $clock Clock implementation
+     * @param PdoJobParticipantInterface|null $participant Opt-in same-transaction application writes
      */
     public function __construct(
         #[\SensitiveParameter] PDO|callable $connection,
         protected string $table = 'background_jobs',
-        private readonly ?ClockInterface $clock = null
+        private readonly ?ClockInterface $clock = null,
+        ?PdoJobParticipantInterface $participant = null
     ) {
+        $this->participation = $participant === null ? null : new PdoParticipation($participant);
         $this->table = JobStorageRules::validateTableName($table);
         $this->batchInserter = new PdoBatchJobInserter(['table' => $this->table]);
         $this->staleJobRecovery = new PdoStaleJobRecovery([
@@ -270,7 +276,10 @@ class PdoJobStorage implements
      */
     protected function executeMutation(string $sql, array $params, string $operation): PDOStatement
     {
-        return $this->withMutation($operation, function (PDO $pdo) use ($sql, $params): PDOStatement {
+        return $this->withMutation($operation, function (PDO $pdo) use ($sql, $params, $operation): PDOStatement {
+            if ($this->participation !== null && isset($params['id'])) {
+                return $this->participation->execute($pdo, $sql, $params, $operation);
+            }
             $stmt = $this->prepare($pdo, $sql);
             $stmt->execute($params);
             return $stmt;
@@ -401,24 +410,30 @@ class PdoJobStorage implements
             NULL, NULL, :request_id, :created_at, :updated_at
         )";
 
-        return $this->withMutation(
-            'createJob',
-            function (PDO $pdo) use ($sql, $queue, $type, $encodedPayload, $maxAttempts, $requestId, $now): int {
-                $stmt = $this->prepare($pdo, $sql);
-                $stmt->execute([
-                    'queue' => $queue,
-                    'type' => $type,
-                    'payload' => $encodedPayload,
-                    'max_attempts' => $maxAttempts,
-                    'available_at' => $now,
-                    'request_id' => $requestId,
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ]);
+        $insert = function (PDO $pdo) use ($sql, $queue, $type, $encodedPayload, $maxAttempts, $requestId, $now): int {
+            $stmt = $this->prepare($pdo, $sql);
+            $stmt->execute([
+                'queue' => $queue,
+                'type' => $type,
+                'payload' => $encodedPayload,
+                'max_attempts' => $maxAttempts,
+                'available_at' => $now,
+                'request_id' => $requestId,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
 
-                return (int) $pdo->lastInsertId();
-            }
-        );
+            return (int) $pdo->lastInsertId();
+        };
+        if ($this->participation === null) {
+            return $this->withMutation('createJob', $insert);
+        }
+        $definition = compact('type', 'payload', 'queue', 'maxAttempts', 'requestId');
+        return $this->withMutation('createJob', fn (PDO $pdo): int => $this->participation->create(
+            $pdo,
+            [$definition],
+            static fn (): int => $insert($pdo)
+        ));
     }
 
     /**
@@ -447,7 +462,13 @@ class PdoJobStorage implements
 
         return $this->withMutation(
             'createJobs',
-            fn (PDO $pdo): array => $this->insertValidatedJobs($pdo, $validated, $now)
+            fn (PDO $pdo): array => $this->participation === null
+                ? $this->insertValidatedJobs($pdo, $validated, $now)
+                : $this->participation->create(
+                    $pdo,
+                    array_values($jobs),
+                    fn (): array => $this->insertValidatedJobs($pdo, $validated, $now)
+                )
         );
     }
 
@@ -856,7 +877,9 @@ class PdoJobStorage implements
 
     public function recoverStaleJobs(int $ttlSeconds): int
     {
-        return $this->staleJobRecovery->recoverAll($ttlSeconds);
+        return $this->participation === null
+            ? $this->staleJobRecovery->recoverAll($ttlSeconds)
+            : $this->staleJobRecovery->recoverIndividually($ttlSeconds);
     }
 
     public function recoverStaleJobsForQueue(string $queue, int $ttlSeconds, int $limit): int

@@ -45,7 +45,9 @@ final class LeanStorageReadsTest extends TestCase
         $pdo->resetCounts();
         self::assertSame(2, $storage->recoverStaleJobsForQueue('default', 600, 2));
         self::assertSame(0, $pdo->fetchedJsonBytes);
-        self::assertSame(['failed', 'running', 'failed'], $pdo->query('SELECT status FROM background_jobs ORDER BY id')->fetchAll(\PDO::FETCH_COLUMN));
+        $statement = $pdo->query('SELECT status FROM background_jobs ORDER BY id');
+        self::assertNotFalse($statement);
+        self::assertSame(['failed', 'running', 'failed'], $statement->fetchAll(\PDO::FETCH_COLUMN));
         self::assertSame(1, $storage->find(3)?->attempts);
     }
 }
