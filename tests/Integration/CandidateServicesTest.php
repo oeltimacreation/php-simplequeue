@@ -93,6 +93,22 @@ final class CandidateServicesTest extends TestCase
         }
     }
 
+    public function testRealRedisCapsThePendingSnapshotAndAllowsDuplicatesBeyondIt(): void
+    {
+        $clock = new FrozenClock();
+        $driver = RedisFixture::driver('candidate-bound:' . bin2hex(random_bytes(6)), $clock);
+        try {
+            $driver->enqueueBatch('default', range(1, 10001));
+            $times = [1 => $clock->timestamp()];
+            self::assertSame([], $driver->reconcileNotifications('default', $times, $clock->timestamp(), 1000000));
+            self::assertSame(10002, $driver->getPendingCount('default'));
+            self::assertSame([1], $driver->reconcileNotifications('default', $times, $clock->timestamp(), 1000000));
+            self::assertSame(10002, $driver->getPendingCount('default'));
+        } finally {
+            $driver->clear('default');
+        }
+    }
+
     #[DataProvider('databases')]
     public function testConcurrentIdempotentBatchesReturnTheSameWinningIds(string $service): void
     {

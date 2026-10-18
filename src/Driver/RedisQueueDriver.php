@@ -452,14 +452,14 @@ LUA;
     /**
      * Reconcile a page of notifications in one direct EVAL roundtrip.
      *
-     * Inputs are validated in PHP; the script checks bounded pending LPOS
+     * Inputs are validated in PHP; the script snapshots a bounded pending window
      * and exact delayed ZSCORE, restores missing due/future IDs, and returns
      * IDs already present in input order.
      *
      * @param string $queue Queue name
      * @param array<int, int> $availableAtByJobId Job ID => absolute Unix timestamp
      * @param int $now Current absolute Unix timestamp
-     * @param int $pendingScanLimit Maximum pending-list elements inspected per ID
+     * @param int $pendingScanLimit Pending window upper bound (Redis caps it at 10000)
      * @return list<int> IDs already present in pending or delayed notifications
      */
     public function reconcileNotifications(
@@ -559,14 +559,18 @@ LUA;
 local pendingKey = KEYS[1]
 local delayedKey = KEYS[2]
 local now = tonumber(ARGV[1])
-local pendingScanLimit = tonumber(ARGV[2])
+local pendingScanLimit = math.min(tonumber(ARGV[2]), 10000)
 local count = tonumber(ARGV[3])
+local pending = {}
+for _, jobId in ipairs(redis.call('LRANGE', pendingKey, 0, pendingScanLimit - 1)) do
+    pending[jobId] = true
+end
 local present = {}
 for i = 1, count do
     local jobId = ARGV[3 + i]
     local availableAt = tonumber(ARGV[3 + count + i])
     local found = false
-    if redis.call('LPOS', pendingKey, jobId, 'MAXLEN', pendingScanLimit) then
+    if pending[jobId] then
         found = true
     elseif redis.call('ZSCORE', delayedKey, jobId) then
         found = true
@@ -575,6 +579,7 @@ for i = 1, count do
         present[#present + 1] = jobId
     elseif availableAt <= now then
         redis.call('LPUSH', pendingKey, jobId)
+        pending[jobId] = true
     else
         redis.call('ZADD', delayedKey, availableAt, jobId)
     end

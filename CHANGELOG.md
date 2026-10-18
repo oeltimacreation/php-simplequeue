@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Bounded Redis reconciliation to one pending-list snapshot per page, capped at 10,000 entries.
 - Reduced transactional claim reads by fetching the full job only after the guarded claim update.
 
 ## [1.11.0] - 2026-09-05
