@@ -47,3 +47,8 @@ The runner keeps one stable JSON shape for all scenarios. Shared counter
 normalization supplies the database, driver, Redis, and event fields, while
 `benchmarks/operation-count-checks.php` continues to fail a run when a hot-loop
 statement, roundtrip, or event-delivery budget changes.
+
+SQL reports retain the historical `db_queries` prepare/exec counter for existing
+budgets and additionally report `db_prepares`, `db_executions` (including direct
+queries), and `db_fetched_json_bytes`. Reusing a prepared statement therefore
+never hides its executions. Transaction-control calls are counted separately.

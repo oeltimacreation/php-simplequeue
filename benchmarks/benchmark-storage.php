@@ -49,6 +49,9 @@ function databaseCounts(BenchmarkPdo $pdo, array $operation): array
     return [
         'operations' => $operation['operations'],
         'db_queries' => $pdo->queries,
+        'db_executions' => $pdo->executions,
+        'db_prepares' => $pdo->prepares,
+        'db_fetched_json_bytes' => $pdo->fetchedJsonBytes,
         'db_transactions' => $pdo->transactions,
     ];
 }
