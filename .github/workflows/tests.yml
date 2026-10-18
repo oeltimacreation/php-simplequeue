@@ -258,6 +258,13 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/simplequeue-package"
           composer archive --format=zip --dir="$RUNNER_TEMP/simplequeue-package"
+      - name: Verify package excludes internal and generated files
+        run: |
+          unzip -Z -1 "$RUNNER_TEMP/simplequeue-package/"*.zip > "$RUNNER_TEMP/simplequeue-archive-files.txt"
+          if grep -Eq '^(internal_docs|vendor|coverage|build)/|^\.env($|\.)' "$RUNNER_TEMP/simplequeue-archive-files.txt"; then
+            echo 'Package contains internal or generated files' >&2
+            exit 1
+          fi
       - name: Install isolated consumer without development dependencies or Predis
         run: |
           mkdir -p "$RUNNER_TEMP/simplequeue-consumer"
