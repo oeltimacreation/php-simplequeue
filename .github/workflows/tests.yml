@@ -147,6 +147,10 @@ jobs:
           vendor/bin/phpunit --no-coverage
           tests/Unit/StorageTransitionMatrixTest.php
           tests/Integration/FailureInjectionTest.php
+      - name: Locked-row claim distribution
+        run: >-
+          DB_DSN="$MYSQL_DSN" DB_USER="$MYSQL_USER" DB_PASSWORD="$MYSQL_PASSWORD"
+          vendor/bin/phpunit --no-coverage --filter testSkipLockedClaimDistribution tests/Integration/ConcurrencyTest.php
       - name: Candidate database capabilities and concurrent batches
         run: vendor/bin/phpunit --no-coverage --filter "/testIdempotentBatches|testConcurrentIdempotentBatches/" tests/Integration/CandidateServicesTest.php
       - name: Selected real-service storage, batch, and concurrency contracts
@@ -189,6 +193,10 @@ jobs:
           vendor/bin/phpunit --no-coverage
           tests/Unit/StorageTransitionMatrixTest.php
           tests/Integration/FailureInjectionTest.php
+      - name: Locked-row claim distribution
+        run: >-
+          DB_DSN="$POSTGRES_DSN" DB_USER="$POSTGRES_USER" DB_PASSWORD="$POSTGRES_PASSWORD"
+          vendor/bin/phpunit --no-coverage --filter testSkipLockedClaimDistribution tests/Integration/ConcurrencyTest.php
       - name: Candidate database capabilities and concurrent batches
         run: vendor/bin/phpunit --no-coverage --filter "/testIdempotentBatches|testConcurrentIdempotentBatches/" tests/Integration/CandidateServicesTest.php
       - name: Selected real-service storage, batch, and concurrency contracts
