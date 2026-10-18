@@ -40,6 +40,7 @@ final class RedisQueueDriver implements
     SupportsTimeoutValidation,
     SupportsQueueReconciliation,
     QueueStatsInterface,
+    \Oeltima\SimpleQueue\Contract\SupportsQueueStatsSnapshot,
     SupportsJobRemoval,
     SupportsProcessingHeartbeat,
     SupportsBoundedQueueMembership
@@ -365,6 +366,28 @@ LUA;
      * @param string $queue Queue name
      * @return int Number of pending jobs
      */
+    /** @inheritDoc */
+    public function getStatsSnapshot(string $queue): \Oeltima\SimpleQueue\Contract\QueueStatsSnapshot
+    {
+        $pipeline = $this->redis->pipeline();
+        if (is_array($pipeline)) {
+            throw new QueueException('Statistics require an unexecuted pipeline');
+        }
+        $pipeline->llen($this->pendingKey($queue));
+        $pipeline->llen($this->processingKey($queue));
+        $pipeline->zcard($this->delayedKey($queue));
+        $counts = $pipeline->execute();
+        if (!is_array($counts) || count($counts) !== 3) {
+            throw new QueueException('Invalid queue statistics response');
+        }
+        return new \Oeltima\SimpleQueue\Contract\QueueStatsSnapshot(
+            RedisResponseNormalizer::integer($counts[0]),
+            RedisResponseNormalizer::integer($counts[1]),
+            RedisResponseNormalizer::integer($counts[2]),
+            $this->clock->timestamp()
+        );
+    }
+
     public function getPendingCount(string $queue): int
     {
         return $this->redis->llen($this->pendingKey($queue));

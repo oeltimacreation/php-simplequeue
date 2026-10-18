@@ -201,3 +201,29 @@ PostgreSQL 15, and SQLite. Install smoke tests should include database-only
 usage without Predis and existing v1.3 lease-schema/key deployments.
 Keep the compatibility smoke tests and raise coverage through focused tests;
 do not lower quality gates to accommodate unrelated changes.
+
+## Sample queue depth independently of event rate
+
+Construct one `QueueStatsSampler` per observed queue and call `sample()` from
+an event listener. It caches one snapshot for the chosen interval (default five
+seconds). Redis snapshots pipeline three counts in one roundtrip. Older drivers
+implementing only `QueueStatsInterface` use three reads only when a sample is due.
+A snapshot includes `sampledAt`; attach that time/age when logging cached counts.
+Counts across keys are observational, not an atomic view of a job transition.
+
+Always log the original lifecycle event even if sampling fails:
+
+```php
+try {
+    $snapshot = $sampler->sample();
+    $data['queue_depth'] = $snapshot->pending;
+    $data['sampled_at'] = $snapshot->sampledAt;
+} catch (\Throwable $error) {
+    $data['statistics_error'] = $error::class;
+}
+$logger->info($event, $data);
+```
+
+Do not read all three counts on every `claimed` and `completed` event: that adds
+six synchronous Redis roundtrips per successful job. Sampling is opt-in and does
+not alter worker event payloads or require a global metrics publisher.
