@@ -227,3 +227,23 @@ $logger->info($event, $data);
 Do not read all three counts on every `claimed` and `completed` event: that adds
 six synchronous Redis roundtrips per successful job. Sampling is opt-in and does
 not alter worker event payloads or require a global metrics publisher.
+
+## Compact monitoring queries
+
+Built-in storage implements optional `SupportsJobQueries`. `listSummaries()`
+returns `JobSummary` objects ordered by descending ID, with optional status/queue
+filters, exclusive `beforeId`, and a 1–1000 limit. Use the last ID from a page as
+the next cursor. The summary includes identity, status, failed-attempt counts,
+progress/message and creation/update times; request full detail separately when
+payload/result or scheduling/error data is needed.
+
+`findSummaries([id, ...])` accepts at most 1000 positive IDs and returns an
+ID-keyed map in first-requested order. Duplicate IDs collapse and missing IDs are
+omitted. `countByStatus($queue)` reads grouped counts in one query and includes
+zeroes for every status. These queries never read payload/result JSON, so corrupt
+or unusually large job bodies do not prevent status monitoring.
+
+Keep tenant/client authorization and additional application filters in the
+application adapter. The general queue query interface is not an authorization
+boundary or an unrestricted dynamic-column filter API. Existing `find()` and
+full-job offset listing retain their behavior.

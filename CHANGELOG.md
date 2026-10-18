@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added compact job summaries, keyset pagination, ordered multi-ID reads and grouped status counts without payload/result hydration.
 - Added atomic idempotent batch dispatch with per-job request IDs, ordered outcomes and grouped notifications.
 - Added queue-statistics snapshots and a bounded sampler to avoid per-event Redis count roundtrips.
 - Added cooperative middleware progress, heartbeat and ownership controls with opt-in progress coalescing.

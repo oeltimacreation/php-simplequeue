@@ -63,6 +63,7 @@ use PDOStatement;
 class PdoJobStorage implements
     JobStorageInterface,
     JobStorageAdminInterface,
+    \Oeltima\SimpleQueue\Contract\SupportsJobQueries,
     SupportsIdempotentJobCreation,
     \Oeltima\SimpleQueue\Contract\SupportsIdempotentBatchCreation,
     \Oeltima\SimpleQueue\Contract\SupportsClaimInspection,
@@ -72,6 +73,7 @@ class PdoJobStorage implements
     SupportsQueueScopedStaleRecovery
 {
     use PdoFailedJobAdministration;
+    use \Oeltima\SimpleQueue\Internal\PdoJobQueries;
 
     protected ?PDO $pdo = null;
     /** @var callable(): PDO|null Factory function to create PDO connection */

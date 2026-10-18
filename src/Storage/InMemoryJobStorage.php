@@ -43,6 +43,7 @@ use Oeltima\SimpleQueue\SystemClock;
 class InMemoryJobStorage implements
     JobStorageInterface,
     JobStorageAdminInterface,
+    \Oeltima\SimpleQueue\Contract\SupportsJobQueries,
     SupportsIdempotentJobCreation,
     \Oeltima\SimpleQueue\Contract\SupportsIdempotentBatchCreation,
     \Oeltima\SimpleQueue\Contract\SupportsClaimInspection,
@@ -52,6 +53,7 @@ class InMemoryJobStorage implements
     SupportsQueueScopedStaleRecovery
 {
     use \Oeltima\SimpleQueue\Internal\InMemoryIdempotentBatches;
+    use \Oeltima\SimpleQueue\Internal\InMemoryJobQueries;
 
     /** @var array<int, StoredJobRow> */
     private array $jobs = [];
