@@ -204,8 +204,8 @@ function operationBudgetDefinitions(): array
         'sqlite.idempotent_batch',
         'median_db_executions',
         'maximum-chunk',
-        [3, 6, 100],
-        'batch: chunk-based creation and duplicate lookup'
+        [4, 2, 100],
+        'batch: two lookups, INSERT and SQLite version per chunk; one savepoint'
     );
     foreach (['all_hit', 'all_miss', 'mixed'] as $distribution) {
         $add(

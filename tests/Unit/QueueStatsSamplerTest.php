@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Tests\Unit;
 
 use Oeltima\SimpleQueue\Contract\QueueStatsSnapshot;
+use Oeltima\SimpleQueue\Contract\QueueStatsInterface;
 use Oeltima\SimpleQueue\Contract\SupportsQueueStatsSnapshot;
 use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
 use Oeltima\SimpleQueue\QueueStatsSampler;
@@ -13,6 +14,42 @@ use PHPUnit\Framework\TestCase;
 
 final class QueueStatsSamplerTest extends TestCase
 {
+    public function testLegacyStatisticsRetryAfterFailureAndCacheOnlySuccessfulSnapshots(): void
+    {
+        $stats = $this->createMock(QueueStatsInterface::class);
+        $calls = 0;
+        $stats->expects(self::exactly(2))->method('getPendingCount')->willReturnCallback(static function () use (&$calls): int {
+            if (++$calls === 1) {
+                throw new \RuntimeException('Statistics unavailable');
+            }
+            return 7;
+        });
+        $stats->expects(self::once())->method('getProcessingCount')->willReturn(2);
+        $stats->expects(self::once())->method('getDelayedCount')->willReturn(3);
+        $sampler = new QueueStatsSampler($stats);
+        try {
+            $sampler->sample();
+            self::fail('The caller must observe the telemetry failure');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('Statistics unavailable', $exception->getMessage());
+        }
+        $snapshot = $sampler->sample();
+        self::assertSame([7, 2, 3], [$snapshot->pending, $snapshot->processing, $snapshot->delayed]);
+        self::assertSame($snapshot, $sampler->sample());
+    }
+
+    public function testInvalidIntervalsCannotDisableTheSamplingBound(): void
+    {
+        foreach ([0.0, -1.0, INF, NAN] as $interval) {
+            try {
+                new QueueStatsSampler(new InMemoryQueueDriver(), interval: $interval);
+                self::fail('Invalid interval must fail before sampling');
+            } catch (\InvalidArgumentException $exception) {
+                self::assertStringContainsString('finite and positive', $exception->getMessage());
+            }
+        }
+    }
+
     public function testEventVolumeDoesNotAmplifyStatisticsReads(): void
     {
         $clock = new FrozenClock();
