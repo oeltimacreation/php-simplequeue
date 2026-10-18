@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `JobNotificationException` with known created IDs and queue details when storage succeeds but notification is uncertain.
+
 ### Fixed
 
 - Prevented corrupt payload/result JSON from blocking stale-job recovery and reduced recovery memory by reading only job identities.

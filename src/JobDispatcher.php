@@ -15,6 +15,7 @@ use Oeltima\SimpleQueue\Contract\SupportsIdempotentJobCreation;
 use Oeltima\SimpleQueue\Contract\SupportsJobRemoval;
 use Oeltima\SimpleQueue\Contract\SupportsStorageBackedScheduling;
 use Oeltima\SimpleQueue\Exception\QueueException;
+use Oeltima\SimpleQueue\Exception\JobNotificationException;
 use Oeltima\SimpleQueue\Internal\JobStorageRules;
 
 /**
@@ -156,7 +157,7 @@ final class JobDispatcher
         if ($this->storage instanceof SupportsIdempotentJobCreation) {
             $result = $this->storage->createIdempotentJob($type, $payload, $requestId, $queue, $maxAttempts);
             if ($result->created) {
-                $this->queueManager->enqueue($result->jobId, $queue);
+                $this->notifyDispatch($result->jobId, $queue, null);
             }
             return ['job_id' => $result->jobId, 'created' => $result->created];
         }
@@ -196,10 +197,14 @@ final class JobDispatcher
             $this->batchDefinitions($type, $payloads, $queue, $maxAttempts, $resolvedAt)
         );
 
-        if ($resolvedAt === null) {
-            $this->notifyBatch($queue, $jobIds);
-        } else {
-            $this->queueManager->enqueueDelayedBatch(new DelayedBatch($jobIds, $queue, $resolvedAt));
+        try {
+            if ($resolvedAt === null) {
+                $this->notifyBatch($queue, $jobIds);
+            } else {
+                $this->queueManager->enqueueDelayedBatch(new DelayedBatch($jobIds, $queue, $resolvedAt));
+            }
+        } catch (\Throwable $exception) {
+            throw new JobNotificationException(array_values($jobIds), $queue, $resolvedAt, $exception);
         }
 
         return $jobIds;
@@ -350,10 +355,14 @@ final class JobDispatcher
 
     private function notifyDispatch(int $jobId, string $queue, ?int $resolvedAt): void
     {
-        if ($resolvedAt === null) {
-            $this->queueManager->enqueue($jobId, $queue);
-        } else {
-            $this->queueManager->enqueueDelayed($jobId, $queue, $resolvedAt);
+        try {
+            if ($resolvedAt === null) {
+                $this->queueManager->enqueue($jobId, $queue);
+            } else {
+                $this->queueManager->enqueueDelayed($jobId, $queue, $resolvedAt);
+            }
+        } catch (\Throwable $exception) {
+            throw new JobNotificationException([$jobId], $queue, $resolvedAt, $exception);
         }
     }
 

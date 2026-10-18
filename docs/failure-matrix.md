@@ -82,3 +82,18 @@ emits `infra_error` and `backoff` and sleeps through the configured sleeper.
 Handlers must make external side effects idempotent. Lease fencing protects
 SimpleQueue state; it cannot roll back an email, payment, or external API call
 that happened before a crash.
+
+## Acknowledged creation with uncertain notification
+
+`JobDispatcher` raises `JobNotificationException` when storage creation returns
+successfully but immediate or scheduled notification fails. Its `jobIds`, `queue`,
+`availableAt`, and original exception allow an application to retain referenced
+input and arrange bounded reconciliation. A failed command may have reached the
+queue; do not insert replacements blindly. Existing idempotent jobs are returned
+without another notification, so an idempotent HTTP retry alone does not repair
+queue membership. Recovery must use the stored queue and availability.
+
+This differs from `IndeterminateStorageOutcomeException`, where the database
+write itself may or may not have succeeded. A storage acknowledgement inside an
+application-owned transaction does not prove that transaction committed. Commit
+before notifying when the application owns the transaction boundary.

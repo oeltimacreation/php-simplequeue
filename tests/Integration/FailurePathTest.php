@@ -13,6 +13,7 @@ use Oeltima\SimpleQueue\Contract\SupportsDelayedJobs;
 use Oeltima\SimpleQueue\Contract\SupportsJobRemoval;
 use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
 use Oeltima\SimpleQueue\Exception\QueueException;
+use Oeltima\SimpleQueue\Exception\JobNotificationException;
 use Oeltima\SimpleQueue\JobDispatcher;
 use Oeltima\SimpleQueue\JobRegistry;
 use Oeltima\SimpleQueue\QueueManager;
@@ -93,7 +94,8 @@ final class FailurePathTest extends TestCase
             $dispatcher->dispatch('test.job', ['important' => true]);
             self::fail('Notification failure must escape dispatch');
         } catch (\RuntimeException $exception) {
-            self::assertSame('Injected enqueue failure', $exception->getMessage());
+            self::assertInstanceOf(JobNotificationException::class, $exception);
+            self::assertSame('Injected enqueue failure', $exception->getPrevious()?->getMessage());
         }
 
         $jobs = $storage->list(JobStatus::Pending);
@@ -282,7 +284,8 @@ final class FailurePathTest extends TestCase
             $dispatcher->dispatch('test.job', ['scheduled' => true], availableAt: $clock->timestamp() + 3600);
             self::fail('Delayed notification failure must escape dispatch');
         } catch (\RuntimeException $exception) {
-            self::assertSame('Injected enqueue_delayed failure', $exception->getMessage());
+            self::assertInstanceOf(JobNotificationException::class, $exception);
+            self::assertSame('Injected enqueue_delayed failure', $exception->getPrevious()?->getMessage());
         }
 
         $jobs = $storage->list(JobStatus::Pending);
