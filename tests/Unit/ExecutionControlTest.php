@@ -63,6 +63,8 @@ final class ExecutionControlTest extends TestCase
             public function process(JobContextInterface $context): mixed
             {
                 TestCase::assertInstanceOf(ControlledJobContextInterface::class, $context);
+                TestCase::assertSame($context->getJobId(), $context->getClaim()->job->id);
+                TestCase::assertNotSame('', $context->getClaim()->leaseToken);
                 $context->assertOwnership();
                 $context->heartbeat();
                 $context->reportProgress(50, 'Supervised');

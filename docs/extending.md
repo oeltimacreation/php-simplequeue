@@ -176,3 +176,10 @@ Use the built-in transition logic rather than overriding completion/failure SQL:
 it preserves failed-attempt counts, reset fields, serialization exceptions and
 lease fencing. Deliver the application outbox from a separate process after
 commit. The queue library does not own callback HTTP delivery or input retention.
+
+`ControlledJobContextInterface::getClaim()` supplies the immutable claim to
+middleware that needs an application-owned child-process handoff. This removes
+the need for a storage subclass to remember the most recent claim. Keep its lease
+token inside trusted worker processes; do not return it in application APIs.
+Children must still fence writes against that exact token, and parent middleware
+must keep calling `assertOwnership()` and `heartbeat()` while supervising work.

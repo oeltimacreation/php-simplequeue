@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Internal;
 
 use Oeltima\SimpleQueue\Contract\ControlledJobContextInterface;
+use Oeltima\SimpleQueue\Contract\ClaimedJob;
 use Oeltima\SimpleQueue\Contract\JobData;
 
 /**
@@ -21,8 +22,15 @@ final class JobExecutionContext implements ControlledJobContextInterface
     public function __construct(
         private readonly JobData $job,
         private readonly \Closure $continuation,
-        private readonly ?WorkerExecutionControl $control = null
+        private readonly ?WorkerExecutionControl $control = null,
+        private readonly ?ClaimedJob $claim = null
     ) {
+    }
+
+    /** @inheritDoc */
+    public function getClaim(): ClaimedJob
+    {
+        return $this->claim ?? throw new \LogicException('Claim access requires a worker-owned context');
     }
 
     /**
