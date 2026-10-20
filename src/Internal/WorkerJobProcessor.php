@@ -13,6 +13,8 @@ use Oeltima\SimpleQueue\Contract\JobRetriedEvent;
 use Oeltima\SimpleQueue\Contract\QueueDriverInterface;
 use Oeltima\SimpleQueue\Contract\SupportsProcessingHeartbeat;
 use Oeltima\SimpleQueue\Exception\HandlerNotFoundException;
+use Oeltima\SimpleQueue\Exception\JobOwnershipLostException;
+use Oeltima\SimpleQueue\Contract\SupportsClaimInspection;
 use Oeltima\SimpleQueue\Exception\SerializationException;
 
 /**
@@ -29,9 +31,13 @@ final readonly class WorkerJobProcessor
     private WorkerPolicy $policy;
     private \Oeltima\SimpleQueue\Contract\ClockInterface $clock;
     private WorkerEventEmitter $eventEmitter;
+    private float $progressInterval;
+    private float $heartbeatInterval;
 
     public function __construct(WorkerJobProcessorDependencies $dependencies)
     {
+        $this->progressInterval = $dependencies->progressInterval;
+        $this->heartbeatInterval = $dependencies->heartbeatInterval;
         $this->storage = $dependencies->storage;
         $this->registry = $dependencies->registry;
         $this->logger = $dependencies->logger;
@@ -57,15 +63,21 @@ final readonly class WorkerJobProcessor
         ]);
         $started = $this->clock->monotonic();
 
+        $control = null;
         try {
-            $result = $this->executeHandler($claim, $driver);
-        } catch (WorkerOwnershipLost) {
+            $result = $this->executeHandler($claim, $driver, $control);
+        } catch (WorkerOwnershipLost | JobOwnershipLostException) {
             return;
         } catch (\Throwable $handlerException) {
             $this->handleJobFailure($claim, $handlerException, $driver, $this->durationSince($started));
             return;
         }
 
+        try {
+            $control?->flush();
+        } catch (JobOwnershipLostException) {
+            return;
+        }
         $durationMs = $this->durationSince($started);
         try {
             $completed = $this->storage->markCompleted($claim, $result);
@@ -89,37 +101,67 @@ final readonly class WorkerJobProcessor
         }
     }
 
-    private function executeHandler(ClaimedJob $claim, QueueDriverInterface $driver): mixed
-    {
+    private function executeHandler(
+        ClaimedJob $claim,
+        QueueDriverInterface $driver,
+        ?WorkerExecutionControl &$control
+    ): mixed {
         $job = $claim->job;
         if (!$this->registry->has($job->type)) {
             throw HandlerNotFoundException::forType($job->type);
         }
         $handler = $this->registry->get($job->type);
-
-        $progressCallback = function (int $percent, ?string $message = null) use ($claim, $driver): void {
-            $updated = $this->storage->updateProgress($claim, $percent, $message);
-            if (!$updated) {
-                $this->emitLostOwnership($claim, 'progress');
-                throw new WorkerOwnershipLost('Lost job ownership during progress update');
-            }
-            if (!$driver instanceof SupportsProcessingHeartbeat) {
-                return;
-            }
-
-            try {
-                $driver->heartbeatProcessing($this->queue, $claim->job->id);
-            } catch (\Throwable $exception) {
-                // Durable fencing still protects completion, so this notification heartbeat is non-fatal.
-                $this->logger->error('Failed to refresh queue processing visibility', [
-                    'job_id' => $claim->job->id,
-                    'error' => $exception->getMessage(),
-                ]);
-                $this->emitInfrastructureFailure($claim);
-            }
+        $progress = function (int $percent, ?string $message = null) use ($claim, $driver): void {
+            $this->assertOwned($this->storage->updateProgress($claim, $percent, $message), $claim, 'progress');
+            $this->refreshTransport($claim, $driver);
         };
+        $middlewares = $this->registry->middleware->all();
+        if ($middlewares !== [] || $this->progressInterval > 0) {
+            $control = new WorkerExecutionControl(
+                $this->clock,
+                new WorkerExecutionCallbacks(
+                    $progress,
+                    function () use ($claim, $driver): void {
+                        $this->assertOwned($this->storage->heartbeat($claim), $claim, 'heartbeat');
+                        $this->refreshTransport($claim, $driver);
+                    },
+                    function () use ($claim): void {
+                        $owned = $this->storage instanceof SupportsClaimInspection
+                            ? $this->storage->isClaimOwned($claim)
+                            : $this->storage->heartbeat($claim);
+                        $this->assertOwned($owned, $claim, 'ownership_check');
+                    },
+                ),
+                $this->progressInterval,
+                $this->heartbeatInterval
+            );
+            $progress = $control;
+        }
+        return JobMiddlewareRunner::run($middlewares, $claim, $handler, $progress);
+    }
 
-        return JobMiddlewareRunner::run($this->registry->middleware->all(), $claim, $handler, $progressCallback);
+    private function assertOwned(bool $owned, ClaimedJob $claim, string $operation): void
+    {
+        if (!$owned) {
+            $this->emitLostOwnership($claim, $operation);
+            throw new JobOwnershipLostException('Lost job ownership during ' . $operation);
+        }
+    }
+
+    private function refreshTransport(ClaimedJob $claim, QueueDriverInterface $driver): void
+    {
+        if (!$driver instanceof SupportsProcessingHeartbeat) {
+            return;
+        }
+        try {
+            $driver->heartbeatProcessing($this->queue, $claim->job->id);
+        } catch (\Throwable $exception) {
+            $this->logger->error('Failed to refresh queue processing visibility', [
+                'job_id' => $claim->job->id,
+                'error' => $exception->getMessage(),
+            ]);
+            $this->emitInfrastructureFailure($claim);
+        }
     }
 
     private function handleJobCompletion(

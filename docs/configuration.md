@@ -130,3 +130,60 @@ The optional progress callback accepts a percentage from `0` to `100` and a
 message. Handlers expected to exceed `stuck_job_ttl` should report progress at
 least every half TTL or use a larger TTL. Retries use capped exponential
 backoff based on `retry_base_delay` and `retry_max_delay`.
+
+## Cooperative progress controls
+
+`WorkerOptions(progressInterval: 0.25, heartbeatInterval: 15.0)` opts into
+coalescing frequent progress callbacks. Array names are `progress_interval` and
+`heartbeat_interval`. The default progress interval is zero (immediate writes).
+The newest buffered value flushes before completion; retry or ownership loss
+discards it. Final-flush infrastructure failure escapes without rerunning the
+successful handler. Heartbeats run independently of changed progress on each
+cooperative callback and are capped at one third of the stuck-job TTL.
+
+Built-in middleware contexts implement `ControlledJobContextInterface` with
+`reportProgress()`, `heartbeat()` and `assertOwnership()`. Use these methods in
+a supervisor loop rather than retrieving lease tokens from storage. Ownership
+checks are read-only on `SupportsClaimInspection` storage; other stores fall
+back to a fenced heartbeat. Checks and heartbeats require control to be yielded;
+a blocked synchronous handler still needs cooperation or a supervising process.
+Transport visibility failures remain observational when the database lease holds.
+The chosen check cadence determines cancellation detection latency.
+
+A zero poll timeout with `stop_when_empty = false` repeatedly probes an empty
+queue without sleeping. Prefer a positive blocking timeout for a daemon; custom
+`processOne()` loops should sleep through an application-owned sleeper when empty.
+
+## Idempotent bulk dispatch
+
+`dispatchIdempotentBatch()` accepts full definitions with a `requestId` per job:
+
+```php
+$outcomes = $dispatcher->dispatchIdempotentBatch([
+    ['type' => 'report.generate', 'payload' => ['id' => 10], 'requestId' => 'report:10'],
+    ['type' => 'report.generate', 'payload' => ['id' => 11], 'requestId' => 'report:11'],
+]);
+$jobId = $outcomes[0]->jobId;
+$created = $outcomes[0]->created;
+```
+
+Results preserve input order. Repeated keys create once; existing active keys
+return their original IDs without changing payloads or sending notifications.
+Request IDs share the storage's active namespace across job types and queues.
+Definitions can set `queue`, `maxAttempts` and `availableAt`; future availability
+requires a scheduling-capable driver before any mutation occurs.
+
+The optional `SupportsIdempotentBatchCreation` capability is implemented by both
+built-in stores. Unsupported storage rejects this API before creating jobs. All
+input validates before one atomic logical batch; PDO uses bounded SQL chunks
+and retains caller-owned transactions. Normal uncontended requests batch active
+lookups and inserts. Unique-key races/collation aliases use a transactional
+fallback with exact IDs, rather than guessing an auto-increment sequence.
+
+Only newly created jobs are notified, grouped by queue and availability. Queue
+notification is separate from storage atomicity: `JobNotificationException`
+contains all known created IDs and, for mixed batches, `notifications` metadata
+with each stored queue and availability. Its primary queue identifies the group
+that failed; earlier groups may already be notified and later groups unattempted.
+Use bounded reconciliation and retain referenced input rather than inserting the
+batch again. Uncertain database commits retain their separate exception type.

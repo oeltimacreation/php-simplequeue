@@ -12,8 +12,10 @@ SimpleQueue is designed to be physically compact and easy to hold in one head wh
 | **Two-Layer Architecture** | Authoritative storage (PDO / In-Memory) decoupled from notification drivers (Redis / DB / In-Memory). |
 | **Scheduled Dispatch** | Delay initial job availability using `dispatchAfter()`, `dispatchAt()`, or `$availableAt`. |
 | **At-Least-Once Delivery & Fencing** | Worker claims use worker IDs and lease tokens to fence completion, retry, and progress updates. |
-| **Idempotency & Deduplication** | `dispatchIdempotent()` prevents duplicate active jobs for a given request ID. |
-| **Bounded Queue Repair** | `QueueReconciler` restores missing pending/delayed notifications; Worker/storage maintenance separately recovers stale leases. |
+| **Idempotency & Deduplication** | Single and atomic batch dispatch preserve per-job request IDs and ordered creation outcomes. |
+| **Bounded Queue Repair** | `QueueMaintenance` independently promotes delayed jobs, recovers stale leases and reconciles missing notifications. |
+| **Transactional Integration** | Optional PDO participants commit application references and outbox records with job transitions. |
+| **Efficient Monitoring** | Compact job summaries and sampled queue statistics avoid full payload reads and per-event network calls. |
 | **Middleware & Execution Context** | Wrap handlers in ordered middleware with typed job identity, payload, queue, and attempt context. |
 | **Typed Worker Events** | Stable readonly lifecycle event objects retain the existing string/array listener compatibility layer. |
 | **Failed-Job Administration** | List, inspect, re-queue, and purge failed jobs through `AdminManager`. |
@@ -128,13 +130,15 @@ $jobId = $dispatcher->dispatch(
 
 | Class | Key Methods | Description |
 |---|---|---|
-| `JobDispatcher` | `dispatch()`, `dispatchAfter()`, `dispatchAt()`, `dispatchBatch()`, `dispatchIdempotent()`, `getStatus()` | Main entry point for enqueueing jobs and querying status. |
+| `JobDispatcher` | `dispatch()`, `dispatchAfter()`, `dispatchAt()`, `dispatchBatch()`, `dispatchIdempotent()`, `dispatchIdempotentBatch()`, `getStatus()` | Main entry point for enqueueing jobs and querying status. |
 | `Worker` | `run()`, `processOne()`, `withOptions()` | Worker loop executing jobs with signal handling and lease heartbeat. |
 | `JobMiddlewareRegistry` | `register()`, `all()`, `clear()` | Ordered worker middleware registration. |
 | `QueueManager` | `create()`, `redis()`, `database()` | Driver factory supporting auto-selection and driver resolution. |
 | `JobRegistry` | `register()`, `get()`, `has()` | Handler registry mapping job type strings to `JobHandlerInterface` classes. |
 | `AdminManager` | `listFailed()`, `inspectFailed()`, `requeueFailed()`, `purgeFailed()` | Failed-job and dead-letter operations. |
 | `PdoJobStorage` | `createJobs()`, `claimNextAvailable()`, `markCompleted()`, `markFailed()`, `scheduleRetry()` | Durable database persistence implementing `JobStorageInterface`. |
+| `QueueMaintenance` | `run()`, `promote()`, `recover()`, `reconcile()` | Bounded maintenance with caller-owned cursors. |
+| `QueueStatsSampler` | `sample()` | Cache one queue snapshot for a configurable sampling interval. |
 
 ## Documentation Index
 

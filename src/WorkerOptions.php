@@ -26,8 +26,23 @@ final readonly class WorkerOptions
         public float $recoveryInterval = 60.0,
         public mixed $eventListener = null,
         public bool $lockingEnabled = true,
-        public ?SleeperInterface $sleeper = null
+        public ?SleeperInterface $sleeper = null,
+        public float $progressInterval = 0.0,
+        public float $heartbeatInterval = 15.0,
+        public int $recoveryLimit = 100,
+        public int $reconcilePageSize = 100,
+        public int $membershipScanLimit = 250,
+        public float $reconcileMaxDuration = 1.0
     ) {
+        new ReconcileOptions(null, $reconcilePageSize, $membershipScanLimit, $reconcileMaxDuration);
+        if ($recoveryLimit < 1 || $recoveryLimit > 10000) {
+            throw new \InvalidArgumentException('Worker recovery limit must be between 1 and 10000');
+        }
+        self::assertFiniteNonNegative($progressInterval, 'Worker progress interval');
+        self::assertFiniteNonNegative($heartbeatInterval, 'Worker heartbeat interval');
+        if ($heartbeatInterval <= 0) {
+            throw new \InvalidArgumentException('Worker heartbeat interval must be positive');
+        }
         self::validateTiming($pollTimeout, $stuckJobTtl, $retryBaseDelay, $retryMaxDelay);
         self::validateLimits($maxJobs, $maxTime, $memoryLimit);
         self::validateIntervals($promoteInterval, $recoveryInterval);
@@ -107,6 +122,18 @@ final readonly class WorkerOptions
         }
     }
 
+    /**
+     * Convert an application byte setting into the worker's MiB unit, rounding up.
+     *
+     * @param int $bytes Byte limit; zero disables recycling by memory
+     * @return int MiB limit without an intermediate overflowing addition
+     */
+    public static function memoryMiBFromBytes(int $bytes): int
+    {
+        self::assertNonNegative($bytes, 'Worker memory bytes');
+        return intdiv($bytes, 1048576) + ($bytes % 1048576 === 0 ? 0 : 1);
+    }
+
     /** @param array<string, mixed> $options */
     public static function fromArray(array $options): self
     {
@@ -129,7 +156,13 @@ final readonly class WorkerOptions
             recoveryInterval: self::decimalOption($options, 'recovery_interval', 60.0),
             eventListener: self::strictListener($options),
             lockingEnabled: $lockingEnabled,
-            sleeper: self::sleeper($options)
+            sleeper: self::sleeper($options),
+            progressInterval: self::decimalOption($options, 'progress_interval', 0.0),
+            heartbeatInterval: self::decimalOption($options, 'heartbeat_interval', 15.0),
+            recoveryLimit: self::integerOption($options, 'recovery_limit', 100),
+            reconcilePageSize: self::integerOption($options, 'reconcile_page_size', 100),
+            membershipScanLimit: self::integerOption($options, 'membership_scan_limit', 250),
+            reconcileMaxDuration: self::decimalOption($options, 'reconcile_max_duration', 1.0)
         );
     }
 

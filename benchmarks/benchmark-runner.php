@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 const BENCHMARK_COUNTER_METRICS = [
     'db_queries',
+    'db_executions',
+    'db_prepares',
+    'db_fetched_json_bytes',
     'db_transactions',
     'driver_roundtrips',
     'redis_commands',
@@ -156,6 +159,9 @@ function benchmarkSummary(BenchmarkScenario $scenario, array $samples): array
         'max_peak_memory_bytes' => max([0, ...array_column($samples, 'peak_memory_bytes')]),
         'median_retained_memory_bytes' => median(array_column($samples, 'retained_memory_bytes')),
         'median_db_queries' => median(array_column($samples, 'db_queries')),
+        'median_db_executions' => median(array_column($samples, 'db_executions')),
+        'median_db_prepares' => median(array_column($samples, 'db_prepares')),
+        'median_db_fetched_json_bytes' => median(array_column($samples, 'db_fetched_json_bytes')),
         'median_db_transactions' => median(array_column($samples, 'db_transactions')),
         'median_driver_roundtrips' => median(array_column($samples, 'driver_roundtrips')),
         'median_redis_commands' => median(array_column($samples, 'redis_commands')),

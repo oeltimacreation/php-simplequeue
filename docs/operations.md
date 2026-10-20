@@ -201,3 +201,84 @@ PostgreSQL 15, and SQLite. Install smoke tests should include database-only
 usage without Predis and existing v1.3 lease-schema/key deployments.
 Keep the compatibility smoke tests and raise coverage through focused tests;
 do not lower quality gates to accommodate unrelated changes.
+
+## Sample queue depth independently of event rate
+
+Construct one `QueueStatsSampler` per observed queue and call `sample()` from
+an event listener. It caches one snapshot for the chosen interval (default five
+seconds). Redis snapshots pipeline three counts in one roundtrip. Older drivers
+implementing only `QueueStatsInterface` use three reads only when a sample is due.
+A snapshot includes `sampledAt`; attach that time/age when logging cached counts.
+Counts across keys are observational, not an atomic view of a job transition.
+
+Always log the original lifecycle event even if sampling fails:
+
+```php
+try {
+    $snapshot = $sampler->sample();
+    $data['queue_depth'] = $snapshot->pending;
+    $data['sampled_at'] = $snapshot->sampledAt;
+} catch (\Throwable $error) {
+    $data['statistics_error'] = $error::class;
+}
+$logger->info($event, $data);
+```
+
+Do not read all three counts on every `claimed` and `completed` event: that adds
+six synchronous Redis roundtrips per successful job. Sampling is opt-in and does
+not alter worker event payloads or require a global metrics publisher.
+
+## Compact monitoring queries
+
+Built-in storage implements optional `SupportsJobQueries`. `listSummaries()`
+returns `JobSummary` objects ordered by descending ID, with optional status/queue
+filters, exclusive `beforeId`, and a 1–1000 limit. Use the last ID from a page as
+the next cursor. The summary includes identity, status, failed-attempt counts,
+progress/message and creation/update times; request full detail separately when
+payload/result or scheduling/error data is needed.
+
+`findSummaries([id, ...])` accepts at most 1000 positive IDs and returns an
+ID-keyed map in first-requested order. Duplicate IDs collapse and missing IDs are
+omitted. `countByStatus($queue)` reads grouped counts in one query and includes
+zeroes for every status. These queries never read payload/result JSON, so corrupt
+or unusually large job bodies do not prevent status monitoring.
+
+Keep tenant/client authorization and additional application filters in the
+application adapter. The general queue query interface is not an authorization
+boundary or an unrestricted dynamic-column filter API. Existing `find()` and
+full-job offset listing retain their behavior.
+
+## Independent maintenance for long-running work
+
+Run `QueueMaintenance` in an application-owned process when every worker can be
+occupied by long jobs. `examples/redis/maintenance.php` shows a supervised loop.
+Each `run($queue, new MaintenanceOptions(), $cursor)` promotes delayed jobs,
+recovers stale rows/notifications and reconciles one page, in that order. Retain
+`MaintenanceResult::nextCursor` between passes; persist it externally if the
+maintenance process must resume its position after restart.
+
+Bounds cover promotion/recovery counts, page size, membership window and a
+cooperative time deadline. A running database/Redis command cannot be interrupted
+by that deadline. Results expose elapsed time, phase flags and reconciliation
+counts; a deferred phase preserves the caller cursor. `recovered` counts durable
+rows plus notifications and may count the same logical job in both layers.
+Standalone `run()` requires queue-scoped stale-recovery capability and rejects
+legacy global-only storage; Worker retains its legacy fallback.
+
+Workers delegate the same maintenance operations and retain existing intervals.
+Additional typed options are `recoveryLimit`, `reconcilePageSize`,
+`membershipScanLimit` and `reconcileMaxDuration` (array forms use snake_case).
+Defaults remain 100 stale rows, a 100-row page, a 250-entry membership window and
+one second. `processOne()` retains promotion-only maintenance semantics.
+
+Use one maintenance owner per queue, or coordinate owners in the application
+scheduler. Multiple maintainers are safe under fencing/at-least-once delivery but
+can repeat scans and notifications. Measure cursor coverage time and delayed-job
+lag rather than equating a short pass with prompt repair of an entire backlog.
+
+Scoped stale recovery filters invalid retry metadata (`attempts < 0` or
+`max_attempts < 1`) before selecting a bounded page and rechecks it at mutation
+time. Such rows remain untouched so they cannot repeatedly displace valid rows.
+Monitor stale running rows with invalid counts separately in the application;
+repair their metadata through an audited operator workflow. Recovery deliberately
+does not decode payload/result JSON or rewrite malformed bodies.

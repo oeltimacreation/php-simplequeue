@@ -26,6 +26,8 @@ use Oeltima\SimpleQueue\Internal\PdoBatchJobInserter;
 use Oeltima\SimpleQueue\Internal\PdoFailedJobAdministration;
 use Oeltima\SimpleQueue\Internal\PdoStaleJobRecovery;
 use Oeltima\SimpleQueue\SystemClock;
+use Oeltima\SimpleQueue\Contract\PdoJobParticipantInterface;
+use Oeltima\SimpleQueue\Internal\PdoParticipation;
 use PDO;
 use PDOException;
 use PDOStatement;
@@ -61,13 +63,17 @@ use PDOStatement;
 class PdoJobStorage implements
     JobStorageInterface,
     JobStorageAdminInterface,
+    \Oeltima\SimpleQueue\Contract\SupportsJobQueries,
     SupportsIdempotentJobCreation,
+    \Oeltima\SimpleQueue\Contract\SupportsIdempotentBatchCreation,
+    \Oeltima\SimpleQueue\Contract\SupportsClaimInspection,
     SupportsFailedJobAdministration,
     SupportsPendingJobCursor,
     SupportsPendingNotificationCursor,
     SupportsQueueScopedStaleRecovery
 {
     use PdoFailedJobAdministration;
+    use \Oeltima\SimpleQueue\Internal\PdoJobQueries;
 
     protected ?PDO $pdo = null;
     /** @var callable(): PDO|null Factory function to create PDO connection */
@@ -77,17 +83,21 @@ class PdoJobStorage implements
 
     private readonly PdoBatchJobInserter $batchInserter;
     private readonly PdoStaleJobRecovery $staleJobRecovery;
+    private readonly ?PdoParticipation $participation;
 
     /**
      * @param PDO|callable $connection PDO instance or factory callable (fn(): PDO)
      * @param string $table Table name for jobs (default: 'background_jobs')
      * @param ClockInterface|null $clock Clock implementation
+     * @param PdoJobParticipantInterface|null $participant Opt-in same-transaction application writes
      */
     public function __construct(
         #[\SensitiveParameter] PDO|callable $connection,
         protected string $table = 'background_jobs',
-        private readonly ?ClockInterface $clock = null
+        private readonly ?ClockInterface $clock = null,
+        ?PdoJobParticipantInterface $participant = null
     ) {
+        $this->participation = $participant === null ? null : new PdoParticipation($participant);
         $this->table = JobStorageRules::validateTableName($table);
         $this->batchInserter = new PdoBatchJobInserter(['table' => $this->table]);
         $this->staleJobRecovery = new PdoStaleJobRecovery([
@@ -270,7 +280,10 @@ class PdoJobStorage implements
      */
     protected function executeMutation(string $sql, array $params, string $operation): PDOStatement
     {
-        return $this->withMutation($operation, function (PDO $pdo) use ($sql, $params): PDOStatement {
+        return $this->withMutation($operation, function (PDO $pdo) use ($sql, $params, $operation): PDOStatement {
+            if ($this->participation !== null && isset($params['id'])) {
+                return $this->participation->execute($pdo, $sql, $params, $operation);
+            }
             $stmt = $this->prepare($pdo, $sql);
             $stmt->execute($params);
             return $stmt;
@@ -401,24 +414,30 @@ class PdoJobStorage implements
             NULL, NULL, :request_id, :created_at, :updated_at
         )";
 
-        return $this->withMutation(
-            'createJob',
-            function (PDO $pdo) use ($sql, $queue, $type, $encodedPayload, $maxAttempts, $requestId, $now): int {
-                $stmt = $this->prepare($pdo, $sql);
-                $stmt->execute([
-                    'queue' => $queue,
-                    'type' => $type,
-                    'payload' => $encodedPayload,
-                    'max_attempts' => $maxAttempts,
-                    'available_at' => $now,
-                    'request_id' => $requestId,
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ]);
+        $insert = function (PDO $pdo) use ($sql, $queue, $type, $encodedPayload, $maxAttempts, $requestId, $now): int {
+            $stmt = $this->prepare($pdo, $sql);
+            $stmt->execute([
+                'queue' => $queue,
+                'type' => $type,
+                'payload' => $encodedPayload,
+                'max_attempts' => $maxAttempts,
+                'available_at' => $now,
+                'request_id' => $requestId,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
 
-                return (int) $pdo->lastInsertId();
-            }
-        );
+            return (int) $pdo->lastInsertId();
+        };
+        if ($this->participation === null) {
+            return $this->withMutation('createJob', $insert);
+        }
+        $definition = compact('type', 'payload', 'queue', 'maxAttempts', 'requestId');
+        return $this->withMutation('createJob', fn (PDO $pdo): int => $this->participation->create(
+            $pdo,
+            [$definition],
+            static fn (): int => $insert($pdo)
+        ));
     }
 
     /**
@@ -447,7 +466,13 @@ class PdoJobStorage implements
 
         return $this->withMutation(
             'createJobs',
-            fn (PDO $pdo): array => $this->insertValidatedJobs($pdo, $validated, $now)
+            fn (PDO $pdo): array => $this->participation === null
+                ? $this->insertValidatedJobs($pdo, $validated, $now)
+                : $this->participation->create(
+                    $pdo,
+                    array_values($jobs),
+                    fn (): array => $this->insertValidatedJobs($pdo, $validated, $now)
+                )
         );
     }
 
@@ -701,6 +726,24 @@ class PdoJobStorage implements
      * @param string $workerId Worker identifier
      * @return ClaimedJob|null Claimed job or null when no job is available
      */
+    /**
+     * @param array<int, JobDefinitionShape> $jobs Definitions with request IDs
+     * @return list<IdempotentJobResult> Input-ordered atomic outcomes
+     */
+    public function createIdempotentJobs(array $jobs): array
+    {
+        $jobs = \Oeltima\SimpleQueue\Internal\IdempotentBatch::validate($jobs, $this->clock());
+        if ($jobs === []) {
+            return [];
+        }
+        $batch = new \Oeltima\SimpleQueue\Internal\PdoIdempotentBatch($this->table);
+        return $this->withMutation('createIdempotentJobs', fn (PDO $pdo): array => $batch->create(
+            $pdo,
+            $jobs,
+            fn (array $missing): array => array_values($this->createJobs($missing))
+        ));
+    }
+
     public function claimNextAvailable(string $queue, string $workerId): ?ClaimedJob
     {
         return $this->claimJob($queue, null, $workerId);
@@ -837,6 +880,12 @@ class PdoJobStorage implements
         return $stmt->rowCount() > 0;
     }
 
+    /** @inheritDoc */
+    public function isClaimOwned(ClaimedJob $claim): bool
+    {
+        return $this->claimStillOwned($claim);
+    }
+
     public function heartbeat(ClaimedJob $claim): bool
     {
         $now = $this->now();
@@ -856,7 +905,9 @@ class PdoJobStorage implements
 
     public function recoverStaleJobs(int $ttlSeconds): int
     {
-        return $this->staleJobRecovery->recoverAll($ttlSeconds);
+        return $this->participation === null
+            ? $this->staleJobRecovery->recoverAll($ttlSeconds)
+            : $this->staleJobRecovery->recoverIndividually($ttlSeconds);
     }
 
     public function recoverStaleJobsForQueue(string $queue, int $ttlSeconds, int $limit): int
@@ -1241,7 +1292,7 @@ class PdoJobStorage implements
     private function claimSelection(array $context): array
     {
         if ($context['id'] !== null) {
-            $selectSql = "SELECT * FROM {$this->table}
+            $selectSql = "SELECT id FROM {$this->table}
                 WHERE id = :id
                 AND (
                     (status = 'pending' AND available_at <= :now)
@@ -1254,7 +1305,7 @@ class PdoJobStorage implements
                 'worker_id' => $context['workerId'],
             ];
         } else {
-            $selectSql = "SELECT * FROM {$this->table}
+            $selectSql = "SELECT id FROM {$this->table}
                 WHERE status = 'pending'
                 AND queue = :queue
                 AND available_at <= :now

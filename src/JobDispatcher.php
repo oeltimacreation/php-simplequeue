@@ -15,6 +15,7 @@ use Oeltima\SimpleQueue\Contract\SupportsIdempotentJobCreation;
 use Oeltima\SimpleQueue\Contract\SupportsJobRemoval;
 use Oeltima\SimpleQueue\Contract\SupportsStorageBackedScheduling;
 use Oeltima\SimpleQueue\Exception\QueueException;
+use Oeltima\SimpleQueue\Exception\JobNotificationException;
 use Oeltima\SimpleQueue\Internal\JobStorageRules;
 
 /**
@@ -156,7 +157,7 @@ final class JobDispatcher
         if ($this->storage instanceof SupportsIdempotentJobCreation) {
             $result = $this->storage->createIdempotentJob($type, $payload, $requestId, $queue, $maxAttempts);
             if ($result->created) {
-                $this->queueManager->enqueue($result->jobId, $queue);
+                $this->notifyDispatch($result->jobId, $queue, null);
             }
             return ['job_id' => $result->jobId, 'created' => $result->created];
         }
@@ -196,13 +197,43 @@ final class JobDispatcher
             $this->batchDefinitions($type, $payloads, $queue, $maxAttempts, $resolvedAt)
         );
 
-        if ($resolvedAt === null) {
-            $this->notifyBatch($queue, $jobIds);
-        } else {
-            $this->queueManager->enqueueDelayedBatch(new DelayedBatch($jobIds, $queue, $resolvedAt));
+        try {
+            if ($resolvedAt === null) {
+                $this->notifyBatch($queue, $jobIds);
+            } else {
+                $this->queueManager->enqueueDelayedBatch(new DelayedBatch($jobIds, $queue, $resolvedAt));
+            }
+        } catch (\Throwable $exception) {
+            throw new JobNotificationException(array_values($jobIds), $queue, $resolvedAt, $exception);
         }
 
         return $jobIds;
+    }
+
+    /**
+     * Dispatch an atomic batch with per-job active-request deduplication.
+     *
+     * @param array<int, JobDefinitionShape> $jobs Definitions with request IDs
+     * @return list<\Oeltima\SimpleQueue\Contract\IdempotentJobResult> Ordered outcomes
+     */
+    public function dispatchIdempotentBatch(array $jobs): array
+    {
+        if (!$this->storage instanceof \Oeltima\SimpleQueue\Contract\SupportsIdempotentBatchCreation) {
+            throw new \LogicException('Storage does not support atomic idempotent batches');
+        }
+        $jobs = \Oeltima\SimpleQueue\Internal\IdempotentBatch::validate($jobs, $this->clock);
+        foreach ($jobs as &$job) {
+            $job['availableAt'] = $this->resolveAvailableAt($job['availableAt'] ?? null);
+            $this->preflightScheduledDispatch($job['availableAt']);
+        }
+        unset($job);
+        $results = $this->storage->createIdempotentJobs($jobs);
+        (new \Oeltima\SimpleQueue\Internal\IdempotentBatchNotifier(
+            $this->queueManager,
+            $this->notifyBatch(...),
+            $this->resolveAvailableAt(...)
+        ))->notify($jobs, $results);
+        return $results;
     }
 
     /**
@@ -350,10 +381,14 @@ final class JobDispatcher
 
     private function notifyDispatch(int $jobId, string $queue, ?int $resolvedAt): void
     {
-        if ($resolvedAt === null) {
-            $this->queueManager->enqueue($jobId, $queue);
-        } else {
-            $this->queueManager->enqueueDelayed($jobId, $queue, $resolvedAt);
+        try {
+            if ($resolvedAt === null) {
+                $this->queueManager->enqueue($jobId, $queue);
+            } else {
+                $this->queueManager->enqueueDelayed($jobId, $queue, $resolvedAt);
+            }
+        } catch (\Throwable $exception) {
+            throw new JobNotificationException([$jobId], $queue, $resolvedAt, $exception);
         }
     }
 

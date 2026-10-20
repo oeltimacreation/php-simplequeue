@@ -32,6 +32,7 @@ final class InMemoryQueueDriver implements
     SupportsBatchQueueReconciliation,
     SupportsQueueReconciliation,
     QueueStatsInterface,
+    \Oeltima\SimpleQueue\Contract\SupportsQueueStatsSnapshot,
     SupportsJobRemoval,
     SupportsProcessingHeartbeat,
     SupportsBoundedQueueMembership
@@ -515,6 +516,17 @@ final class InMemoryQueueDriver implements
      * @param string $queue Queue name
      * @return int Number of pending jobs
      */
+    /** @inheritDoc */
+    public function getStatsSnapshot(string $queue): \Oeltima\SimpleQueue\Contract\QueueStatsSnapshot
+    {
+        return new \Oeltima\SimpleQueue\Contract\QueueStatsSnapshot(
+            $this->getPendingCount($queue),
+            $this->getProcessingCount($queue),
+            $this->getDelayedCount($queue),
+            $this->clock->timestamp()
+        );
+    }
+
     public function getPendingCount(string $queue): int
     {
         return count($this->getPending($queue));

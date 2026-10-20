@@ -153,6 +153,26 @@ class RedisQueueDriverTest extends TestCase
         $this->driver = new RedisQueueDriver($this->redis, 'test');
     }
 
+    public function testStatisticsSnapshotNormalizesOnePipelineAndRejectsIncompleteResponses(): void
+    {
+        $this->redis->pipelineReturns = [['3', '2', '1'], [3, 2]];
+        $snapshot = $this->driver->getStatsSnapshot('default');
+        self::assertSame([3, 2, 1], [$snapshot->pending, $snapshot->processing, $snapshot->delayed]);
+        self::assertCount(1, $this->redis->pipelines);
+        self::assertTrue($this->redis->pipelines[0]->executed);
+        self::assertSame(['llen', 'llen', 'zcard'], array_column($this->redis->pipelines[0]->calls, 'method'));
+        $this->expectException(QueueException::class);
+        $this->driver->getStatsSnapshot('default');
+    }
+
+    public function testStatisticsSnapshotRejectsAnAlreadyExecutedPipeline(): void
+    {
+        $client = $this->createMock(ClientInterface::class);
+        $client->method('__call')->with('pipeline')->willReturn([]);
+        $this->expectException(QueueException::class);
+        (new RedisQueueDriver($client))->getStatsSnapshot('default');
+    }
+
     /** @return list<string> */
     private function callMethods(): array
     {

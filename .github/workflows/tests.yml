@@ -67,6 +67,8 @@ jobs:
           tests/Contract/QueueDriverContractTest.php
           tests/Contract/JobMiddlewareContractTest.php
           tests/Integration/ScheduledDispatchTest.php
+      - name: Candidate transport capabilities
+        run: vendor/bin/phpunit --no-coverage --filter testRealRedis tests/Integration/CandidateServicesTest.php
       - name: Selected real-service contract
         run: vendor/bin/phpunit --no-coverage --filter testRealQueueDriver tests/Integration/RealServicesTest.php
       - run: composer budgets
@@ -105,6 +107,8 @@ jobs:
           tests/Contract/QueueDriverContractTest.php
           tests/Contract/JobMiddlewareContractTest.php
           tests/Integration/ScheduledDispatchTest.php
+      - name: Candidate transport capabilities
+        run: vendor/bin/phpunit --no-coverage --filter testRealRedis tests/Integration/CandidateServicesTest.php
       - name: Selected real-service contract
         run: vendor/bin/phpunit --no-coverage --filter testRealQueueDriver tests/Integration/RealServicesTest.php
       - run: composer budgets
@@ -143,6 +147,12 @@ jobs:
           vendor/bin/phpunit --no-coverage
           tests/Unit/StorageTransitionMatrixTest.php
           tests/Integration/FailureInjectionTest.php
+      - name: Locked-row claim distribution
+        run: >-
+          DB_DSN="$MYSQL_DSN" DB_USER="$MYSQL_USER" DB_PASSWORD="$MYSQL_PASSWORD"
+          vendor/bin/phpunit --no-coverage --filter testSkipLockedClaimDistribution tests/Integration/ConcurrencyTest.php
+      - name: Candidate database capabilities and concurrent batches
+        run: vendor/bin/phpunit --no-coverage --filter "/testIdempotentBatches|testConcurrentIdempotentBatches/" tests/Integration/CandidateServicesTest.php
       - name: Selected real-service storage, batch, and concurrency contracts
         run: >-
           vendor/bin/phpunit --no-coverage
@@ -183,6 +193,12 @@ jobs:
           vendor/bin/phpunit --no-coverage
           tests/Unit/StorageTransitionMatrixTest.php
           tests/Integration/FailureInjectionTest.php
+      - name: Locked-row claim distribution
+        run: >-
+          DB_DSN="$POSTGRES_DSN" DB_USER="$POSTGRES_USER" DB_PASSWORD="$POSTGRES_PASSWORD"
+          vendor/bin/phpunit --no-coverage --filter testSkipLockedClaimDistribution tests/Integration/ConcurrencyTest.php
+      - name: Candidate database capabilities and concurrent batches
+        run: vendor/bin/phpunit --no-coverage --filter "/testIdempotentBatches|testConcurrentIdempotentBatches/" tests/Integration/CandidateServicesTest.php
       - name: Selected real-service storage, batch, and concurrency contracts
         run: >-
           vendor/bin/phpunit --no-coverage
@@ -250,6 +266,13 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/simplequeue-package"
           composer archive --format=zip --dir="$RUNNER_TEMP/simplequeue-package"
+      - name: Verify package excludes internal and generated files
+        run: |
+          unzip -Z -1 "$RUNNER_TEMP/simplequeue-package/"*.zip > "$RUNNER_TEMP/simplequeue-archive-files.txt"
+          if grep -Eq '^(internal_docs|vendor|coverage|build)/|^\.env($|\.)' "$RUNNER_TEMP/simplequeue-archive-files.txt"; then
+            echo 'Package contains internal or generated files' >&2
+            exit 1
+          fi
       - name: Install isolated consumer without development dependencies or Predis
         run: |
           mkdir -p "$RUNNER_TEMP/simplequeue-consumer"

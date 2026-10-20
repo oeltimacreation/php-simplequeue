@@ -30,3 +30,7 @@ php examples/redis/dispatch.php
 
 The handlers only print and simulate work. Replace them with application
 services that make external side effects idempotent.
+
+For a separate bounded maintenance process, run `php examples/redis/maintenance.php`
+with the same environment as the worker. Keep one owner per queue and retain its
+reconciliation cursor when integrating this loop with a supervisor.

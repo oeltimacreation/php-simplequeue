@@ -12,10 +12,25 @@ final class BenchmarkPdo extends \PDO
 {
     public int $queries = 0;
     public int $transactions = 0;
+    public int $prepares = 0;
+    public int $executions = 0;
+    public int $fetchedJsonBytes = 0;
+
+    /** @param array<int, mixed>|null $options PDO connection options */
+    public function __construct(
+        string $dsn,
+        ?string $username = null,
+        #[\SensitiveParameter] ?string $password = null,
+        ?array $options = null
+    ) {
+        parent::__construct($dsn, $username, $password, $options);
+        $this->setAttribute(\PDO::ATTR_STATEMENT_CLASS, [BenchmarkStatement::class, [$this]]);
+    }
 
     /** @param array<array-key, mixed> $options Driver-specific statement options */
     public function prepare(string $query, array $options = []): \PDOStatement|false
     {
+        $this->prepares++;
         $this->queries++;
         return parent::prepare($query, $options);
     }
@@ -30,7 +45,15 @@ final class BenchmarkPdo extends \PDO
             return parent::exec($statement);
         }
         $this->queries++;
+        $this->executions++;
         return parent::exec($statement);
+    }
+
+    /** @param mixed ...$fetchModeArgs Fetch mode arguments */
+    public function query(string $query, ?int $fetchMode = null, mixed ...$fetchModeArgs): \PDOStatement|false
+    {
+        $this->executions++;
+        return parent::query($query, $fetchMode, ...$fetchModeArgs);
     }
 
     public function beginTransaction(): bool
@@ -43,6 +66,59 @@ final class BenchmarkPdo extends \PDO
     {
         $this->queries = 0;
         $this->transactions = 0;
+        $this->prepares = 0;
+        $this->executions = 0;
+        $this->fetchedJsonBytes = 0;
+    }
+}
+
+final class BenchmarkStatement extends \PDOStatement
+{
+    protected function __construct(private readonly BenchmarkPdo $counter)
+    {
+    }
+
+    /** @param array<array-key, mixed>|null $params Statement parameters */
+    public function execute(?array $params = null): bool
+    {
+        $this->counter->executions++;
+        return parent::execute($params);
+    }
+
+    public function fetch(
+        int $mode = \PDO::FETCH_DEFAULT,
+        int $cursorOrientation = \PDO::FETCH_ORI_NEXT,
+        int $cursorOffset = 0
+    ): mixed {
+        $row = parent::fetch($mode, $cursorOrientation, $cursorOffset);
+        $this->recordRow($row);
+        return $row;
+    }
+
+    /**
+     * @param mixed ...$args Fetch mode arguments
+     * @return array<mixed> Fetched rows
+     */
+    public function fetchAll(int $mode = \PDO::FETCH_DEFAULT, mixed ...$args): array
+    {
+        $rows = parent::fetchAll($mode, ...$args);
+        foreach ($rows as $row) {
+            $this->recordRow($row);
+        }
+        return $rows;
+    }
+
+    private function recordRow(mixed $row): void
+    {
+        if (!is_array($row)) {
+            return;
+        }
+        foreach (['payload', 'result'] as $field) {
+            $value = $row[$field] ?? null;
+            if (is_string($value)) {
+                $this->counter->fetchedJsonBytes += strlen($value);
+            }
+        }
     }
 }
 

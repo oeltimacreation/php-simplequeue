@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-10-20
+
+### Added
+
+- Added explicit byte-to-MiB worker memory conversion for application configuration and upgrades.
+- Added independently runnable bounded queue maintenance with explicit cursors and configurable worker recovery/reconciliation budgets.
+- Added compact job summaries, keyset pagination, ordered multi-ID reads and grouped status counts without payload/result hydration.
+- Added atomic idempotent batch dispatch with per-job request IDs, ordered outcomes and grouped notifications.
+- Added queue-statistics snapshots and a bounded sampler to avoid per-event Redis count roundtrips.
+- Added cooperative middleware progress, heartbeat and ownership controls with opt-in progress coalescing.
+- Added optional PDO transaction participants for atomic job/reference/outbox writes, including stale recovery.
+- Added `JobNotificationException` with known created IDs and queue details when storage succeeds but notification is uncertain.
+
+### Fixed
+
+- Excluded internal documents, dependencies and generated local files from Composer archives.
+- Prevented corrupt payload/result JSON from blocking stale-job recovery and reduced recovery memory by reading only job identities.
+
+### Changed
+
+- Bounded Redis reconciliation to one pending-list snapshot per page, capped at 10,000 entries.
+- Reduced transactional claim reads by fetching the full job only after the guarded claim update.
+
 ## [1.11.0] - 2026-09-05
 
 ### Added

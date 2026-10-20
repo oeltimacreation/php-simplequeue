@@ -14,6 +14,7 @@ require_once __DIR__ . '/local-maintenance.php';
 require_once __DIR__ . '/redis-support.php';
 require_once __DIR__ . '/redis-scenarios.php';
 require_once __DIR__ . '/operation-count-checks.php';
+require_once __DIR__ . '/candidate-scenarios.php';
 
 /** @return array<string, mixed> */
 function benchmarkEnvironment(BenchmarkOptions $options): array

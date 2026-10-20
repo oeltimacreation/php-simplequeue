@@ -182,6 +182,8 @@ function operationBudgetDefinitions(): array
         'read maintenance: no transaction'
     );
 
+    addCandidateOperationBudgets($add);
+
     $add('redis.dispatch_scheduled_single', 'median_redis_roundtrips', 'maximum-per', [1, 0, 1], 'ZADD: one per job');
     $add('redis.dispatch_scheduled_batch', 'median_redis_roundtrips', 'exact-fixed', [0, 1, 1], 'ZADD: one per batch');
     $add('redis.promote_delayed', 'median_redis_roundtrips', 'maximum-fixed', [0, 1, 1], 'Lua: one promotion');
@@ -201,6 +203,62 @@ function operationBudgetDefinitions(): array
     $add('redis.repair_unscored', 'median_redis_commands', 'maximum-per', [2, 2, 1], 'score repair: linear commands');
 
     return $budgets;
+}
+
+/**
+ * @param Closure(string, string, string, array<int>, string): void $add Budget collector
+ */
+function addCandidateOperationBudgets(Closure $add): void
+{
+    foreach (['small', 'large'] as $size) {
+        $add(
+            'sqlite.claim_payload_' . $size,
+            'median_db_executions',
+            'exact-per',
+            [3, 0, 1],
+            'statements: ID claim and authoritative read'
+        );
+        foreach (['recover', 'compact'] as $operation) {
+            $add(
+                'sqlite.' . $operation . '_payload_' . $size,
+                'median_db_fetched_json_bytes',
+                'exact-fixed',
+                [0, 0, 1],
+                'projection: no payload or result'
+            );
+        }
+    }
+    $add(
+        'sqlite.idempotent_batch',
+        'median_db_executions',
+        'maximum-chunk',
+        [4, 2, 100],
+        'batch: two lookups, INSERT and SQLite version per chunk; one savepoint'
+    );
+    foreach (['all_hit', 'all_miss', 'mixed'] as $distribution) {
+        $add(
+            'redis.reconcile.' . $distribution,
+            'median_redis_roundtrips',
+            'exact-fixed',
+            [0, 1, 1],
+            'Lua: one atomic page'
+        );
+    }
+    $add(
+        'redis.sampled_statistics',
+        'median_redis_roundtrips',
+        'exact-fixed',
+        [0, 1, 1],
+        'pipeline: one snapshot per interval'
+    );
+    $add(
+        'redis.sampled_statistics',
+        'median_redis_commands',
+        'exact-fixed',
+        [0, 3, 1],
+        'statistics: three counts per snapshot'
+    );
+    $add('redis.dequeue_blocking_ack', 'median_redis_roundtrips', 'exact-per', [3, 0, 1], 'blocking: move, score, ACK');
 }
 
 /**

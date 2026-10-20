@@ -43,12 +43,18 @@ use Oeltima\SimpleQueue\SystemClock;
 class InMemoryJobStorage implements
     JobStorageInterface,
     JobStorageAdminInterface,
+    \Oeltima\SimpleQueue\Contract\SupportsJobQueries,
     SupportsIdempotentJobCreation,
+    \Oeltima\SimpleQueue\Contract\SupportsIdempotentBatchCreation,
+    \Oeltima\SimpleQueue\Contract\SupportsClaimInspection,
     SupportsFailedJobAdministration,
     SupportsPendingJobCursor,
     SupportsPendingNotificationCursor,
     SupportsQueueScopedStaleRecovery
 {
+    use \Oeltima\SimpleQueue\Internal\InMemoryIdempotentBatches;
+    use \Oeltima\SimpleQueue\Internal\InMemoryJobQueries;
+
     /** @var array<int, StoredJobRow> */
     private array $jobs = [];
     private int $nextId = 1;
@@ -358,6 +364,12 @@ class InMemoryJobStorage implements
         $this->releaseClaim($job, $now);
 
         return true;
+    }
+
+    /** @inheritDoc */
+    public function isClaimOwned(ClaimedJob $claim): bool
+    {
+        return $this->ownsClaim($claim);
     }
 
     public function heartbeat(ClaimedJob $claim): bool

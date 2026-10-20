@@ -385,7 +385,7 @@ final class PdoFaultHarnessTest extends TestCase
         $seed = new PdoJobStorage(SqliteFixture::filePdo($path));
         $id = $seed->createJob('test.job', []);
         $probe = new PdoFaultProbe();
-        $probe->arm('result_read', 'SELECT *', 2);
+        $probe->arm('result_read', 'SELECT *');
         $storage = new PdoJobStorage(new PdoFaultConnection($path, $probe));
 
         try {

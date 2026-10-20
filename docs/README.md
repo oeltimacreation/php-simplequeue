@@ -17,7 +17,7 @@ If you are setting up, configuring, or running SimpleQueue in an application:
 
 If you are embedding SimpleQueue, upgrading from prior releases, or building custom storage/drivers:
 
-1. **[Upgrading Guide](upgrading.md)** — Upgrade behavior and compatibility notes through v1.11.x.
+1. **[Upgrading Guide](upgrading.md)** — Upgrade behavior and compatibility notes through v1.12.x.
 2. **[Extending SimpleQueue](extending.md)** — Implementing custom `JobHandlerInterface`, custom `JobStorageInterface`, or custom `QueueDriverInterface`.
 3. **[Backend Parity Map](backend-parity.md)** — Feature-by-feature matrix comparing Redis driver, Database driver, and In-Memory driver behavior.
 4. **[Failure & Recovery Matrix](failure-matrix.md)** — Edge-case analysis of worker crashes, network partitions, database deadlocks, and stale lease recovery.

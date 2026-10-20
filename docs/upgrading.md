@@ -1,5 +1,26 @@
 # Upgrading
 
+## To v1.12.x
+
+New execution controls, transactional PDO participants, idempotent batches, compact
+queries, statistics snapshots and independent maintenance are additive optional
+capabilities. Existing handler/base interfaces and default progress behavior stay
+compatible. Notification failure after acknowledged creation now raises the
+dedicated `JobNotificationException`; use its known IDs and metadata to reconcile,
+while retaining the distinct uncertain-storage exception.
+
+`memoryLimit` remains MiB, as in 1.11. Applications upgrading from 1.10 byte-based
+configuration should pass `WorkerOptions::memoryMiBFromBytes($applicationBytes)`
+to the `memoryLimit` constructor argument. For example, 268435456 bytes becomes
+256 MiB; positive partial MiB round up and zero disables the limit. Renderer hard
+limits and PHP memory limits remain separate from worker recycling between jobs.
+
+Redis reconciliation snapshots one pending prefix per call (at most 10000 list
+entries), retains exact delayed membership, and uses linear membership lookups.
+Entries outside that bounded prefix can still generate allowed duplicate
+notifications. Large application-selected scan limits are upper bounds, not a
+promise of an exhaustive queue scan. No schema or Redis-key migration is required.
+
 ## To v1.11.x
 
 v1.11 is a hardening release that corrects durable outcomes, attempt counts,

@@ -1,4 +1,4 @@
-# Quality Gates (v1.11)
+# Quality Gates (v1.12)
 
 This document records the maintained, enforceable quality gates. Bespoke
 cognitive-complexity and overlapping token-fingerprint tooling was retired in
@@ -19,7 +19,7 @@ v1.11 and is not replaced with another custom parser.
 - **Mutation**: Infection `^0.31.9` focused on Worker, both storage
   implementations, Redis driver, and reconciler. The frozen baseline score is
   the floor; ownership/transition mutants must be killed.
-- **API comparison**: isolated Roave `8.21.0` vs `v1.10.0` reports no break
+- **API comparison**: isolated Roave `8.21.0` checks `v1.10.0` and `v1.11.0`
   (`scripts/bc-check.sh`, `.github/workflows/bc-check.yml`).
 - **Operation budgets**: `benchmarks/operation-count-checks.php` asserts exact
   and maximum statement, transaction, Redis command, roundtrip, event, and
@@ -43,4 +43,5 @@ composer budgets
 composer benchmark-profile
 composer mutation
 bash scripts/bc-check.sh v1.10.0
+bash scripts/bc-check.sh v1.11.0
 ```

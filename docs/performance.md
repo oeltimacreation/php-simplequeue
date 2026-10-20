@@ -439,3 +439,56 @@ timing samples; `composer benchmark-profile` captures 10/100/1,000/10,000
 in-memory queues, storage creation, PDO batches, worker/result paths, and
 optimized/legacy all-hit/all-miss/mixed reconciliation. The archive records
 the exact environment, sample configuration, medians, and counters.
+
+## v1.12 resource bounds
+
+Redis batch reconciliation now builds one Lua membership table from a pending
+prefix instead of running `LPOS` for each ID. The prefix is capped at 10,000
+entries, even when an application requests a larger scan. A page of P IDs and
+an inspected prefix of L entries therefore performs O(P + min(L, 10,000))
+membership work, plus exact delayed-set lookups and missing notifications.
+One atomic `EVAL` still handles the whole page. Standard reconciliation options
+cap pages at 10,000 IDs; direct driver calls remain proportional to their input.
+IDs beyond the prefix may produce duplicate notifications, handled by durable
+claim fencing. Increasing a scan limit does not guarantee exhaustive membership.
+
+A local comparison on PHP 8.5.11 and Valkey 9.0.4 used a 10,000-entry pending
+window, five samples per case, and a second client issuing PING every 250 µs.
+The baseline script was taken from v1.11.0 (`834a114`). Each sample rebuilt the
+fixture. These are medians of EVAL duration and of each run's maximum concurrent
+PING latency, in milliseconds:
+
+| IDs / distribution | Baseline EVAL | Candidate EVAL | Baseline PING | Candidate PING |
+|---|---:|---:|---:|---:|
+| 10 / all hit | 0.178 | 3.019 | 0.162 | 2.724 |
+| 10 / all miss | 2.654 | 2.051 | 2.310 | 2.009 |
+| 10 / mixed | 0.998 | 2.570 | 0.908 | 2.502 |
+| 1,000 / all hit | 11.020 | 3.770 | 10.100 | 2.855 |
+| 1,000 / all miss | 182.394 | 3.256 | 181.768 | 2.837 |
+| 1,000 / mixed | 92.523 | 4.787 | 91.883 | 3.839 |
+
+A full prefix snapshot costs more for tiny pages whose IDs are near the list
+head. The default 250-entry scan keeps that allocation small; avoid selecting a
+10,000-entry window for tiny pages without measuring it. The improvement targets
+large pages and misses, where repeated scans blocked the server longest. These
+local values are diagnostic evidence, not service-level guarantees.
+
+The benchmark harness includes small/large payload reads, idempotent batches,
+compact queries, sampled telemetry, blocking dequeue, and real reconciliation
+distributions. Its deterministic gates measure SQL executions and fetched JSON
+bytes as well as roundtrips. Claims retain three executions and one transaction;
+recovery and compact queries fetch no payload/result bytes.
+
+The same local PHP/SQLite environment compared ten-row small-value (32 bytes)
+and large-value (1 MiB) fixtures over five samples, with setup excluded. The
+v1.11.0 and candidate runs used the same execution/JSON-byte instrumentation.
+The large-value results were:
+
+| Operation, ten rows | Baseline median | Candidate median | Baseline fetched JSON | Candidate fetched JSON | SQL executions |
+|---|---:|---:|---:|---:|---:|
+| Claim | 18.209 ms | 14.832 ms | 20,971,760 B | 10,485,880 B | 30 in both |
+| Scoped stale recovery | 26.672 ms | 3.772 ms | 10,485,880 B | 0 B | 11 in both |
+
+Peak incremental PHP memory in that recovery fixture fell from 11,606,168 B to
+14,088 B. SQLite may still copy large records internally; zero fetched JSON
+measures the PHP-facing projection rather than total database engine I/O.

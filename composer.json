@@ -2,7 +2,7 @@
     "name": "oeltimacreation/php-simplequeue",
     "description": "A lightweight, framework-agnostic background job queue system for PHP with Redis and database drivers",
     "type": "library",
-    "version": "1.11.0",
+    "version": "1.12.0",
     "license": "MIT",
     "keywords": [
         "queue",
@@ -49,6 +49,14 @@
         "ext-pcntl": "Required for graceful worker shutdown on Unix systems",
         "ext-pdo": "Required for database queue driver"
     },
+    "archive": {
+        "exclude": [
+            "/internal_docs", "/vendor", "/coverage", "/build", "/composer.lock",
+            "/.env", "/.env.*", "/.phpunit.cache", "/.phpunit.result.cache",
+            "/infection.log", "/infection-summary.log", "/infection-summary.json",
+            "/phpstan.neon.local"
+        ]
+    },
     "autoload": {
         "psr-4": {
             "Oeltima\\SimpleQueue\\": "src/"
@@ -70,7 +78,7 @@
         "benchmark": "@php benchmarks/run.php",
         "benchmark-profile": "@php benchmarks/run.php --profile --iterations=1 --warmup=0",
         "budgets": "@php benchmarks/run.php --jobs=100 --iterations=1 --warmup=0",
-        "mutation": "infection --threads=4 --filter=src/Worker.php,src/Internal/WorkerJobProcessor.php,src/Storage/InMemoryJobStorage.php,src/Storage/PdoJobStorage.php,src/Driver/RedisQueueDriver.php,src/QueueReconciler.php --only-covering-test-cases --min-msi=64.79 --min-covered-msi=64.79 --no-interaction --no-progress",
+        "mutation": "infection --threads=4 --filter=src/Worker.php,src/Internal/WorkerJobProcessor.php,src/Storage/InMemoryJobStorage.php,src/Storage/PdoJobStorage.php,src/Driver/RedisQueueDriver.php,src/QueueReconciler.php,src/JobDispatcher.php,src/Internal/PdoParticipation.php,src/Internal/IdempotentBatchNotifier.php,src/Internal/PdoIdempotentBatch.php,src/Internal/PdoStaleJobRecovery.php,src/Internal/WorkerExecutionControl.php,src/QueueMaintenance.php,src/QueueStatsSampler.php --only-covering-test-cases --min-msi=64.79 --min-covered-msi=64.79 --no-interaction --no-progress",
         "check-fast": [
             "@test",
             "@phpstan",
