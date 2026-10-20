@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Isolated Roave BC check against v1.10.0 (PHP 8.5, pinned Roave 8.21.0).
+# Isolated Roave BC check against the supplied release (PHP 8.5, pinned Roave 8.21.0).
 # Not added to root require-dev: one release cannot satisfy both PHP 8.2 and 8.5 platforms.
 # BetterReflection cannot compile PHP's `new` parameter default. Normalize that
 # initializer identically in disposable snapshots so every other API is checked.
-BASE_REF="${1:-v1.10.0}"
+BASE_REF="${1:-v1.11.0}"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 composer require --working-dir="$TMP_DIR" --no-interaction --no-progress roave/backward-compatibility-check:8.21.0 > /dev/null

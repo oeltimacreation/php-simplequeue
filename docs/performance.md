@@ -440,7 +440,7 @@ in-memory queues, storage creation, PDO batches, worker/result paths, and
 optimized/legacy all-hit/all-miss/mixed reconciliation. The archive records
 the exact environment, sample configuration, medians, and counters.
 
-## v1.12 candidate resource bounds
+## v1.12 resource bounds
 
 Redis batch reconciliation now builds one Lua membership table from a pending
 prefix instead of running `LPOS` for each ID. The prefix is capped at 10,000

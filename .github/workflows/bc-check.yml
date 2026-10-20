@@ -11,8 +11,12 @@ permissions:
 
 jobs:
   backward-compatibility:
-    name: Roave BC vs v1.10.0 (PHP 8.5)
+    name: Roave BC vs ${{ matrix.baseline }} (PHP 8.5)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        baseline: ['v1.10.0', 'v1.11.0']
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -22,4 +26,4 @@ jobs:
           php-version: '8.5'
           extensions: pdo, pdo_sqlite
           coverage: none
-      - run: bash scripts/bc-check.sh v1.10.0
+      - run: bash scripts/bc-check.sh '${{ matrix.baseline }}'

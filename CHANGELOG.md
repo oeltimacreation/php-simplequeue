@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-10-20
+
 ### Added
 
 - Added explicit byte-to-MiB worker memory conversion for application configuration and upgrades.
