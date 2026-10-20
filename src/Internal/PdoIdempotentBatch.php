@@ -105,32 +105,63 @@ final readonly class PdoIdempotentBatch
     private function existing(PDO $pdo, array $jobs): array
     {
         $ids = [];
-        $driver = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
-        $locking = match ($driver) {
+        foreach (array_chunk($jobs, 100) as $chunk) {
+            $statement = $this->lookupStatement($pdo, $chunk);
+            $ids += $this->readExistingIds($statement);
+        }
+        return $ids;
+    }
+
+    /**
+     * @param PDO $pdo Connection
+     * @param list<JobDefinitionShape> $jobs One bounded request chunk
+     * @return \PDOStatement Executed locking lookup
+     */
+    private function lookupStatement(PDO $pdo, array $jobs): \PDOStatement
+    {
+        $locking = match ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME)) {
             'pgsql' => ' FOR UPDATE OF jobs',
             'mysql' => ' FOR UPDATE',
             default => '',
         };
-        foreach (array_chunk($jobs, 100) as $chunk) {
-            $requests = implode(' UNION ALL ', array_fill(0, count($chunk), 'SELECT ? AS request_id'));
-            $statement = $pdo->prepare("SELECT requested.request_id AS requested_id, jobs.id
-                FROM ({$requests}) requested JOIN {$this->table} jobs ON jobs.request_id = requested.request_id
-                WHERE jobs.status IN ('pending', 'running')" . $locking);
-            if ($statement === false) {
-                throw new \RuntimeException('Unable to prepare idempotent batch lookup');
-            }
-            $statement->execute(array_column($chunk, 'requestId'));
-            while (is_array($row = $statement->fetch(PDO::FETCH_ASSOC))) {
-                $requestId = $row['requested_id'] ?? null;
-                $id = $row['id'] ?? null;
-                if (!is_string($requestId) || !(is_int($id) || (is_string($id) && ctype_digit($id)))) {
-                    throw new \RuntimeException('Invalid idempotent batch lookup result');
-                }
-                $ids['request:' . $requestId] = JobStorageRules::validatePositiveId((int) $id);
-            }
-            $statement->closeCursor();
+        $requests = implode(' UNION ALL ', array_fill(0, count($jobs), 'SELECT ? AS request_id'));
+        $statement = $pdo->prepare("SELECT requested.request_id AS requested_id, jobs.id
+            FROM ({$requests}) requested JOIN {$this->table} jobs ON jobs.request_id = requested.request_id
+            WHERE jobs.status IN ('pending', 'running')" . $locking);
+        if ($statement === false) {
+            throw new \RuntimeException('Unable to prepare idempotent batch lookup');
         }
+        $statement->execute(array_column($jobs, 'requestId'));
+        return $statement;
+    }
+
+    /**
+     * @param \PDOStatement $statement Executed lookup
+     * @return array<string, int> Requested spellings and winning IDs
+     */
+    private function readExistingIds(\PDOStatement $statement): array
+    {
+        $ids = [];
+        while (is_array($row = $statement->fetch(PDO::FETCH_ASSOC))) {
+            $requestId = $row['requested_id'] ?? null;
+            if (!is_string($requestId)) {
+                throw new \RuntimeException('Invalid idempotent batch lookup result');
+            }
+            $ids['request:' . $requestId] = $this->lookupId($row['id'] ?? null);
+        }
+        $statement->closeCursor();
         return $ids;
+    }
+
+    private function lookupId(mixed $id): int
+    {
+        if (is_string($id) && ctype_digit($id)) {
+            $id = (int) $id;
+        }
+        if (!is_int($id)) {
+            throw new \RuntimeException('Invalid idempotent batch lookup result');
+        }
+        return JobStorageRules::validatePositiveId($id);
     }
 
     /**

@@ -48,9 +48,7 @@ trait PdoJobQueries
                 $statement = $this->prepare($pdo, 'SELECT ' . self::SUMMARY_COLUMNS .
                     " FROM {$this->table} WHERE id IN ({$placeholders})");
                 $statement->execute($chunk);
-                foreach ($this->fetchSummaries($statement) as $summary) {
-                    $found[$summary->id] = $summary;
-                }
+                $found += $this->indexSummaries($statement);
             }
             $ordered = [];
             foreach ($ids as $id) {
@@ -73,15 +71,35 @@ trait PdoJobQueries
             $counts = JobQueryRules::emptyCounts();
             while (is_array($row = $statement->fetch(PDO::FETCH_ASSOC))) {
                 $status = $row['status'] ?? null;
-                $total = $row['total'] ?? null;
-                if (!is_string($status) || !(is_int($total) || (is_string($total) && ctype_digit($total)))) {
+                if (!is_string($status)) {
                     throw new \UnexpectedValueException('Invalid grouped status count');
                 }
-                $counts[JobStatus::from($status)->value] = (int) $total;
+                $counts[JobStatus::from($status)->value] = $this->statusCount($row['total'] ?? null);
             }
             $statement->closeCursor();
             return $counts;
         });
+    }
+
+    /** @return array<int, JobSummary> Compact summaries keyed by identity */
+    private function indexSummaries(PDOStatement $statement): array
+    {
+        $found = [];
+        foreach ($this->fetchSummaries($statement) as $summary) {
+            $found[$summary->id] = $summary;
+        }
+        return $found;
+    }
+
+    private function statusCount(mixed $total): int
+    {
+        if (is_string($total) && ctype_digit($total)) {
+            $total = (int) $total;
+        }
+        if (!is_int($total)) {
+            throw new \UnexpectedValueException('Invalid grouped status count');
+        }
+        return $total;
     }
 
     /** @return list<JobSummary> Compact rows */

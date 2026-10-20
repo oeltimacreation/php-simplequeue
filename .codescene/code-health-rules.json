@@ -1,5 +1,5 @@
 {
-  "usage": "Tune structural heuristics for test fixtures, declarative benchmarks, and scalar boundary objects.",
+  "usage": "Tune structural heuristics for test fixtures, declarative benchmarks, and scalar boundary objects. Three explicit constructor exceptions preserve documented positional and named arguments; behavioral complexity rules remain enabled.",
   "rule_sets": [
     {
       "matching_content_path": "tests/**",
@@ -48,6 +48,27 @@
       "matching_content_path": "src/Internal/WorkerJobProcessor.php",
       "rules": [
         { "name": "Primitive Obsession", "weight": 0.0 }
+      ],
+      "thresholds": []
+    },
+    {
+      "matching_content_path": "src/Contract/JobSummary.php",
+      "rules": [
+        { "name": "Excess Number of Function Arguments", "weight": 0.0 }
+      ],
+      "thresholds": []
+    },
+    {
+      "matching_content_path": "src/MaintenanceResult.php",
+      "rules": [
+        { "name": "Excess Number of Function Arguments", "weight": 0.0 }
+      ],
+      "thresholds": []
+    },
+    {
+      "matching_content_path": "src/Exception/JobNotificationException.php",
+      "rules": [
+        { "name": "Excess Number of Function Arguments", "weight": 0.0 }
       ],
       "thresholds": []
     }

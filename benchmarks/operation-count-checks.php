@@ -182,6 +182,34 @@ function operationBudgetDefinitions(): array
         'read maintenance: no transaction'
     );
 
+    addCandidateOperationBudgets($add);
+
+    $add('redis.dispatch_scheduled_single', 'median_redis_roundtrips', 'maximum-per', [1, 0, 1], 'ZADD: one per job');
+    $add('redis.dispatch_scheduled_batch', 'median_redis_roundtrips', 'exact-fixed', [0, 1, 1], 'ZADD: one per batch');
+    $add('redis.promote_delayed', 'median_redis_roundtrips', 'maximum-fixed', [0, 1, 1], 'Lua: one promotion');
+    $add('redis.dispatch_batch', 'median_redis_commands', 'exact-fixed', [0, 1, 1], 'LPUSH: one batch command');
+    $add('redis.dispatch_batch', 'median_redis_roundtrips', 'exact-fixed', [0, 1, 1], 'LPUSH: one batch roundtrip');
+    $add('redis.dequeue_ack', 'median_redis_roundtrips', 'maximum-per', [2, 1, 1], 'pop + ACK Lua: plus empty probe');
+    $add('redis.dequeue_ack', 'median_redis_commands', 'maximum-per', [2, 1, 1], 'pop + ACK Lua: plus empty probe');
+    $add('redis.retry', 'median_redis_roundtrips', 'exact-per', [2, 0, 1], 'pop + NACK Lua: two per retry');
+    $add('redis.retry', 'median_redis_commands', 'exact-per', [2, 0, 1], 'pop + NACK Lua: two per retry');
+    $add(
+        'redis.repair_unscored',
+        'median_redis_roundtrips',
+        'maximum-fixed',
+        [0, 4, 1],
+        'pipeline + Lua: bounded phases'
+    );
+    $add('redis.repair_unscored', 'median_redis_commands', 'maximum-per', [2, 2, 1], 'score repair: linear commands');
+
+    return $budgets;
+}
+
+/**
+ * @param Closure(string, string, string, array<int>, string): void $add Budget collector
+ */
+function addCandidateOperationBudgets(Closure $add): void
+{
     foreach (['small', 'large'] as $size) {
         $add(
             'sqlite.claim_payload_' . $size,
@@ -231,26 +259,6 @@ function operationBudgetDefinitions(): array
         'statistics: three counts per snapshot'
     );
     $add('redis.dequeue_blocking_ack', 'median_redis_roundtrips', 'exact-per', [3, 0, 1], 'blocking: move, score, ACK');
-
-    $add('redis.dispatch_scheduled_single', 'median_redis_roundtrips', 'maximum-per', [1, 0, 1], 'ZADD: one per job');
-    $add('redis.dispatch_scheduled_batch', 'median_redis_roundtrips', 'exact-fixed', [0, 1, 1], 'ZADD: one per batch');
-    $add('redis.promote_delayed', 'median_redis_roundtrips', 'maximum-fixed', [0, 1, 1], 'Lua: one promotion');
-    $add('redis.dispatch_batch', 'median_redis_commands', 'exact-fixed', [0, 1, 1], 'LPUSH: one batch command');
-    $add('redis.dispatch_batch', 'median_redis_roundtrips', 'exact-fixed', [0, 1, 1], 'LPUSH: one batch roundtrip');
-    $add('redis.dequeue_ack', 'median_redis_roundtrips', 'maximum-per', [2, 1, 1], 'pop + ACK Lua: plus empty probe');
-    $add('redis.dequeue_ack', 'median_redis_commands', 'maximum-per', [2, 1, 1], 'pop + ACK Lua: plus empty probe');
-    $add('redis.retry', 'median_redis_roundtrips', 'exact-per', [2, 0, 1], 'pop + NACK Lua: two per retry');
-    $add('redis.retry', 'median_redis_commands', 'exact-per', [2, 0, 1], 'pop + NACK Lua: two per retry');
-    $add(
-        'redis.repair_unscored',
-        'median_redis_roundtrips',
-        'maximum-fixed',
-        [0, 4, 1],
-        'pipeline + Lua: bounded phases'
-    );
-    $add('redis.repair_unscored', 'median_redis_commands', 'maximum-per', [2, 2, 1], 'score repair: linear commands');
-
-    return $budgets;
 }
 
 /**

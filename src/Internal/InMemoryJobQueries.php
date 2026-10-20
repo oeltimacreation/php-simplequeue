@@ -24,7 +24,10 @@ trait InMemoryJobQueries
         $summaries = [];
         foreach ($ids as $id) {
             $row = $this->jobs[$id];
-            if (($beforeId !== null && $id >= $beforeId) || !$filter->matches($row['status'], $row['queue'])) {
+            if ($beforeId !== null && $id >= $beforeId) {
+                continue;
+            }
+            if (!$filter->matches($row['status'], $row['queue'])) {
                 continue;
             }
             $summaries[] = JobSummary::fromRaw($row);

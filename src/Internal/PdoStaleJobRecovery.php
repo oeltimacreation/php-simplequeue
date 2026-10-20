@@ -76,8 +76,11 @@ final readonly class PdoStaleJobRecovery
             $total += $this->recoverRows($rows, $context);
             foreach ($rows as $row) {
                 $id = $row['id'] ?? 0;
-                if (is_int($id) || (is_string($id) && ctype_digit($id))) {
-                    $cursor = max($cursor, (int) $id);
+                if (is_string($id) && ctype_digit($id)) {
+                    $id = (int) $id;
+                }
+                if (is_int($id)) {
+                    $cursor = max($cursor, $id);
                 }
             }
         } while (count($rows) === 100);

@@ -12,6 +12,7 @@ use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Contract\ClaimedJob;
 use Oeltima\SimpleQueue\Driver\InMemoryQueueDriver;
 use Oeltima\SimpleQueue\Internal\WorkerExecutionControl;
+use Oeltima\SimpleQueue\Internal\WorkerExecutionCallbacks;
 use Oeltima\SimpleQueue\JobDispatcher;
 use Oeltima\SimpleQueue\JobRegistry;
 use Oeltima\SimpleQueue\QueueManager;
@@ -29,14 +30,16 @@ final class ExecutionControlTest extends TestCase
         $heartbeats = 0;
         $control = new WorkerExecutionControl(
             $clock,
-            static function (int $percent, ?string $message) use (&$writes): void {
-                $writes[] = [$percent, $message];
-            },
-            static function () use (&$heartbeats): void {
-                $heartbeats++;
-            },
-            static function (): void {
-            },
+            new WorkerExecutionCallbacks(
+                static function (int $percent, ?string $message) use (&$writes): void {
+                    $writes[] = [$percent, $message];
+                },
+                static function () use (&$heartbeats): void {
+                    $heartbeats++;
+                },
+                static function (): void {
+                },
+            ),
             10,
             2
         );

@@ -228,40 +228,11 @@ final class JobDispatcher
         }
         unset($job);
         $results = $this->storage->createIdempotentJobs($jobs);
-        $groups = [];
-        $notifications = [];
-        foreach ($results as $index => $result) {
-            if (!$result->created) {
-                continue;
-            }
-            $queue = $jobs[$index]['queue'] ?? 'default';
-            $at = $this->resolveAvailableAt($jobs[$index]['availableAt'] ?? null);
-            $key = serialize([$queue, $at]);
-            $groups[$key] ??= ['queue' => $queue, 'at' => $at, 'ids' => []];
-            $groups[$key]['ids'][] = $result->jobId;
-            $notifications[] = ['jobId' => $result->jobId, 'queue' => $queue, 'availableAt' => $at];
-        }
-        foreach ($groups as $group) {
-            try {
-                if ($group['at'] === null) {
-                    $this->notifyBatch($group['queue'], $group['ids']);
-                } else {
-                    $this->queueManager->enqueueDelayedBatch(new DelayedBatch(
-                        $group['ids'],
-                        $group['queue'],
-                        $group['at']
-                    ));
-                }
-            } catch (\Throwable $exception) {
-                throw new JobNotificationException(
-                    array_column($notifications, 'jobId'),
-                    $group['queue'],
-                    $group['at'],
-                    $exception,
-                    $notifications
-                );
-            }
-        }
+        (new \Oeltima\SimpleQueue\Internal\IdempotentBatchNotifier(
+            $this->queueManager,
+            $this->notifyBatch(...),
+            $this->resolveAvailableAt(...)
+        ))->notify($jobs, $results);
         return $results;
     }
 

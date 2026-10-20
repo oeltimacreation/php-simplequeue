@@ -119,23 +119,25 @@ final readonly class WorkerJobProcessor
         if ($middlewares !== [] || $this->progressInterval > 0) {
             $control = new WorkerExecutionControl(
                 $this->clock,
-                $progress,
-                function () use ($claim, $driver): void {
-                    $this->assertOwned($this->storage->heartbeat($claim), $claim, 'heartbeat');
-                    $this->refreshTransport($claim, $driver);
-                },
-                function () use ($claim): void {
-                    $owned = $this->storage instanceof SupportsClaimInspection
-                        ? $this->storage->isClaimOwned($claim)
-                        : $this->storage->heartbeat($claim);
-                    $this->assertOwned($owned, $claim, 'ownership_check');
-                },
+                new WorkerExecutionCallbacks(
+                    $progress,
+                    function () use ($claim, $driver): void {
+                        $this->assertOwned($this->storage->heartbeat($claim), $claim, 'heartbeat');
+                        $this->refreshTransport($claim, $driver);
+                    },
+                    function () use ($claim): void {
+                        $owned = $this->storage instanceof SupportsClaimInspection
+                            ? $this->storage->isClaimOwned($claim)
+                            : $this->storage->heartbeat($claim);
+                        $this->assertOwned($owned, $claim, 'ownership_check');
+                    },
+                ),
                 $this->progressInterval,
                 $this->heartbeatInterval
             );
-            $progress = $control->reportProgress(...);
+            $progress = $control;
         }
-        return JobMiddlewareRunner::run($middlewares, $claim, $handler, $progress, $control);
+        return JobMiddlewareRunner::run($middlewares, $claim, $handler, $progress);
     }
 
     private function assertOwned(bool $owned, ClaimedJob $claim, string $operation): void

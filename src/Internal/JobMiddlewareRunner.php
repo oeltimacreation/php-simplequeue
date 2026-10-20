@@ -18,16 +18,17 @@ final class JobMiddlewareRunner
      * @param list<\Oeltima\SimpleQueue\Contract\JobMiddlewareInterface> $middlewares Middleware in registration order
      * @param ClaimedJob $claim Current job claim
      * @param JobHandlerInterface $handler Resolved job handler
-     * @param callable(int, ?string=): void $progressCallback Handler progress callback
+     * @param (callable(int, ?string=): void)|WorkerExecutionControl $progressCallback Handler progress/control
      * @return mixed Handler or middleware result
      */
     public static function run(
         array $middlewares,
         ClaimedJob $claim,
         JobHandlerInterface $handler,
-        callable $progressCallback,
-        ?WorkerExecutionControl $control = null
+        callable|WorkerExecutionControl $progressCallback
     ): mixed {
+        $control = $progressCallback instanceof WorkerExecutionControl ? $progressCallback : null;
+        $progressCallback = $control === null ? $progressCallback : $control->reportProgress(...);
         if ($middlewares === []) {
             return $handler->handle($claim->job->id, $claim->job->payload, $progressCallback);
         }

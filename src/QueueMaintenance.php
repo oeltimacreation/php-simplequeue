@@ -112,10 +112,12 @@ final readonly class QueueMaintenance
     public function reconcile(string $queue, ReconcileOptions $options): ?ReconcileResult
     {
         JobStorageRules::validateQueueOrType($queue, 'Queue');
+        if (!$this->driver instanceof SupportsBoundedQueueMembership) {
+            return null;
+        }
         if (
-            !$this->driver instanceof SupportsBoundedQueueMembership ||
-            (!$this->storage instanceof SupportsPendingNotificationCursor &&
-            !$this->storage instanceof SupportsPendingJobCursor)
+            !$this->storage instanceof SupportsPendingNotificationCursor &&
+            !$this->storage instanceof SupportsPendingJobCursor
         ) {
             return null;
         }
