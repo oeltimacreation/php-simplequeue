@@ -171,32 +171,48 @@ final readonly class PdoIdempotentBatch
      */
     private function atomic(PDO $pdo, callable $operation): array
     {
+        $owns = $this->beginBatchTransaction($pdo);
+        try {
+            $result = $operation();
+            $this->commitBatchTransaction($pdo, $owns);
+            return $result;
+        } catch (\Throwable $exception) {
+            $this->rollbackBatchTransaction($pdo, $owns);
+            throw $exception;
+        }
+    }
+
+    private function beginBatchTransaction(PDO $pdo): bool
+    {
         $owns = !$pdo->inTransaction();
         if ($owns) {
             $pdo->beginTransaction();
         } else {
             $pdo->exec('SAVEPOINT simplequeue_idempotent_batch');
         }
+        return $owns;
+    }
+
+    private function commitBatchTransaction(PDO $pdo, bool $owns): void
+    {
+        if ($owns) {
+            $pdo->commit();
+        } else {
+            $pdo->exec('RELEASE SAVEPOINT simplequeue_idempotent_batch');
+        }
+    }
+
+    private function rollbackBatchTransaction(PDO $pdo, bool $owns): void
+    {
         try {
-            $result = $operation();
             if ($owns) {
-                $pdo->commit();
+                $pdo->rollBack();
             } else {
+                $pdo->exec('ROLLBACK TO SAVEPOINT simplequeue_idempotent_batch');
                 $pdo->exec('RELEASE SAVEPOINT simplequeue_idempotent_batch');
             }
-            return $result;
-        } catch (\Throwable $exception) {
-            try {
-                if ($owns) {
-                    $pdo->rollBack();
-                } else {
-                    $pdo->exec('ROLLBACK TO SAVEPOINT simplequeue_idempotent_batch');
-                    $pdo->exec('RELEASE SAVEPOINT simplequeue_idempotent_batch');
-                }
-            } catch (\Throwable) {
-                // Preserve the original error; storage classifies uncertain mutations.
-            }
-            throw $exception;
+        } catch (\Throwable) {
+            // Preserve the original error; storage classifies uncertain mutations.
         }
     }
 }

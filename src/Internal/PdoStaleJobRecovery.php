@@ -75,13 +75,7 @@ final readonly class PdoStaleJobRecovery
             ]);
             $total += $this->recoverRows($rows, $context);
             foreach ($rows as $row) {
-                $id = $row['id'] ?? 0;
-                if (is_string($id) && ctype_digit($id)) {
-                    $id = (int) $id;
-                }
-                if (is_int($id)) {
-                    $cursor = max($cursor, $id);
-                }
+                $cursor = max($cursor, $this->staleRowId($row) ?? 0);
             }
         } while (count($rows) === 100);
         return $total;
@@ -161,14 +155,14 @@ final readonly class PdoStaleJobRecovery
     {
         $recovered = 0;
         foreach ($rows as $row) {
-            $id = $row['id'] ?? null;
-            if (!is_int($id) && !(is_string($id) && ctype_digit($id))) {
+            $id = $this->staleRowId($row);
+            if ($id === null) {
                 continue;
             }
             $changed = ($this->mutate)([
                 'sql' => $this->recoverRowSql(),
                 'params' => [
-                    'id' => (int) $id,
+                    'id' => $id,
                     'threshold' => $context['threshold'],
                     'error_message' => $context['error'],
                     'completed_at' => $context['now'],
@@ -180,6 +174,19 @@ final readonly class PdoStaleJobRecovery
             $recovered += $changed->rowCount();
         }
         return $recovered;
+    }
+
+    /** @param array<string, mixed> $row Lean recovery identity */
+    private function staleRowId(array $row): ?int
+    {
+        $id = $row['id'] ?? null;
+        if (is_int($id)) {
+            return $id;
+        }
+        if (is_string($id) && ctype_digit($id)) {
+            return (int) $id;
+        }
+        return null;
     }
 
     private function recoverRowSql(): string
