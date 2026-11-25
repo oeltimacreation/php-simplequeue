@@ -196,11 +196,11 @@ function operationBudgetDefinitions(): array
     $add(
         'redis.repair_unscored',
         'median_redis_roundtrips',
-        'maximum-fixed',
-        [0, 4, 1],
-        'pipeline + Lua: bounded phases'
+        'exact-fixed',
+        [0, 2, 1],
+        'Lua: one atomic repair and one stale recovery'
     );
-    $add('redis.repair_unscored', 'median_redis_commands', 'maximum-per', [2, 2, 1], 'score repair: linear commands');
+    $add('redis.repair_unscored', 'median_redis_commands', 'exact-fixed', [0, 2, 1], 'Lua: two client commands');
 
     return $budgets;
 }

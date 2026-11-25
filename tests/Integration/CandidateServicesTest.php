@@ -7,6 +7,8 @@ namespace Oeltima\SimpleQueue\Tests\Integration;
 use Oeltima\SimpleQueue\Contract\IdempotentJobResult;
 use Oeltima\SimpleQueue\Contract\PdoJobParticipantInterface;
 use Oeltima\SimpleQueue\Contract\StorageTransition;
+use Oeltima\SimpleQueue\Driver\RedisQueueDriver;
+use Oeltima\SimpleQueue\Internal\RedisScriptRunner;
 use Oeltima\SimpleQueue\Storage\PdoJobStorage;
 use Oeltima\SimpleQueue\Tests\DbHelper;
 use Oeltima\SimpleQueue\Tests\Support\DatabaseFixture;
@@ -15,6 +17,8 @@ use Oeltima\SimpleQueue\Tests\Support\RedisFixture;
 use PDO;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Predis\Client;
+use Predis\Connection\ConnectionInterface;
 
 final class CandidateServicesTest extends TestCase
 {
@@ -104,6 +108,93 @@ final class CandidateServicesTest extends TestCase
             self::assertSame(10002, $driver->getPendingCount('default'));
             self::assertSame([1], $driver->reconcileNotifications('default', $times, $clock->timestamp(), 1000000));
             self::assertSame(10002, $driver->getPendingCount('default'));
+        } finally {
+            $driver->clear('default');
+        }
+    }
+
+    public function testRealRedisScriptFallbackAppliesTheColdMutationOnce(): void
+    {
+        $client = RedisFixture::client();
+        $key = 'candidate-script:' . bin2hex(random_bytes(8));
+        $script = "-- {$key}\nreturn redis.call('INCR', KEYS[1])";
+        $sha = sha1($script);
+        $runner = new RedisScriptRunner($client);
+        try {
+            self::assertSame([0], $client->script('EXISTS', $sha));
+            self::assertSame(1, $runner->run($script, [$key], []));
+            self::assertSame([1], $client->script('EXISTS', $sha));
+            self::assertSame(2, $runner->run($script, [$key], []));
+        } finally {
+            $client->del([$key]);
+        }
+    }
+
+    public function testRealRedisRepairPreservesLiveScoresAndRecoversOnlyListEntries(): void
+    {
+        $clock = new FrozenClock();
+        $client = RedisFixture::client();
+        $prefix = 'candidate-repair:' . bin2hex(random_bytes(6));
+        $driver = new RedisQueueDriver($client, $prefix, $clock);
+        $processing = $prefix . ':queue:default:processing';
+        $scores = $processing . '_z';
+        $live = $clock->timestamp() + 5;
+        try {
+            $client->lpush($processing, ['42', '42', (string) PHP_INT_MAX, "123\n", '01']);
+            $client->zadd($scores, [42 => $live, 99 => $clock->timestamp() - 61]);
+
+            self::assertSame(0, $driver->recoverStaleProcessing('default', 60, 10));
+            self::assertSame(3, $driver->getProcessingCount('default'));
+            self::assertSame((string) $live, $client->zscore($scores, '42'));
+            self::assertSame((string) $clock->timestamp(), $client->zscore($scores, (string) PHP_INT_MAX));
+            self::assertNull($client->zscore($scores, '99'));
+            self::assertSame([], $driver->getPendingIds('default'));
+
+            $clock->advance(61);
+            self::assertSame(1, $driver->recoverStaleProcessing('default', 60, 10));
+            $clock->advance(5);
+            self::assertSame(1, $driver->recoverStaleProcessing('default', 60, 10));
+            self::assertSame([42, PHP_INT_MAX], $driver->getPendingIds('default'));
+            self::assertSame(1, $driver->getProcessingCount('default'));
+            self::assertSame((string) $clock->timestamp(), $client->zscore($scores, '42'));
+        } finally {
+            $driver->clear('default');
+        }
+    }
+
+    public function testRealRedisBlockingScoreAndHeartbeatCannotResurrectAnAcknowledgedNotification(): void
+    {
+        $clock = new FrozenClock();
+        $prefix = 'candidate-ack:' . bin2hex(random_bytes(6));
+        $acknowledger = RedisFixture::driver($prefix, $clock);
+        $client = RedisFixture::client();
+        $interleaved = new class ($client->getConnection(), $acknowledger) extends Client {
+            public function __construct(ConnectionInterface $connection, private readonly RedisQueueDriver $acknowledger)
+            {
+                parent::__construct($connection);
+            }
+
+            /** @param array<array-key, mixed> $arguments */
+            public function __call(mixed $commandID, mixed $arguments): mixed
+            {
+                $result = parent::__call($commandID, $arguments);
+                if ($commandID === 'blmove' && $result === '42') {
+                    $this->acknowledger->ack('default', 42);
+                }
+                return $result;
+            }
+        };
+        $driver = new RedisQueueDriver($interleaved, $prefix, $clock);
+        $scores = $prefix . ':queue:default:processing_z';
+        try {
+            $driver->enqueue('default', 42);
+            self::assertSame(42, $driver->dequeue('default', 1));
+            self::assertNull($client->zscore($scores, '42'));
+            $driver->heartbeatProcessing('default', 42);
+            self::assertNull($client->zscore($scores, '42'));
+            $clock->advance(61);
+            self::assertSame(0, $driver->recoverStaleProcessing('default', 60));
+            self::assertSame([], $driver->getPendingIds('default'));
         } finally {
             $driver->clear('default');
         }

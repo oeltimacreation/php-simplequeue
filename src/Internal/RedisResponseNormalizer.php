@@ -71,7 +71,7 @@ final class RedisResponseNormalizer
 
     private static function integerString(string $result): int
     {
-        if (preg_match('/^(0|[1-9][0-9]*)$/', $result) !== 1) {
+        if (preg_match('/^(0|[1-9][0-9]*)\z/', $result) !== 1) {
             throw new QueueException('Redis returned a malformed integer response');
         }
         if (!self::fitsPhpInteger($result)) {
@@ -97,7 +97,7 @@ final class RedisResponseNormalizer
      */
     public static function isValidJobId(string $value): bool
     {
-        if (preg_match('/^[1-9][0-9]*$/', $value) !== 1) {
+        if (preg_match('/^[1-9][0-9]*\z/', $value) !== 1) {
             return false;
         }
         return self::fitsPhpInteger($value);
