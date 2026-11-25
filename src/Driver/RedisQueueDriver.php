@@ -100,6 +100,7 @@ LUA;
     private array $repairCursors = [];
 
     private readonly RedisScriptRunner $scripts;
+    private readonly RedisProcessingRepair $processingRepair;
 
     /**
      * @param ClientInterface $redis Predis client instance
@@ -111,6 +112,7 @@ LUA;
         private readonly ClockInterface $clock = new SystemClock()
     ) {
         $this->scripts = new RedisScriptRunner($this->redis);
+        $this->processingRepair = new RedisProcessingRepair($this->redis, $this->scripts);
     }
 
     public function isAvailable(): bool
@@ -326,8 +328,7 @@ LUA;
         }
         $this->repairUnscoredProcessing($queue, $limit);
         $now = $this->clock->timestamp();
-        return RedisProcessingRepair::recoverStale(
-            $this->scripts,
+        return $this->processingRepair->recoverStale(
             [
                 $this->processingZKey($queue),
                 $this->processingKey($queue),
@@ -660,8 +661,7 @@ LUA;
     private function repairUnscoredProcessing(string $queue, int $limit): void
     {
         $cursor = $this->repairCursors[$queue] ?? 0;
-        $inspected = RedisProcessingRepair::repair(
-            $this->redis,
+        $inspected = $this->processingRepair->repair(
             [
                 'processing' => $this->processingKey($queue),
                 'scores' => $this->processingZKey($queue),

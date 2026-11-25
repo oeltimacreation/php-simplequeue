@@ -11,7 +11,7 @@ use Predis\ClientInterface;
  *
  * @internal
  */
-final class RedisProcessingRepair
+final readonly class RedisProcessingRepair
 {
     private const REPAIR = <<<'LUA'
 local ids = redis.call('LRANGE', KEYS[1], ARGV[1], ARGV[2])
@@ -68,23 +68,25 @@ return recovered
 LUA;
 
     /**
+     * @param ClientInterface $redis Predis client
+     * @param RedisScriptRunner $scripts Cached script runner
+     */
+    public function __construct(private ClientInterface $redis, private RedisScriptRunner $scripts)
+    {
+    }
+
+    /**
      * Read and repair one processing-list slice atomically.
      *
-     * @param ClientInterface $redis Predis client
      * @param array{processing: string, scores: string} $keys Processing list and score keys
      * @param int $cursor Starting index, inclusive
      * @param int $limit Maximum size of the slice
      * @param int $timestamp Score for newly visible notifications
      * @return int Number of list entries inspected
      */
-    public static function repair(
-        ClientInterface $redis,
-        array $keys,
-        int $cursor,
-        int $limit,
-        int $timestamp
-    ): int {
-        $count = $redis->eval(
+    public function repair(array $keys, int $cursor, int $limit, int $timestamp): int
+    {
+        $count = $this->redis->eval(
             self::REPAIR,
             2,
             $keys['processing'],
@@ -100,21 +102,15 @@ LUA;
     /**
      * Restore stale processing notifications and discard scores without a list entry.
      *
-     * @param RedisScriptRunner $scripts Cached script runner
      * @param array{string, string, string} $keys Score, processing and pending keys
      * @param int $now Current timestamp
      * @param int $ttlSeconds Maximum processing age
      * @param int $limit Maximum scores to inspect
      * @return int Number of notifications restored
      */
-    public static function recoverStale(
-        RedisScriptRunner $scripts,
-        array $keys,
-        int $now,
-        int $ttlSeconds,
-        int $limit
-    ): int {
-        $result = $scripts->run(
+    public function recoverStale(array $keys, int $now, int $ttlSeconds, int $limit): int
+    {
+        $result = $this->scripts->run(
             self::RECOVER_STALE_LUA,
             $keys,
             [(string) ($now - $ttlSeconds), (string) $limit, (string) $now]
