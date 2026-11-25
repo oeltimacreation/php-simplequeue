@@ -218,6 +218,13 @@ function addCandidateOperationBudgets(Closure $add): void
             [3, 0, 1],
             'statements: ID claim and authoritative read'
         );
+        $add(
+            'sqlite.recover_payload_' . $size,
+            'median_db_executions',
+            'exact-chunk',
+            [1, 1, 100],
+            'statements: identity read and one guarded update per chunk'
+        );
         foreach (['recover', 'compact'] as $operation) {
             $add(
                 'sqlite.' . $operation . '_payload_' . $size,

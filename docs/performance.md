@@ -493,7 +493,7 @@ Peak incremental PHP memory in that recovery fixture fell from 11,606,168 B to
 14,088 B. SQLite may still copy large records internally; zero fetched JSON
 measures the PHP-facing projection rather than total database engine I/O.
 
-## v1.13 processing visibility
+## v1.13 recovery costs
 
 The 100-job unscored Redis repair fixture uses two client commands and
 two roundtrips with a warm script cache, down from 202 commands and four
@@ -501,3 +501,10 @@ roundtrips in v1.12. The first script repairs a bounded processing-list slice
 and adds missing scores atomically. The second script recovers stale list
 entries and discards orphan scores. The operation budget measures client
 commands, while the repair script still visits each entry in the slice.
+
+Queue-scoped PDO recovery for 100 stale rows uses two SQL executions,
+down from 101 in v1.12. It reads a page of job IDs and issues a guarded
+update for each group of up to 100 candidates. Both versions fetch zero
+payload or result bytes. Storage with a transaction participant and
+`PdoJobStorage` subclasses still apply updates row by row so their hooks
+observe each transition.

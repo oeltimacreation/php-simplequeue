@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Oeltima\SimpleQueue\Tests\Integration;
 
 use Oeltima\SimpleQueue\Contract\IdempotentJobResult;
+use Oeltima\SimpleQueue\Contract\JobStatus;
 use Oeltima\SimpleQueue\Contract\PdoJobParticipantInterface;
 use Oeltima\SimpleQueue\Contract\StorageTransition;
 use Oeltima\SimpleQueue\Driver\RedisQueueDriver;
@@ -94,6 +95,40 @@ final class CandidateServicesTest extends TestCase
             self::assertSame(range(1, 1000), $driver->reconcileNotifications('default', $times, $clock->timestamp(), 1000000));
         } finally {
             $driver->clear('default');
+        }
+    }
+
+    #[DataProvider('databases')]
+    public function testScopedStaleRecoveryBatchesOnRealDatabase(string $service): void
+    {
+        $pdo = DatabaseFixture::connect($service);
+        $pdo->exec('DROP TABLE IF EXISTS candidate_recovery_jobs');
+        DbHelper::createSchema($pdo, 'candidate_recovery_jobs');
+        $clock = new FrozenClock();
+        $storage = new PdoJobStorage($pdo, 'candidate_recovery_jobs', $clock);
+        try {
+            $retry = $storage->createJob('test', [], maxAttempts: 3);
+            $fail = $storage->createJob('test', [], maxAttempts: 1);
+            $other = $storage->createJob('test', [], 'other');
+            foreach ([$retry, $fail, $other] as $id) {
+                self::assertNotNull($storage->claimById($id, 'old-worker'));
+            }
+            $clock->advance(601);
+            $pdo->beginTransaction();
+            self::assertSame(2, $storage->recoverStaleJobsForQueue('default', 600, 100));
+            self::assertSame(JobStatus::Pending, $storage->find($retry)?->status);
+            self::assertSame(JobStatus::Failed, $storage->find($fail)?->status);
+            self::assertSame(JobStatus::Running, $storage->find($other)?->status);
+            $pdo->rollBack();
+            self::assertSame(JobStatus::Running, $storage->find($retry)->status);
+            self::assertSame(2, $storage->recoverStaleJobsForQueue('default', 600, 100));
+            self::assertSame(0, $storage->recoverStaleJobsForQueue('default', 600, 100));
+            self::assertSame(1, $storage->find($fail)->attempts);
+        } finally {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            $pdo->exec('DROP TABLE candidate_recovery_jobs');
         }
     }
 

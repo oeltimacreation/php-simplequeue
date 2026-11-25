@@ -912,7 +912,9 @@ class PdoJobStorage implements
 
     public function recoverStaleJobsForQueue(string $queue, int $ttlSeconds, int $limit): int
     {
-        return $this->staleJobRecovery->recoverQueue($queue, $ttlSeconds, $limit);
+        // Subclasses may observe individual updates through protected mutation hooks.
+        $individual = $this->participation !== null || static::class !== self::class;
+        return $this->staleJobRecovery->recoverQueue($queue, $ttlSeconds, $limit, $individual);
     }
 
     /**
