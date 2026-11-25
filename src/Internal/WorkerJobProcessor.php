@@ -64,18 +64,26 @@ final readonly class WorkerJobProcessor
         $started = $this->clock->monotonic();
 
         $control = null;
+        $storageFailure = new WorkerStorageFailure();
         try {
-            $result = $this->executeHandler($claim, $driver, $control);
-        } catch (WorkerOwnershipLost | JobOwnershipLostException) {
-            return;
+            $result = $this->executeHandler($claim, $driver, $control, $storageFailure);
         } catch (\Throwable $handlerException) {
+            $storageFailure->rethrow();
+            if (
+                $handlerException instanceof WorkerOwnershipLost ||
+                $handlerException instanceof JobOwnershipLostException
+            ) {
+                return;
+            }
             $this->handleJobFailure($claim, $handlerException, $driver, $this->durationSince($started));
             return;
         }
+        $storageFailure->rethrow();
 
         try {
             $control?->flush();
         } catch (JobOwnershipLostException) {
+            $storageFailure->rethrow();
             return;
         }
         $durationMs = $this->durationSince($started);
@@ -104,31 +112,50 @@ final readonly class WorkerJobProcessor
     private function executeHandler(
         ClaimedJob $claim,
         QueueDriverInterface $driver,
-        ?WorkerExecutionControl &$control
+        ?WorkerExecutionControl &$control,
+        WorkerStorageFailure $storageFailure
     ): mixed {
         $job = $claim->job;
         if (!$this->registry->has($job->type)) {
             throw HandlerNotFoundException::forType($job->type);
         }
         $handler = $this->registry->get($job->type);
-        $progress = function (int $percent, ?string $message = null) use ($claim, $driver): void {
-            $this->assertOwned($this->storage->updateProgress($claim, $percent, $message), $claim, 'progress');
+        $middlewares = $this->registry->middleware->all();
+        $controlled = $middlewares !== [] || $this->progressInterval > 0;
+        $progress = function (
+            int $percent,
+            ?string $message = null
+        ) use (
+            $claim,
+            $driver,
+            $controlled,
+            $storageFailure
+        ): void {
+            if (!$controlled) {
+                JobStorageRules::validateProgressUpdate($percent, $message);
+            }
+            $owned = $storageFailure->call(
+                fn (): bool => $this->storage->updateProgress($claim, $percent, $message)
+            );
+            $this->assertOwned($owned, $claim, 'progress');
             $this->refreshTransport($claim, $driver);
         };
-        $middlewares = $this->registry->middleware->all();
-        if ($middlewares !== [] || $this->progressInterval > 0) {
+        if ($controlled) {
             $control = new WorkerExecutionControl(
                 $this->clock,
                 new WorkerExecutionCallbacks(
                     $progress,
-                    function () use ($claim, $driver): void {
-                        $this->assertOwned($this->storage->heartbeat($claim), $claim, 'heartbeat');
+                    function () use ($claim, $driver, $storageFailure): void {
+                        $owned = $storageFailure->call(fn (): bool => $this->storage->heartbeat($claim));
+                        $this->assertOwned($owned, $claim, 'heartbeat');
                         $this->refreshTransport($claim, $driver);
                     },
-                    function () use ($claim): void {
-                        $owned = $this->storage instanceof SupportsClaimInspection
-                            ? $this->storage->isClaimOwned($claim)
-                            : $this->storage->heartbeat($claim);
+                    function () use ($claim, $storageFailure): void {
+                        $owned = $storageFailure->call(
+                            fn (): bool => $this->storage instanceof SupportsClaimInspection
+                                ? $this->storage->isClaimOwned($claim)
+                                : $this->storage->heartbeat($claim)
+                        );
                         $this->assertOwned($owned, $claim, 'ownership_check');
                     },
                 ),
