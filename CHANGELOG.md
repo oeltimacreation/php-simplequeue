@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added PHP 8.6 to the supported runtime and tested it with SQLite, MySQL, PostgreSQL, Redis, and Valkey.
 
+### Fixed
+
+- Kept reconciliation moving past malformed availability timestamps so valid jobs on the same page can be notified.
+
 ## [1.12.0] - 2026-10-20
 
 ### Added
