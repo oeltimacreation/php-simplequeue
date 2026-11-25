@@ -2,24 +2,24 @@
 
 ## Stable release policy
 
-Use one version value in each of these forms for a release such as 1.12.0:
+The table shows how to name each part of the 1.13.0 release.
 
 | Surface | Required form |
 |---|---|
-| Release branch | `release/1.12.0` |
-| Composer/Packagist version | `1.12.0` |
-| Git tag | `v1.12.0` |
-| GitHub release title | `v1.12.0` |
+| Release branch | `release/1.13.0` |
+| Composer/Packagist version | `1.13.0` |
+| Git tag | `v1.13.0` |
+| GitHub release title | `v1.13.0` |
 
 The difference is intentional. GitHub keeps the project's conventional `v`
 tag format, while Packagist must expose the unprefixed semantic version. Set
-the Composer/Packagist release metadata to `1.12.0` in the release commit so
-Packagist presents that version even though the Git tag is `v1.12.0`.
+the Composer/Packagist release metadata to `1.13.0` in the release commit so
+Packagist presents that version even though the Git tag is `v1.13.0`.
 
 ## Release workflow
 
 1. Create `release/<version>` from the default branch (`master` or `main`),
-   for example `release/1.12.0`.
+   for example `release/1.13.0`.
 2. Update `CHANGELOG.md` with a dated `<version>` section and make any required
    version-metadata changes. Do not commit internal planning documents unless
    they are explicitly intended for users.

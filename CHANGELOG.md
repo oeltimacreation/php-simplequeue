@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-11-25
+
 ### Added
 
-- Added PHP 8.6 to the supported runtime and tested it with SQLite, MySQL, PostgreSQL, Redis, and Valkey.
+- Added PHP 8.6 support and CI coverage for SQLite, MySQL, PostgreSQL, Redis, and Valkey.
 
 ### Changed
 
