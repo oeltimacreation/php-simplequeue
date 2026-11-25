@@ -196,9 +196,10 @@ deploying a new library version.
 Run `composer validate --strict --no-check-lock --no-check-version`,
 `composer audit`, `composer check-ci`, `composer test-random`, and
 `composer mutation` from a clean checkout. CI also resolves lowest supported
-dependencies and tests PHP 8.2–8.5 against Redis 7, Valkey 8, MySQL 8,
-PostgreSQL 15, and SQLite. Install smoke tests should include database-only
-usage without Predis and existing v1.3 lease-schema/key deployments.
+dependencies, tests PHP 8.2–8.6 with SQLite, and covers Redis 7, Valkey 8,
+MySQL 8, and PostgreSQL 15 on PHP 8.2, 8.5, and 8.6. Install smoke tests
+should include database-only usage without Predis and existing v1.3
+lease-schema/key deployments.
 Keep the compatibility smoke tests and raise coverage through focused tests;
 do not lower quality gates to accommodate unrelated changes.
 
