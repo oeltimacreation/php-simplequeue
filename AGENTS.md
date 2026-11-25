@@ -5,8 +5,7 @@
 ## Project Identity
 
 - **Name**: OeltimaCreation PHP SimpleQueue
-- **Latest stable version**: 1.12.0
-- **Candidate version**: 1.13.0
+- **Version**: 1.13.0
 - **Language**: PHP 8.2+
 - **Type**: Framework-agnostic background job queue library
 - **License**: MIT

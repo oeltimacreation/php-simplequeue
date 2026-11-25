@@ -1,6 +1,6 @@
 # Upgrading
 
-## To v1.13.x (candidate)
+## To v1.13.x
 
 - PHP 8.6 joins the tested runtime matrix. PHP 8.2 is the minimum supported
   version.
