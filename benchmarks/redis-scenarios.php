@@ -77,6 +77,7 @@ function redisScheduledBenchmark(BenchmarkOptions $options, string $mode): array
 function redisPromoteDelayedBenchmark(BenchmarkOptions $options): array
 {
     return redisBenchmark($options, 'redis.promote_delayed', static function (array $fixture): Closure {
+        $fixture['driver']->promoteDelayedJobs('default');
         $backlog = PROMOTION_BACKLOG_JOBS;
         $members = [];
         $due = time() - 1;
@@ -95,6 +96,7 @@ function redisPromoteDelayedBenchmark(BenchmarkOptions $options): array
 function redisAckBenchmark(BenchmarkOptions $options): array
 {
     return redisBenchmark($options, 'redis.dequeue_ack', static function (array $fixture) use ($options): Closure {
+        $fixture['driver']->dequeue('default', 0);
         $fixture['driver']->enqueueBatch('default', range(1, min($options->jobs, 100)));
         return static function () use ($fixture): array {
             $processed = 0;
@@ -111,6 +113,7 @@ function redisAckBenchmark(BenchmarkOptions $options): array
 function redisRetryBenchmark(BenchmarkOptions $options): array
 {
     return redisBenchmark($options, 'redis.retry', static function (array $fixture) use ($options): Closure {
+        $fixture['driver']->dequeue('default', 0);
         $jobs = min($options->jobs, 100);
         $fixture['driver']->enqueueBatch('default', range(1, $jobs));
         return static function () use ($fixture, $jobs): array {
@@ -147,6 +150,7 @@ function runRedisRetries(array $fixture, int $jobs): int
 function redisRepairBenchmark(BenchmarkOptions $options): array
 {
     return redisBenchmark($options, 'redis.repair_unscored', static function (array $fixture) use ($options): Closure {
+        $fixture['driver']->recoverStaleProcessing('default', 600);
         $jobs = min($options->jobs, 100);
         $processing = $fixture['prefix'] . ':queue:default:processing';
         $fixture['inner']->lpush($processing, array_map('strval', range(1, $jobs)));

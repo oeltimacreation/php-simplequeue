@@ -210,14 +210,7 @@ class RedisQueueDriverTest extends TestCase
         self::assertEquals(123, $jobId);
 
         $methods = $this->callMethods();
-        self::assertContains('evalsha', $methods, 'Should attempt cached atomic Lua dequeue');
-        if ($coldCache) {
-            self::assertContains('eval', $methods, 'NOSCRIPT should fall back to EVAL');
-        } else {
-            self::assertNotContains('eval', $methods);
-        }
-        self::assertNotContains('lmove', $methods, 'Lua owns the non-blocking move');
-        self::assertNotContains('blmove', $methods, 'Should not use blocking blmove');
+        self::assertSame($coldCache ? ['evalsha', 'eval'] : ['evalsha'], $methods);
     }
 
     /**
@@ -233,16 +226,15 @@ class RedisQueueDriverTest extends TestCase
 
     public function testScriptRunnerRethrowsNonNoScriptErrors(): void
     {
-        $this->redis->throws['evalsha'] = new ServerException('WRONGTYPE Operation against a key holding the wrong kind of value');
-
-        $this->expectException(ServerException::class);
-        $this->expectExceptionMessage('WRONGTYPE');
-
-        $this->driver->dequeue('default', 0);
-
-        $methods = $this->callMethods();
-        self::assertContains('evalsha', $methods);
-        self::assertNotContains('eval', $methods, 'Non-NOSCRIPT errors must not trigger the EVAL fallback');
+        $failure = new ServerException('WRONGTYPE Operation against a key holding the wrong kind of value');
+        $this->redis->throws['evalsha'] = $failure;
+        try {
+            $this->driver->dequeue('default', 0);
+            self::fail('Expected a Redis server error');
+        } catch (ServerException $exception) {
+            self::assertSame($failure, $exception);
+        }
+        self::assertSame(['evalsha'], $this->callMethods());
     }
 
     public function testDequeueBlockingWhenTimeoutPositive(): void
