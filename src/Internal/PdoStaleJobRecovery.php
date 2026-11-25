@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Oeltima\SimpleQueue\Internal;
 
+use Oeltima\SimpleQueue\Contract\JobStatus;
+
 /**
  * Performs PDO stale-job transitions without owning connection policy.
  *
@@ -13,6 +15,8 @@ namespace Oeltima\SimpleQueue\Internal;
  */
 final readonly class PdoStaleJobRecovery
 {
+    private const UPDATE_CHUNK_SIZE = 100;
+
     private string $table;
     /** @var \Closure(): string */
     private \Closure $now;
@@ -22,6 +26,7 @@ final readonly class PdoStaleJobRecovery
     private \Closure $mutate;
     /** @var \Closure(RowRequest): list<array<string, mixed>> */
     private \Closure $rows;
+    private bool $recoverRowsIndividually;
 
     /**
      * @param array{
@@ -29,7 +34,8 @@ final readonly class PdoStaleJobRecovery
      *     now: \Closure(): string,
      *     threshold: \Closure(int): string,
      *     mutate: \Closure(MutationRequest): \PDOStatement,
-     *     rows: \Closure(RowRequest): list<array<string, mixed>>
+     *     rows: \Closure(RowRequest): list<array<string, mixed>>,
+     *     recoverRowsIndividually: bool
      * } $dependencies
      */
     public function __construct(array $dependencies)
@@ -39,23 +45,16 @@ final readonly class PdoStaleJobRecovery
         $this->threshold = $dependencies['threshold'];
         $this->mutate = $dependencies['mutate'];
         $this->rows = $dependencies['rows'];
+        $this->recoverRowsIndividually = $dependencies['recoverRowsIndividually'];
     }
 
     public function recoverAll(int $ttlSeconds): int
     {
         JobStorageRules::validateStaleRecovery($ttlSeconds, 1);
         $context = $this->recoveryContext($ttlSeconds);
-        $failed = ($this->mutate)([
-            'sql' => $this->recoverAllSql(true),
-            'params' => $this->recoverAllParams($context, true),
-            'operation' => 'recoverStaleJobs',
-        ]);
-        $pending = ($this->mutate)([
-            'sql' => $this->recoverAllSql(false),
-            'params' => $this->recoverAllParams($context, false),
-            'operation' => 'recoverStaleJobs',
-        ]);
-        return $failed->rowCount() + $pending->rowCount();
+        $failed = $this->recoverUnscoped($context, JobStatus::Failed);
+        $pending = $this->recoverUnscoped($context, JobStatus::Pending);
+        return $failed + $pending;
     }
 
     /** Recover every stale job through bounded individual transitions for participants. */
@@ -81,17 +80,23 @@ final readonly class PdoStaleJobRecovery
         return $total;
     }
 
-    public function recoverQueue(string $queue, int $ttlSeconds, int $limit): int
+    /**
+     * @param array{queue: string, ttlSeconds: int, limit: int} $scope Recovery scope
+     * @return int Number of rows transitioned
+     */
+    public function recoverQueue(array $scope): int
     {
-        JobStorageRules::validateQueueOrType($queue, 'Queue');
-        JobStorageRules::validateStaleRecovery($ttlSeconds, $limit);
-        $context = $this->recoveryContext($ttlSeconds);
+        JobStorageRules::validateQueueOrType($scope['queue'], 'Queue');
+        JobStorageRules::validateStaleRecovery($scope['ttlSeconds'], $scope['limit']);
+        $context = $this->recoveryContext($scope['ttlSeconds']);
         $rows = ($this->rows)([
             'sql' => $this->staleRowsSql(),
-            'params' => ['queue' => $queue, 'threshold' => $context['threshold']],
-            'limit' => $limit,
+            'params' => ['queue' => $scope['queue'], 'threshold' => $context['threshold']],
+            'limit' => $scope['limit'],
         ]);
-        return $this->recoverRows($rows, $context);
+        return $this->recoverRowsIndividually
+            ? $this->recoverRows($rows, $context)
+            : $this->recoverChunks($rows, $this->guardedParams($context) + ['queue' => $scope['queue']]);
     }
 
     /** @return array{now: string, threshold: string, error: string} */
@@ -104,29 +109,23 @@ final readonly class PdoStaleJobRecovery
         ];
     }
 
-    private function recoverAllSql(bool $terminal): string
+    /** @param array{now: string, threshold: string, error: string} $context */
+    private function recoverUnscoped(array $context, JobStatus $outcome): int
     {
+        $terminal = $outcome === JobStatus::Failed;
         $terminalAssignments = $terminal
             ? 'completed_at = :completed_at,'
             : 'result = NULL, completed_at = NULL, progress = NULL, progress_message = NULL,';
         $attemptComparison = $terminal ? '>=' : '<';
-        $status = $terminal ? 'failed' : 'pending';
-        return "UPDATE {$this->table}
-            SET status = '{$status}', attempts = attempts + 1,
+        $sql = "UPDATE {$this->table}
+            SET status = '{$outcome->value}', attempts = attempts + 1,
                 error_message = :error_message, {$terminalAssignments}
                 available_at = :available_at, locked_by = NULL, locked_at = NULL,
                 lease_token = NULL, updated_at = :updated_at
             WHERE status = 'running'
             AND (locked_at IS NULL OR locked_at < :stale_threshold)
             AND attempts + 1 {$attemptComparison} max_attempts";
-    }
 
-    /**
-     * @param array{now: string, threshold: string, error: string} $context
-     * @return array<string, mixed>
-     */
-    private function recoverAllParams(array $context, bool $terminal): array
-    {
         $params = [
             'stale_threshold' => $context['threshold'],
             'error_message' => $context['error'],
@@ -136,7 +135,11 @@ final readonly class PdoStaleJobRecovery
         if ($terminal) {
             $params['completed_at'] = $context['now'];
         }
-        return $params;
+        return ($this->mutate)([
+            'sql' => $sql,
+            'params' => $params,
+            'operation' => 'recoverStaleJobs',
+        ])->rowCount();
     }
 
     private function staleRowsSql(): string
@@ -160,20 +163,52 @@ final readonly class PdoStaleJobRecovery
                 continue;
             }
             $changed = ($this->mutate)([
-                'sql' => $this->recoverRowSql(),
-                'params' => [
-                    'id' => $id,
-                    'threshold' => $context['threshold'],
-                    'error_message' => $context['error'],
-                    'completed_at' => $context['now'],
-                    'available_at' => $context['now'],
-                    'updated_at' => $context['now'],
-                ],
+                'sql' => $this->recoverGuardedSql('id = :id'),
+                'params' => $this->guardedParams($context) + ['id' => $id],
                 'operation' => 'recoverStaleJobsForQueue',
             ]);
             $recovered += $changed->rowCount();
         }
         return $recovered;
+    }
+
+    /**
+     * @param list<array<string, mixed>> $rows Selected recovery identities
+     * @param array<string, string> $params Bound scope and transition values
+     */
+    private function recoverChunks(array $rows, array $params): int
+    {
+        $ids = array_filter(array_map($this->staleRowId(...), $rows), static fn (?int $id): bool => $id !== null);
+        $recovered = 0;
+        foreach (array_chunk($ids, self::UPDATE_CHUNK_SIZE) as $chunk) {
+            $bindings = [];
+            foreach ($chunk as $index => $id) {
+                $bindings['job_' . $index] = $id;
+            }
+            $idsSql = ':' . implode(', :', array_keys($bindings));
+            $changed = ($this->mutate)([
+                'sql' => $this->recoverGuardedSql("id IN ({$idsSql}) AND queue = :queue"),
+                'params' => $params + $bindings,
+                'operation' => 'recoverStaleJobsForQueue',
+            ]);
+            $recovered += $changed->rowCount();
+        }
+        return $recovered;
+    }
+
+    /**
+     * @param array{now: string, threshold: string, error: string} $context
+     * @return array<string, string>
+     */
+    private function guardedParams(array $context): array
+    {
+        return [
+            'threshold' => $context['threshold'],
+            'error_message' => $context['error'],
+            'completed_at' => $context['now'],
+            'available_at' => $context['now'],
+            'updated_at' => $context['now'],
+        ];
     }
 
     /** @param array<string, mixed> $row Lean recovery identity */
@@ -189,7 +224,7 @@ final readonly class PdoStaleJobRecovery
         return null;
     }
 
-    private function recoverRowSql(): string
+    private function recoverGuardedSql(string $predicate): string
     {
         // Evaluate terminality before incrementing attempts (MySQL assignments run left to right).
         $terminal = 'attempts + 1 >= max_attempts';
@@ -202,7 +237,7 @@ final readonly class PdoStaleJobRecovery
             error_message = :error_message, available_at = :available_at,
             locked_by = NULL, locked_at = NULL, lease_token = NULL, updated_at = :updated_at,
             attempts = attempts + 1
-            WHERE id = :id AND status = 'running' AND attempts >= 0 AND max_attempts >= 1
+            WHERE {$predicate} AND status = 'running' AND attempts >= 0 AND max_attempts >= 1
             AND (locked_at IS NULL OR locked_at < :threshold)";
     }
 }

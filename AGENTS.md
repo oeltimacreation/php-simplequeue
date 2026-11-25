@@ -5,7 +5,8 @@
 ## Project Identity
 
 - **Name**: OeltimaCreation PHP SimpleQueue
-- **Version**: 1.12.0
+- **Latest stable version**: 1.12.0
+- **Candidate version**: 1.13.0
 - **Language**: PHP 8.2+
 - **Type**: Framework-agnostic background job queue library
 - **License**: MIT
@@ -20,7 +21,7 @@
 | Testing | PHPUnit 11 |
 | Static Analysis | PHPStan Level 9 (with strict-rules) |
 | Code Style | PHP_CodeSniffer 4.x with Slevomat ruleset |
-| CI | GitHub Actions (PHP 8.2, 8.3, 8.4, 8.5) |
+| CI | GitHub Actions (PHP 8.2, 8.3, 8.4, 8.5, 8.6) |
 | PSR Compliance | PSR-3 (Logger), PSR-11 (Container), PSR-4 (Autoloading) |
 
 ## Directory Structure

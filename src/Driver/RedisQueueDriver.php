@@ -73,6 +73,13 @@ if jobId then
 end
 return jobId
 LUA;
+    private const REFRESH_PROCESSING_LUA = <<<'LUA'
+local id = ARGV[1]
+if redis.call('ZSCORE', KEYS[2], id) or redis.call('LPOS', KEYS[1], id) then
+    return redis.call('ZADD', KEYS[2], 'GT', ARGV[2], id)
+end
+return 0
+LUA;
     private const PROMOTE_DELAYED_LUA = <<<'LUA'
 local delayedKey = KEYS[1]
 local pendingKey = KEYS[2]
@@ -89,37 +96,11 @@ end
 return #dueJobs
 LUA;
 
-    private const RECOVER_STALE_LUA = <<<'LUA'
-local processingZKey = KEYS[1]
-local processingKey = KEYS[2]
-local pendingKey = KEYS[3]
-local staleThreshold = tonumber(ARGV[1])
-local limit = tonumber(ARGV[2])
-local now = tonumber(ARGV[3])
-
-local staleJobs = redis.call('ZRANGEBYSCORE', processingZKey, '-inf', staleThreshold, 'LIMIT', 0, limit)
-if #staleJobs > 0 then
-    local chunkSize = 1000
-    for i = 1, #staleJobs, chunkSize do
-        local j = math.min(i + chunkSize - 1, #staleJobs)
-        for k = i, j do
-            redis.call('LREM', processingKey, 1, staleJobs[k])
-            if redis.call('LPOS', processingKey, staleJobs[k]) then
-                redis.call('ZADD', processingZKey, now, staleJobs[k])
-            else
-                redis.call('ZREM', processingZKey, staleJobs[k])
-            end
-        end
-        redis.call('LPUSH', pendingKey, unpack(staleJobs, i, j))
-    end
-end
-return #staleJobs
-LUA;
-
     /** @var array<string, int> */
     private array $repairCursors = [];
 
     private readonly RedisScriptRunner $scripts;
+    private readonly RedisProcessingRepair $processingRepair;
 
     /**
      * @param ClientInterface $redis Predis client instance
@@ -131,6 +112,7 @@ LUA;
         private readonly ClockInterface $clock = new SystemClock()
     ) {
         $this->scripts = new RedisScriptRunner($this->redis);
+        $this->processingRepair = new RedisProcessingRepair($this->redis, $this->scripts);
     }
 
     public function isAvailable(): bool
@@ -189,7 +171,7 @@ LUA;
         );
         if ($jobId !== null && $timeoutSeconds > 0) {
             // BLMOVE cannot be wrapped in Lua; repair handles its crash window.
-            $this->redis->zadd($this->processingZKey($queue), [$jobId => $this->clock->timestamp()]);
+            $this->refreshProcessingVisibility($queue, $jobId);
         }
 
         return $jobId;
@@ -226,7 +208,7 @@ LUA;
     public function heartbeatProcessing(string $queue, int $jobId): void
     {
         $this->validateJobId($jobId);
-        $this->redis->zadd($this->processingZKey($queue), [$jobId => $this->clock->timestamp()]);
+        $this->refreshProcessingVisibility($queue, $jobId);
     }
 
     public function hasPendingJob(string $queue, int $jobId, int $maxElements): bool
@@ -345,19 +327,17 @@ LUA;
             throw new \InvalidArgumentException('Stale recovery TTL and limit must be positive');
         }
         $this->repairUnscoredProcessing($queue, $limit);
-        $staleThreshold = $this->clock->timestamp() - $ttlSeconds;
-
-        $result = $this->scripts->run(
-            self::RECOVER_STALE_LUA,
+        $now = $this->clock->timestamp();
+        return $this->processingRepair->recoverStale(
             [
                 $this->processingZKey($queue),
                 $this->processingKey($queue),
                 $this->pendingKey($queue),
             ],
-            [(string) $staleThreshold, (string) $limit, (string) $this->clock->timestamp()]
+            $now,
+            $ttlSeconds,
+            $limit
         );
-
-        return RedisResponseNormalizer::integer($result);
     }
 
     /**
@@ -681,16 +661,27 @@ LUA;
     private function repairUnscoredProcessing(string $queue, int $limit): void
     {
         $cursor = $this->repairCursors[$queue] ?? 0;
-        $ids = $this->redis->lrange($this->processingKey($queue), $cursor, $cursor + $limit - 1);
-        $this->repairCursors[$queue] = count($ids) < $limit ? 0 : $cursor + count($ids);
-        RedisProcessingRepair::repair(
-            $this->redis,
-            $this->clock,
+        $inspected = $this->processingRepair->repair(
             [
                 'processing' => $this->processingKey($queue),
                 'scores' => $this->processingZKey($queue),
             ],
-            array_values($ids)
+            $cursor,
+            $limit,
+            $this->clock->timestamp()
+        );
+        $this->repairCursors[$queue] = $inspected < $limit ? 0 : $cursor + $inspected;
+    }
+
+    private function refreshProcessingVisibility(string $queue, int $jobId): void
+    {
+        $this->redis->eval(
+            self::REFRESH_PROCESSING_LUA,
+            2,
+            $this->processingKey($queue),
+            $this->processingZKey($queue),
+            (string) $jobId,
+            (string) $this->clock->timestamp()
         );
     }
 

@@ -107,6 +107,8 @@ class PdoJobStorage implements
                 JobStorageRules::timestamp($this->clock(), $this->dateFormat, -$ttl),
             'mutate' => $this->executeStaleMutation(...),
             'rows' => $this->staleRows(...),
+            // Subclasses may observe individual updates through protected mutation hooks.
+            'recoverRowsIndividually' => $this->participation !== null || static::class !== self::class,
         ]);
         if ($connection instanceof PDO) {
             $this->pdo = $this->configurePdo($connection);
@@ -912,7 +914,7 @@ class PdoJobStorage implements
 
     public function recoverStaleJobsForQueue(string $queue, int $ttlSeconds, int $limit): int
     {
-        return $this->staleJobRecovery->recoverQueue($queue, $ttlSeconds, $limit);
+        return $this->staleJobRecovery->recoverQueue(compact('queue', 'ttlSeconds', 'limit'));
     }
 
     /**

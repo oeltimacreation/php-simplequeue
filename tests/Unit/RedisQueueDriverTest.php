@@ -210,14 +210,7 @@ class RedisQueueDriverTest extends TestCase
         self::assertEquals(123, $jobId);
 
         $methods = $this->callMethods();
-        self::assertContains('evalsha', $methods, 'Should attempt cached atomic Lua dequeue');
-        if ($coldCache) {
-            self::assertContains('eval', $methods, 'NOSCRIPT should fall back to EVAL');
-        } else {
-            self::assertNotContains('eval', $methods);
-        }
-        self::assertNotContains('lmove', $methods, 'Lua owns the non-blocking move');
-        self::assertNotContains('blmove', $methods, 'Should not use blocking blmove');
+        self::assertSame($coldCache ? ['evalsha', 'eval'] : ['evalsha'], $methods);
     }
 
     /**
@@ -233,16 +226,15 @@ class RedisQueueDriverTest extends TestCase
 
     public function testScriptRunnerRethrowsNonNoScriptErrors(): void
     {
-        $this->redis->throws['evalsha'] = new ServerException('WRONGTYPE Operation against a key holding the wrong kind of value');
-
-        $this->expectException(ServerException::class);
-        $this->expectExceptionMessage('WRONGTYPE');
-
-        $this->driver->dequeue('default', 0);
-
-        $methods = $this->callMethods();
-        self::assertContains('evalsha', $methods);
-        self::assertNotContains('eval', $methods, 'Non-NOSCRIPT errors must not trigger the EVAL fallback');
+        $failure = new ServerException('WRONGTYPE Operation against a key holding the wrong kind of value');
+        $this->redis->throws['evalsha'] = $failure;
+        try {
+            $this->driver->dequeue('default', 0);
+            self::fail('Expected a Redis server error');
+        } catch (ServerException $exception) {
+            self::assertSame($failure, $exception);
+        }
+        self::assertSame(['evalsha'], $this->callMethods());
     }
 
     public function testDequeueBlockingWhenTimeoutPositive(): void
@@ -253,9 +245,7 @@ class RedisQueueDriverTest extends TestCase
 
         self::assertEquals(456, $jobId);
 
-        $methods = $this->callMethods();
-        self::assertContains('blmove', $methods, 'Should use blocking blmove');
-        self::assertNotContains('lmove', $methods, 'Should not use non-blocking lmove');
+        self::assertSame(['blmove', 'eval'], $this->callMethods());
     }
 
     public function testDequeueReturnsNullWhenEmpty(): void
@@ -267,9 +257,10 @@ class RedisQueueDriverTest extends TestCase
         self::assertNull($jobId);
     }
 
-    public function testDequeueRejectsMalformedRedisJobIdWithoutCastingIt(): void
+    #[DataProvider('malformedRedisJobIds')]
+    public function testDequeueRejectsMalformedRedisJobIdWithoutCastingIt(string $id): void
     {
-        $this->redis->returns['evalsha'] = '0';
+        $this->redis->returns['evalsha'] = $id;
 
         $this->expectException(QueueException::class);
         try {
@@ -279,6 +270,13 @@ class RedisQueueDriverTest extends TestCase
             self::assertContains('lrem', $methods);
             self::assertContains('zrem', $methods);
         }
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function malformedRedisJobIds(): iterable
+    {
+        yield 'zero' => ['0'];
+        yield 'trailing newline' => ["123\n"];
     }
 
     public function testBlockingDequeueDiscardsMalformedNonScalarResponse(): void
@@ -301,28 +299,30 @@ class RedisQueueDriverTest extends TestCase
 
     public function testStaleRecoveryRepairsUnscoredProcessingInBoundedSlice(): void
     {
-        $this->redis->returns['lrange'] = ['123'];
-        $this->redis->pipelineReturns = [[null]];
+        $this->redis->returns['eval'] = 1;
         $this->redis->returns['evalsha'] = 0;
 
         self::assertSame(0, $this->driver->recoverStaleProcessing('default', 60, 1));
 
-        $methods = $this->callMethods();
-        self::assertContains('lrange', $methods);
-        self::assertSame(['zscore'], array_column($this->redis->pipelines[0]->calls, 'method'));
-        self::assertSame(['zadd'], array_column($this->redis->pipelines[1]->calls, 'method'));
+        self::assertSame(['eval', 'evalsha'], $this->callMethods());
+        $repair = $this->callsFor('eval')[0]['args'];
+        self::assertSame(['test:queue:default:processing', 'test:queue:default:processing_z', '0', '0'], array_slice($repair, 2, 4));
     }
 
-    public function testStaleRecoveryPipelinesScoreChecksWithoutUnneededWrites(): void
+    public function testStaleRecoveryAdvancesAndWrapsTheRepairCursor(): void
     {
-        $this->redis->returns['lrange'] = ['123', '456'];
-        $this->redis->pipelineReturns = [['1700000000', '1700000001']];
         $this->redis->returns['evalsha'] = 0;
-
+        $this->redis->returns['eval'] = 2;
+        self::assertSame(0, $this->driver->recoverStaleProcessing('default', 60, 2));
+        $this->redis->returns['eval'] = 1;
+        self::assertSame(0, $this->driver->recoverStaleProcessing('default', 60, 2));
         self::assertSame(0, $this->driver->recoverStaleProcessing('default', 60, 2));
 
-        self::assertCount(1, $this->redis->pipelines);
-        self::assertSame(['zscore', 'zscore'], array_column($this->redis->pipelines[0]->calls, 'method'));
+        $args = array_column($this->callsFor('eval'), 'args');
+        self::assertSame([['0', '1'], ['2', '3'], ['0', '1']], array_map(
+            static fn (array $call): array => array_slice($call, 4, 2),
+            $args
+        ));
     }
 
     public function testAckAtomicallyPreservesDuplicateProcessingVisibility(): void
@@ -357,12 +357,12 @@ class RedisQueueDriverTest extends TestCase
     {
         $this->driver->heartbeatProcessing('default', 123);
 
-        $calls = $this->callsFor('zadd');
+        $calls = $this->callsFor('eval');
         self::assertCount(1, $calls);
-        self::assertSame('test:queue:default:processing_z', $calls[0]['args'][0]);
-        $members = $calls[0]['args'][1];
-        self::assertIsArray($members);
-        self::assertArrayHasKey(123, $members);
+        self::assertSame(
+            ['test:queue:default:processing', 'test:queue:default:processing_z', '123'],
+            array_slice($calls[0]['args'], 2, 3)
+        );
     }
 
     public function testBoundedMembershipChecksPendingAndDelayedStructures(): void
@@ -462,7 +462,7 @@ class RedisQueueDriverTest extends TestCase
 
     public function testStaleRecoveryRejectsMalformedScriptCount(): void
     {
-        $this->redis->returns['lrange'] = [];
+        $this->redis->returns['eval'] = 0;
         $this->redis->returns['evalsha'] = '-1';
 
         $this->expectException(QueueException::class);
@@ -501,7 +501,7 @@ class RedisQueueDriverTest extends TestCase
     public function testRecoverStaleProcessingUsesCachedLuaScript(): void
     {
         $this->redis->returns['evalsha'] = 2;
-        $this->redis->returns['lrange'] = [];
+        $this->redis->returns['eval'] = 0;
 
         self::assertSame(2, $this->driver->recoverStaleProcessing('default', 600, 75));
 

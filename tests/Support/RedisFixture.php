@@ -23,6 +23,12 @@ final class RedisFixture
         string $prefix,
         ClockInterface $clock = new SystemClock()
     ): RedisQueueDriver {
+        return new RedisQueueDriver(self::client(), $prefix, $clock);
+    }
+
+    /** @return Client Connected Redis client */
+    public static function client(): Client
+    {
         $host = getenv('REDIS_HOST');
         $required = getenv('SIMPLEQUEUE_REQUIRED_QUEUE_SERVICE');
         $requiredService = is_string($required) && $required !== '';
@@ -45,6 +51,6 @@ final class RedisFixture
             TestCase::markTestSkipped('Could not connect to Redis: ' . $exception->getMessage());
         }
 
-        return new RedisQueueDriver($client, $prefix, $clock);
+        return $client;
     }
 }

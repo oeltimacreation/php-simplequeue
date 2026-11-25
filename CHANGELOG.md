@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added PHP 8.6 to the supported runtime and tested it with SQLite, MySQL, PostgreSQL, Redis, and Valkey.
+
+### Changed
+
+- Reduced SQL executions for queue-scoped stale-job recovery by updating eligible rows in bounded groups.
+
+### Fixed
+
+- Kept reconciliation moving past malformed availability timestamps so valid jobs on the same page can be notified.
+- Treated storage errors during worker progress, heartbeat, and ownership checks as infrastructure failures without consuming an execution attempt.
+- Made Redis and Valkey processing-score repair atomic and prevented orphan scores from requeuing acknowledged jobs.
+
 ## [1.12.0] - 2026-10-20
 
 ### Added

@@ -16,12 +16,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        baseline: ['v1.10.0', 'v1.11.0']
+        baseline: ['v1.10.0', 'v1.11.0', 'v1.12.0']
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 0
-      - uses: shivammathur/setup-php@add91f08e1598a0b6ff470f1e389f9d652559bf0
+      - uses: shivammathur/setup-php@2001cd3148dcbaf467b7fa06cd7155ebb6d4cacf
         with:
           php-version: '8.5'
           extensions: pdo, pdo_sqlite

@@ -152,15 +152,16 @@ final class QueueReconcilerTest extends TestCase
             ->willReturnOnConsecutiveCalls(
                 [],
                 [
-                    new PendingNotification(1, $clock->now()),
-                    new PendingNotification(2, null),
-                    new PendingNotification(3, 'tomorrow'),
+                    new PendingNotification(1, $clock->now() . "\0"),
+                    new PendingNotification(2, $clock->now()),
+                    new PendingNotification(3, null),
+                    new PendingNotification(4, 'tomorrow'),
                 ]
             );
         $driver = $this->createMock(ReconciliationMembershipDriver::class);
-        $driver->expects($this->once())->method('hasPendingJob')->with('default', 1, 250)->willReturn(false);
-        $driver->expects($this->once())->method('hasDelayedJob')->with('default', 1)->willReturn(false);
-        $driver->expects($this->once())->method('enqueue')->with('default', 1);
+        $driver->expects($this->once())->method('hasPendingJob')->with('default', 2, 250)->willReturn(false);
+        $driver->expects($this->once())->method('hasDelayedJob')->with('default', 2)->willReturn(false);
+        $driver->expects($this->once())->method('enqueue')->with('default', 2);
         $driver->expects($this->never())->method('nack');
 
         $result = (new QueueReconciler($storage, $driver, $clock))->reconcile(
@@ -168,9 +169,9 @@ final class QueueReconcilerTest extends TestCase
             new ReconcileOptions(cursor: 99)
         );
 
-        self::assertSame(3, $result->scanned);
+        self::assertSame(4, $result->scanned);
         self::assertSame(1, $result->restored);
-        self::assertSame(2, $result->invalid);
+        self::assertSame(3, $result->invalid);
         self::assertNull($result->nextCursor);
     }
 
@@ -184,7 +185,8 @@ final class QueueReconcilerTest extends TestCase
                 [],
                 [
                     JobDataFactory::running(['id' => 1, 'availableAt' => $clock->now()]),
-                    JobDataFactory::running(['id' => 2, 'availableAt' => '2099-01-01 00:00:00']),
+                    JobDataFactory::running(['id' => 2, 'availableAt' => "2099-01-01 00:00:00\0"]),
+                    JobDataFactory::running(['id' => 3, 'availableAt' => '2099-01-01 00:00:00']),
                     JobDataFactory::running(['id' => 0, 'availableAt' => $clock->now()]),
                 ]
             );
@@ -193,20 +195,20 @@ final class QueueReconcilerTest extends TestCase
             ->method('hasPendingJob')
             ->willReturnMap([
                 ['default', 1, 250, true],
-                ['default', 2, 250, false],
+                ['default', 3, 250, false],
             ]);
-        $driver->expects($this->once())->method('hasDelayedJob')->with('default', 2)->willReturn(false);
-        $driver->expects($this->once())->method('nack')->with('default', 2, self::greaterThan(0));
+        $driver->expects($this->once())->method('hasDelayedJob')->with('default', 3)->willReturn(false);
+        $driver->expects($this->once())->method('nack')->with('default', 3, self::greaterThan(0));
 
         $result = (new QueueReconciler($storage, $driver, $clock))->reconcile(
             'default',
             new ReconcileOptions(cursor: 99)
         );
 
-        self::assertSame(3, $result->scanned);
+        self::assertSame(4, $result->scanned);
         self::assertSame(1, $result->restored);
         self::assertSame(1, $result->duplicates);
-        self::assertSame(1, $result->invalid);
+        self::assertSame(2, $result->invalid);
         self::assertNull($result->nextCursor);
     }
 
@@ -216,13 +218,15 @@ final class QueueReconcilerTest extends TestCase
         $storage = $this->createMock(LeanReconciliationStorage::class);
         $storage->expects($this->once())
             ->method('scanPendingNotifications')
-            ->with('default', null, 100)
+            ->with('default', null, 7)
             ->willReturn([
                 new PendingNotification(0, $clock->now()),
-                new PendingNotification(1, null),
+                new PendingNotification(1, $clock->now() . "\0"),
                 new PendingNotification(2, $clock->now()),
                 new PendingNotification(3, '2099-01-01 00:00:00'),
                 new PendingNotification(4, 'next Monday'),
+                new PendingNotification(5, '1970-01-01 00:00:00'),
+                new PendingNotification(6, '2023-02-29 00:00:00'),
             ]);
         $driver = $this->createMock(BatchReconciliationDriver::class);
         $driver->expects($this->once())
@@ -235,13 +239,13 @@ final class QueueReconcilerTest extends TestCase
             )
             ->willReturn([3]);
 
-        $result = (new QueueReconciler($storage, $driver, $clock))->reconcile('default', new ReconcileOptions());
+        $result = (new QueueReconciler($storage, $driver, $clock))->reconcile('default', new ReconcileOptions(pageSize: 7));
 
-        self::assertSame(5, $result->scanned);
+        self::assertSame(7, $result->scanned);
         self::assertSame(1, $result->restored);
         self::assertSame(1, $result->duplicates);
-        self::assertSame(3, $result->invalid);
-        self::assertNull($result->nextCursor);
+        self::assertSame(5, $result->invalid);
+        self::assertSame(6, $result->nextCursor);
     }
 
     public function testUnsupportedCapabilitiesFailFast(): void

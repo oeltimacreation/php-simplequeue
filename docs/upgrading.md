@@ -1,5 +1,20 @@
 # Upgrading
 
+## To v1.13.x (candidate)
+
+- PHP 8.6 joins the tested runtime matrix. PHP 8.2 is the minimum supported
+  version.
+- If storage throws during progress, heartbeat, or ownership checks,
+  `processOne()` propagates the original error. The daemon reports an
+  infrastructure failure and backs off. These errors leave the execution
+  attempt count to the normal stale-lease recovery process.
+- Reconciliation counts malformed availability timestamps as invalid and
+  continues scanning. Inspect the `invalid` count to identify pages containing
+  rows that need repair.
+- Redis and Valkey processing repair use the existing list and score keys.
+  Scoped PDO recovery uses the existing schema and groups eligible updates
+  for built-in storage without a transaction participant.
+
 ## To v1.12.x
 
 New execution controls, transactional PDO participants, idempotent batches, compact

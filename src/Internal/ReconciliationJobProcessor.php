@@ -94,14 +94,17 @@ final readonly class ReconciliationJobProcessor
      */
     public static function parseTimestamp(?string $availableAt): int|false
     {
-        if ($availableAt === null || $availableAt === '') {
+        if ($availableAt === null || str_contains($availableAt, "\0")) {
             return false;
         }
         $parsed = \DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $availableAt, new \DateTimeZone('UTC'));
-        $parseErrors = \DateTimeImmutable::getLastErrors();
-        $strict = $parsed !== false
-            && ($parseErrors === false || ($parseErrors['warning_count'] === 0 && $parseErrors['error_count'] === 0))
-            && $parsed->format('Y-m-d H:i:s') === $availableAt;
-        return $strict ? $parsed->getTimestamp() : false;
+        if ($parsed === false || \DateTimeImmutable::getLastErrors() !== false) {
+            return false;
+        }
+        if ($parsed->format('Y-m-d H:i:s') !== $availableAt) {
+            return false;
+        }
+        $timestamp = $parsed->getTimestamp();
+        return $timestamp > 0 ? $timestamp : false;
     }
 }
